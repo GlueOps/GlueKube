@@ -10,10 +10,6 @@ variable "master_node_count" {
   default = 3
 }
 
-variable "etcd_node_count" {
-  type = number
-  default = 3
-}
 variable "worker_node_count" {
   type = number
   default = 3
