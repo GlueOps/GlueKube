@@ -3709,7 +3709,7 @@ authentication:
             # @schema
             override: ~
             repository: "ghcr.io/spiffe/spire-server"
-            tag: "1.9.6"
+            tag: "1.12.2@sha256:a5151df9a9a396561a9fab5f9ed49be09e3b2f322a370ac096c6d2cb9f529035"
             digest: "sha256:59a0b92b39773515e25e68a46c40d3b931b9c1860bc445a79ceb45a805cab8b4"
             useDigest: true
             pullPolicy: "IfNotPresent"
