@@ -1,5 +1,5 @@
 resource "hcloud_server" "worker-node" {
-  for_each = toset([for i in range(1, 3) : tostring(i)])
+  for_each = toset([for i in range(1, var.worker_node_count) : tostring(i)])
   # The name will be worker-node-0, worker-node-1, worker-node-2...
   name        = "worker-node-${each.key}"
   image       = "ubuntu-24.04"
