@@ -10,8 +10,8 @@
     - enable_nginx_ingress
     - inventory_hostname == groups['loadbalancer'][1]
 
-- name: Lb for Pomerium Ingress
-  ansible.builtin.import_tasks: configure_pomerium_ingress.yaml
+- name: Lb for Oauth2 Ingress
+  ansible.builtin.import_tasks: configure_oauth2_ingress.yaml
   when:
-    - enable_pomerium_ingress
+    - enable_oauth2_ingress
     - inventory_hostname == groups['loadbalancer'][2]

@@ -10,9 +10,9 @@
     enabled: true
     state: restarted
 
-- name: Generate HAProxy configuration for Pomerium Ingress
+- name: Generate HAProxy configuration for Oauth2 Ingress
   ansible.builtin.template:
-    src: haproxy-for-pomerium-ingress.cfg.j2
+    src: haproxy-for-oauth2-ingress.cfg.j2
     dest: "{{ haproxy_config_path }}"
     owner: root
     group: root

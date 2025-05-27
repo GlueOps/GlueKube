@@ -16,4 +16,4 @@ k8s_workers: "{{ workers | trim | split(',') }}"
 
 
 enable_nginx_ingress: true
-enable_pomerium_ingress: true
+enable_oauth2_ingress: true

@@ -7,7 +7,8 @@ service_subnet: "192.168.0.0/16" # if you change this, you need to change the ca
 
 # calico
 calico_node_to_node_encryption: false
-calico_encapsulation_mode: "vxlan"
+calico_chart_version: "v3.28.2"
+calico_tiger_operator_version: "v1.34.5"
 
 nodes: |
   {% for host in groups['masters'] %}

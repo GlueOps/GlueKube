@@ -1,4 +1,4 @@
-apiVersion: kubeadm.k8s.io/v1beta4
+apiVersion: kubeadm.k8s.io/v1beta3
 kind: InitConfiguration
 bootstrapTokens:
 - groups:
@@ -22,7 +22,7 @@ nodeRegistration:
     value: "false"
     effect: "NoSchedule"
 ---
-apiVersion: kubeadm.k8s.io/v1beta4
+apiVersion: kubeadm.k8s.io/v1beta3
 kind: ClusterConfiguration
 apiServer:
   certSANs:
@@ -35,7 +35,7 @@ dns:
   imageTag: "{{ coredns_version }}"
   disabled: false
 imageRepository: registry.k8s.io
-kubernetesVersion: 1.32.0
+kubernetesVersion: "{{ kubernetes_version }}"
 controlPlaneEndpoint: "{{ loadbalancer_apiserver }}:6443"
 networking:
   dnsDomain: cluster.local
