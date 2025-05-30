@@ -18,9 +18,9 @@ enable_nginx_ingress: true
 enable_oauth2_ingress: true
 
 nginx_ingress:
-  http_port: 46010
-  https_port: 46011
+  http_port: 30020
+  https_port: 30021
 
 oauth2_ingress:
-  http_port: 46020
-  https_port: 46021
+  http_port: 30010
+  https_port: 30011

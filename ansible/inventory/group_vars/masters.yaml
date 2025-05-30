@@ -18,3 +18,5 @@ nodes: |
 etcd_nodes_endpoints: "{{ nodes | trim}}"
 
 kubeconfig_export_path: "./.kube/config"
+
+etcd_secret_namespace: "glueops-core-kube-prometheus"
