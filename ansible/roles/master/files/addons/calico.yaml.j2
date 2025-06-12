@@ -39,12 +39,13 @@ podLabels: {}
 # Image and registry configuration for the tigera/operator pod.
 tigeraOperator:
   image: tigera/operator
-  version: "v1.34.5"
+  version: "{{ calico_tiger_operator_version }}"
   registry: quay.io
 calicoctl:
   image: docker.io/calico/ctl
-  tag: "v3.28.2"
+  tag: "{{ calico_chart_version }}"
 
 defaultFelixConfiguration:
-  enabled: false
+  enabled: "{{ calico_node_to_node_encryption | default(false) }}"
+  wireguardEnabled: "{{ calico_node_to_node_encryption | default(false) }}"
   logSeverityScreen: Info

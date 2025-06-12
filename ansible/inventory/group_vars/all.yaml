@@ -8,7 +8,3 @@ etcd_version: "3.5.11"
 etcd_data_dir: "/var/lib/etcd"
 etcd_peer_port: 2380
 etcd_client_port: 2379
-
-coredns_version: "v1.11.1"
-calico_chart_version: "v3.29.3"
-calico_tiger_operator_version: "v1.36.7"
