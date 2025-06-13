@@ -14,5 +14,13 @@ workers: |
 k8s_masters: "{{ masters | trim | split(',') }}"
 k8s_workers: "{{ workers | trim | split(',') }}"
 
-enable_nginx_ingress: false
-enable_pomerium_ingress: false
+enable_nginx_ingress: true
+enable_oauth2_ingress: true
+
+nginx_ingress:
+  http_port: 30020
+  https_port: 30021
+
+oauth2_ingress:
+  http_port: 30010
+  https_port: 30011

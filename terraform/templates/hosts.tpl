@@ -7,7 +7,7 @@ all:
           ansible_host: ${vm.public}
           ansible_user: haproxyadmin
           ip: ${vm.private}
-          ansible_ssh_private_key_file: ../keys/k8s_node
+          ansible_ssh_private_key_file: ../keys/vm_node
       %{ endfor }
     masters:
       hosts:
@@ -16,7 +16,7 @@ all:
           ansible_host: ${vm.public}
           ansible_user: cluster
           ip: ${vm.private}
-          ansible_ssh_private_key_file: ../keys/k8s_node
+          ansible_ssh_private_key_file: ../keys/vm_node
           extra:
             taints:
               - node-role.kubernetes.io/control-plane:NoSchedule-
@@ -28,7 +28,7 @@ all:
           ansible_host: ${vm.public}
           ansible_user: cluster
           ip: ${vm.private}
-          ansible_ssh_private_key_file: ../keys/k8s_node
+          ansible_ssh_private_key_file: ../keys/vm_node
           extra:
             taints:
               - glueops.dev/role=glueops-platform:NoSchedule

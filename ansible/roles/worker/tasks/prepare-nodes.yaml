@@ -115,7 +115,7 @@
 
 - name: Download Kubernetes GPG key
   ansible.builtin.apt_key:
-    url: https://pkgs.k8s.io/core:/stable:/v1.32/deb/Release.key
+    url: https://pkgs.k8s.io/core:/stable:/{{ kubernetes_version.split('.')[0] }}.{{ kubernetes_version.split('.')[1] }}/deb/Release.key
     keyring: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
     state: present
 
@@ -129,16 +129,16 @@
   ansible.builtin.apt_repository:
     repo: >-
       deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg]
-      https://pkgs.k8s.io/core:/stable:/v1.32/deb /
+      https://pkgs.k8s.io/core:/stable:/{{ kubernetes_version.split('.')[0] }}.{{ kubernetes_version.split('.')[1] }}/deb /
     filename: kubernetes
     state: present
 
 - name: Update package list and install kube components
   ansible.builtin.apt:
     name:
-      - kubelet
-      - kubeadm
-      - kubectl
+      - kubelet={{ kubernetes_package_version }}
+      - kubeadm={{ kubernetes_package_version }}
+      - kubectl={{ kubernetes_package_version }}
     state: present
     allow_unauthenticated: true
 

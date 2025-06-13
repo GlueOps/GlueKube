@@ -11,7 +11,6 @@ cilium_hubble_enabled: "false"
 
 # calico
 calico_node_to_node_encryption: "false"
-calico_encapsulation_mode: "vxlan"
 
 nodes: |
   {% for host in groups['masters'] %}

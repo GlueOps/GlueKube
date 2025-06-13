@@ -29,3 +29,8 @@
   ansible.builtin.import_tasks: install-cilium.yaml
   when: inventory_hostname == groups['masters'][0] and cni_type == "cilium"
   tags: install_cilium
+
+- name: Create Etcd Secret
+  ansible.builtin.import_tasks: create-etcd-secret.yaml
+  when: inventory_hostname == groups['masters'][0]
+  tags: create_etcd_secret

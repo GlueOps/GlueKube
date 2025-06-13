@@ -1,16 +1,15 @@
 - name: Create calico.yaml file
-  ansible.builtin.copy:
-    src: addons/calico.yaml.j2
+  ansible.builtin.template:
+    src: files/addons/calico.yaml.j2
     dest: /opt/kubernetes/calico.yaml
     mode: "0644"
   tags: install_calico
 
-
 - name: Deploy calico with Helm
   kubernetes.core.helm:
-    name: projectcalico
+    name: calico
     chart_ref: tigera-operator
-    chart_version: v3.28.2
+    chart_version: "{{ calico_chart_version }}"
     chart_repo_url: https://docs.tigera.io/calico/charts
     release_namespace: tigera-operator
     create_namespace: true

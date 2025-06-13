@@ -20,7 +20,7 @@ backend nodeport-backend
   balance roundrobin
 
 {% for worker in k8s_workers %}
-  server worker-node-{{ loop.index }} {{worker}}:31995 check
+  server worker-node-{{ loop.index }} {{worker}}:{{ nginx_ingress.http_port }} check
 {% endfor %}
 
 
@@ -39,5 +39,5 @@ backend nodeport-backend-https
   balance roundrobin
 
 {% for worker in k8s_workers %}
-  server worker-node-{{ loop.index }} {{worker}}:30154 check
+  server worker-node-{{ loop.index }} {{worker}}:{{ nginx_ingress.https_port }} check
 {% endfor %}

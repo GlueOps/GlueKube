@@ -1,14 +1,10 @@
 ---
-kubernetes_version: "v1.32.0"
+kubernetes_version: "v1.30.11"
+kubernetes_package_version: "1.30.11-1.1"
 loadbalancer_apiserver: "{{ hostvars[groups['loadbalancer'][0]]['ansible_host'] }}"
 haproxy_listen_port: 6443
 
-etcd_version: "3.5.16-0"
+etcd_version: "3.5.11"
 etcd_data_dir: "/var/lib/etcd"
 etcd_peer_port: 2380
 etcd_client_port: 2379
-
-coredns_version: "v1.11.3"
-
-
-

@@ -2,7 +2,7 @@
 - name: show upgrade plan
   ansible.builtin.shell: |
     export KUBECONFIG=/opt/kubernetes/.kube/config
-    kubeadm upgrade plan > /opt/kubernetes/upgrade_plan.txt
+    kubeadm upgrade plan --allow-release-candidate-upgrades > /opt/kubernetes/upgrade_plan.txt
   register: upgrade_plan
   tags: upgrade
 
@@ -21,22 +21,22 @@
     - "Have a look the upgrade plan in /tmp/upgrade_plan.txt"
   tags: upgrade
   
-# - pause:
-#     prompt: "Do you want to apply the above changes? (Y/n)"
-#   register: my_pause
-#   delegate_to: localhost
-#   run_once: true
-#   tags: upgrade
-
-# - name: Confirm sync changes
-#   fail:
-#     msg: "Maybe in the next life"
-#   when: my_pause.user_input|lower != 'y'
-#   run_once: true
-#   tags: upgrade
-
-- name: making the upgrade
-  ansible.builtin.shell: |
-    export KUBECONFIG=/opt/kubernetes/.kube/config
-    kubeadm upgrade apply v1.32.x -y
+- pause:
+    prompt: "Do you want to apply the above changes? (Y/n)"
+  register: my_pause
+  delegate_to: localhost
+  run_once: true
   tags: upgrade
+
+- name: Confirm sync changes
+  fail:
+    msg: "Maybe in the next life"
+  when: my_pause.user_input|lower != 'y'
+  run_once: true
+  tags: upgrade
+
+# - name: making the upgrade
+#   ansible.builtin.shell: |
+#     export KUBECONFIG=/opt/kubernetes/.kube/config
+#     kubeadm upgrade apply v1.32.x -y
+#   tags: upgrade
