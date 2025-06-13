@@ -124,7 +124,11 @@ create a file `.env` and add  the following secrets:
 
 then to allow ansible noticing the .env file, we need to export it like the following: `export $(grep -v '^#' .env | xargs)`
 
-Now to create the cluster, run:
+then test if ansible can ssh into all the hosts using:
+
+`ansible all -i inventory/hosts.yaml -m ping`
+
+if all the hosts pinged just fine, start creating the cluster by running:
 
 `ansible-playbook -i inventory/hosts.yaml playbooks/setup-cluster.yaml`
 

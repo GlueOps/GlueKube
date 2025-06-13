@@ -46,6 +46,6 @@ calicoctl:
   tag: "{{ calico_chart_version }}"
 
 defaultFelixConfiguration:
-  enabled: "{{ calico_node_to_node_encryption | default(false) }}"
-  wireguardEnabled: "{{ calico_node_to_node_encryption | default(false) }}"
+  enabled: {{ calico_node_to_node_encryption | bool }}
+  wireguardEnabled: {{ calico_node_to_node_encryption | bool }}
   logSeverityScreen: Info

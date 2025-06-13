@@ -1,10 +1,9 @@
 - name: Create calico.yaml file
-  ansible.builtin.copy:
-    src: addons/calico.yaml.j2
+  ansible.builtin.template:
+    src: files/addons/calico.yaml.j2
     dest: /opt/kubernetes/calico.yaml
     mode: "0644"
   tags: install_calico
-
 
 - name: Deploy calico with Helm
   kubernetes.core.helm:
