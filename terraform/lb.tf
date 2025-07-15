@@ -1,5 +1,5 @@
 resource "hcloud_server" "lb-node" {
-  for_each = toset([for i in range(1, var.lb_node_count) : tostring(i)])
+  for_each = toset([for i in range(0, var.lb_node_count) : tostring(i)])
   name        = "lb-node-${each.key}"
   image       = "ubuntu-24.04"
   server_type = "cpx11"

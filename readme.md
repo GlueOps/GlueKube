@@ -252,14 +252,16 @@ to verify, run :
 
 ## Rotate Certs
 
-`ansible-playbook  -i inventory/hosts.yaml playbooks/upgrade-cluster.yaml --tags rotate-certs`
+`ansible-playbook  -i inventory/hosts.yaml playbooks/rotate-certs.yaml`
 
 
 ## Upgrade Version
 
-this will update the whole cluster versions(NOT tested)
+this will update the whole cluster versions
 
-`ansible-playbook  -i inventory/hosts.yaml playbooks/upgrade-cluster.yaml --tags upgrade`
+first you need to change the `kubernetes_version` and `kubernetes_package_version` to the desired version, then apply:
+
+`ansible-playbook  -i inventory/hosts.yaml playbooks/upgrade-cluster.yaml`
 
 
 ## OS Security Patch
