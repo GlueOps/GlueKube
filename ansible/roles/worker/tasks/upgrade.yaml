@@ -1,6 +1,6 @@
 # upgrade nodes pacakages
 
-- name: Upgrading {{ inventory_hostname }}
+- name: making the upgrade
   ansible.builtin.shell: |
     kubeadm upgrade node
   tags: upgrade
