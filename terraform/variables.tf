@@ -7,17 +7,17 @@ variable "public_key" {
 }
 variable "master_node_count" {
   type = number
-  default = 3 # it means 3 vms will be created
+  default = 3
 }
 
 variable "worker_node_count" {
   type = number
-  default = 3 # it means 5 vms will be created
+  default = 3 
 }
 
 variable "lb_node_count" {
   type = number
-  default = 1 # it means 3 vms will be created
+  default = 1
 }
 
 variable "location" {
