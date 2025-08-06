@@ -1,0 +1,13 @@
+# this should upgrade all the cluster component like: kubelet, kube-proxy, coredns, etcd(with cert rotation)
+---
+- name: Rotate Certs
+  hosts: masters
+  become: true
+  tasks:
+    - name: Rotate Certs
+      ansible.builtin.include_role:
+        name: master
+        tasks_from: rotate-certs.yaml
+      tags: rotate-certs
+
+  

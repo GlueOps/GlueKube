@@ -1,17 +1,137 @@
 # this should upgrade all the cluster component like: kubelet, kube-proxy, coredns, etcd(with cert rotation)
 ---
-- name: Upgrade cluster & Rotate Certs
-  hosts: masters
+- name: Upgrade cluster
+  hosts: masters[0]
   become: true
   tasks:
-    - name: Rotate Certs
+    - name: Upgrade kubernetes package versions
       ansible.builtin.include_role:
         name: master
-        tasks_from: rotate-certs.yaml
-      tags: rotate-certs
+        tasks_from: upgrade-kubeadm.yaml
+      when: inventory_hostname == groups['masters'][0]
 
-    - name: Upgrade
+    - name: Upgrade First Control plane
+      ansible.builtin.include_role:
+        name: master
+        tasks_from: first-node-upgrade.yaml
+      tags: upgrade
+      when: inventory_hostname == groups['masters'][0]
+
+    - name: Upgrade kubernetes package versions
+      ansible.builtin.include_role:
+        name: master
+        tasks_from: upgrade-kubelet.yaml
+      when: inventory_hostname == groups['masters'][0]
+
+
+- name: Upgrade Master Nodes Sequentially
+  hosts: masters
+  become: true
+  serial: 1
+  tasks:
+    - name: Upgrade kubernetes package versions
+      ansible.builtin.include_role:
+        name: master
+        tasks_from: upgrade-kubeadm.yaml
+      when: inventory_hostname != groups['masters'][0]
+
+    - name: Upgrade Master Nodes
       ansible.builtin.include_role:
         name: master
         tasks_from: upgrade.yaml
       tags: upgrade
+      when: inventory_hostname != groups['masters'][0]
+      
+    - name: "Drain '{{ inventory_hostname }}' from the master"
+      delegate_to: "{{ groups['masters'][0] }}"
+      become: yes 
+      ansible.builtin.shell: |
+        export KUBECONFIG=/opt/kubernetes/.kube/config
+        kubectl cordon {{ inventory_hostname }}
+        kubectl drain {{ inventory_hostname }} --ignore-daemonsets --delete-emptydir-data
+          
+      register: drain_result
+      changed_when: "'drained' in drain_result.stdout"
+      when: inventory_hostname != groups['masters'][0]
+    
+    - name: "Perform maintenance on '{{ inventory_hostname }}'"
+      ansible.builtin.debug:
+        msg: "Node {{ inventory_hostname }} is drained. Performing maintenance now."
+
+    - name: Upgrade kubernetes package versions
+      ansible.builtin.include_role:
+        name: master
+        tasks_from: upgrade-kubelet.yaml
+      when: inventory_hostname != groups['masters'][0]
+    
+    - name: "Uncordon '{{ inventory_hostname }}' from the master"
+      delegate_to: "{{ groups['masters'][0] }}"
+      become: yes
+      ansible.builtin.shell: |
+        export KUBECONFIG=/opt/kubernetes/.kube/config
+        kubectl uncordon {{ inventory_hostname }}
+      register: uncordon_result
+      changed_when: "'uncordoned' in uncordon_result.stdout"
+      when: inventory_hostname != groups['masters'][0]
+
+    - name: "Pause for 60 seconds to allow pods to reschedule"
+      ansible.builtin.pause:
+        seconds: 60
+        prompt: "Node {{ inventory_hostname }} is back online. Pausing before starting with the next node."
+
+
+
+- name: Upgrade Worker Nodes Sequentially
+  hosts: workers
+  become: true
+  serial: 1
+  tasks: 
+    - name: Upgrade kubernetes package versions
+      ansible.builtin.include_role:
+        name: master
+        tasks_from: upgrade-kubeadm.yaml
+      
+    - name: Upgrade Worker Nodes
+      ansible.builtin.include_role:
+        name: worker
+        tasks_from: upgrade.yaml
+      tags: upgrade
+
+    - name: "Drain '{{ inventory_hostname }}' from the master"
+      delegate_to: "{{ groups['masters'][0] }}"
+      become: yes 
+      ansible.builtin.shell: |
+        export KUBECONFIG=/opt/kubernetes/.kube/config
+        kubectl cordon {{ inventory_hostname }}
+        kubectl drain {{ inventory_hostname }} --ignore-daemonsets --delete-emptydir-data
+          
+      register: drain_result
+      changed_when: "'drained' in drain_result.stdout"
+    
+    - name: "Perform maintenance on '{{ inventory_hostname }}'"
+      ansible.builtin.debug:
+        msg: "Node {{ inventory_hostname }} is drained. Performing maintenance now."
+
+    - name: Upgrade kubernetes package versions
+      ansible.builtin.include_role:
+        name: worker
+        tasks_from: upgrade-kubelet.yaml
+        apply:
+          tags:
+          - kubernetes_component
+
+    - name: "Uncordon '{{ inventory_hostname }}' from the master"
+      delegate_to: "{{ groups['masters'][0] }}"
+      become: yes
+      ansible.builtin.shell: |
+        export KUBECONFIG=/opt/kubernetes/.kube/config
+        kubectl uncordon {{ inventory_hostname }}
+      register: uncordon_result
+      changed_when: "'uncordoned' in uncordon_result.stdout"
+
+    - name: "Pause for 60 seconds to allow pods to reschedule"
+      ansible.builtin.pause:
+        seconds: 60
+        prompt: "Node {{ inventory_hostname }} is back online. Pausing before starting with the next node."
+
+

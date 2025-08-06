@@ -1,0 +1,33 @@
+- name: Update package list and install kube components
+  ansible.builtin.apt:
+    name:
+      - kubelet={{ kubernetes_package_version }}
+      - kubectl={{ kubernetes_package_version }}
+    state: present
+    allow_unauthenticated: true
+    allow_change_held_packages: true
+    allow_downgrade: true
+
+- name: Hold kube packages
+  ansible.builtin.dpkg_selections:
+    name: kubelet
+    selection: hold
+
+- name: Hold kube packages
+  ansible.builtin.dpkg_selections:
+    name: kubectl
+    selection: hold
+
+- name: Enable kubelet
+  ansible.builtin.systemd_service:
+    name: kubelet
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Restart kubelet
+  ansible.builtin.systemd_service:
+    name: kubelet
+    enabled: true
+    state: restarted
+    daemon_reload: true

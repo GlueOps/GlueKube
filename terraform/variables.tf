@@ -7,17 +7,17 @@ variable "public_key" {
 }
 variable "master_node_count" {
   type = number
-  default = 4
+  default = 3
 }
 
 variable "worker_node_count" {
   type = number
-  default = 6
+  default = 3 
 }
 
 variable "lb_node_count" {
   type = number
-  default = 4
+  default = 1
 }
 
 variable "location" {

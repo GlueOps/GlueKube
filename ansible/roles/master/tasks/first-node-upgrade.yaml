@@ -1,0 +1,51 @@
+- name: show upgrade plan
+  ansible.builtin.shell: |
+    export KUBECONFIG=/opt/kubernetes/.kube/config
+    kubeadm upgrade plan --allow-release-candidate-upgrades > /opt/kubernetes/upgrade_plan.txt
+  register: upgrade_plan
+  tags: upgrade
+
+# fetch the upgrade plan
+- name: fetch the upgrade plan
+  ansible.builtin.fetch:
+    src: /opt/kubernetes/upgrade_plan.txt
+    dest: /tmp/upgrade_plan.txt
+    flat: yes
+  tags: upgrade
+
+# debug
+- name: List of nodes changes
+  ansible.builtin.debug:
+    msg:
+    - "Have a look the upgrade plan in /tmp/upgrade_plan.txt"
+  tags: upgrade
+  
+- pause:
+    prompt: "Do you want to apply the above changes? (Y/n)"
+  register: my_pause
+  delegate_to: localhost
+  run_once: true
+  tags: upgrade
+
+- name: Confirm sync changes
+  fail:
+    msg: "Maybe in the next life"
+  when: my_pause.user_input|lower != 'y'
+  run_once: true
+  tags: upgrade
+
+
+# debug
+- name: Assure Message
+  ansible.builtin.debug:
+    msg:
+    - "We're upgrading your cluster to the following kubernetes version {{ kubernetes_version }}"
+  tags: upgrade
+
+# upgrade nodes pacakages
+
+- name: making the upgrade
+  ansible.builtin.shell: |
+    export KUBECONFIG=/opt/kubernetes/.kube/config
+    kubeadm upgrade apply {{ kubernetes_version }} -y
+  tags: upgrade

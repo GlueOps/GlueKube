@@ -1,6 +1,6 @@
 ---
-kubernetes_version: "v1.30.11"
-kubernetes_package_version: "1.30.11-1.1"
+kubernetes_version: "v1.32.6"
+kubernetes_package_version: "1.32.6-1.1"
 loadbalancer_apiserver: "{{ hostvars[groups['loadbalancer'][0]]['ansible_host'] }}"
 haproxy_listen_port: 6443
 
