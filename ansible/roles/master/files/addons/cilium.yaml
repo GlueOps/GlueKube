@@ -1688,7 +1688,7 @@ hubble:
         # @schema
         override: ~
         repository: "quay.io/cilium/hubble-ui-backend"
-        tag: "v0.13.1"
+        tag: "v0.13.2"
         digest: "sha256:0e0eed917653441fded4e7cdb096b7be6a3bddded5a2dd10812a27b1fc6ed95b"
         useDigest: true
         pullPolicy: "IfNotPresent"
