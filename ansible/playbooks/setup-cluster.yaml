@@ -1,8 +1,8 @@
 ---
-- hosts: loadbalancer
-  become: true
-  roles:
-    - loadbalancer
+# - hosts: loadbalancer
+#   become: true
+#   roles:
+#     - loadbalancer
 
 - hosts: masters
   become: true

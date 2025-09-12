@@ -1,4 +1,7 @@
 ---
+- name: Disable swap immediately
+  command: swapoff -a
+  
 - name: Load required kernel modules
   community.general.modprobe:
     name: overlay
@@ -18,6 +21,15 @@
   ansible.posix.sysctl:
     name: vm.swappiness
     value: 0
+
+- name: Update apt package cache
+  ansible.builtin.apt:
+    update_cache: yes
+    cache_valid_time: 3600 # Update cache if older than 1 hour (in seconds)
+
+- name: Upgrade all installed packages
+  ansible.builtin.apt:
+    upgrade: dist 
 
 - name: Install dependencies for containerd
   ansible.builtin.apt:
@@ -195,11 +207,12 @@
   tags: kubernetes_component_kubelet
 
 # install helm
-- name: Download Helm GPG key
-  ansible.builtin.apt_key:
-    url: https://baltocdn.com/helm/signing.asc
-    keyring: /usr/share/keyrings/helm.gpg
-  tags: install_helm
+- name: Add Helm GPG key
+  ansible.builtin.get_url:
+    url: https://packages.buildkite.com/helm-linux/helm-debian/gpgkey
+    dest: /usr/share/keyrings/helm.gpg
+    mode: '0644'
+  register: helm_gpg
 
 - name: Dearmor Helm GPG key
   ansible.builtin.command: gpg --dearmor -o /usr/share/keyrings/helm.gpg
@@ -216,8 +229,8 @@
 - name: Add Helm repository
   ansible.builtin.apt_repository:
     repo: >-
-      deb [arch=amd64 signed-by=/usr/share/keyrings/helm.gpg]
-      https://baltocdn.com/helm/stable/debian/ all main
+      deb [signed-by=/usr/share/keyrings/helm.gpg]
+      https://packages.buildkite.com/helm-linux/helm-debian/any/ any main
     filename: helm-stable-debian
     state: present
   tags: install_helm

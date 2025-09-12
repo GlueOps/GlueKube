@@ -1,4 +1,7 @@
 ---
+- name: Disable swap immediately
+  command: swapoff -a
+
 - name: Load required kernel modules
   community.general.modprobe:
     name: overlay
@@ -18,6 +21,15 @@
   ansible.posix.sysctl:
     name: vm.swappiness
     value: 0
+
+- name: Update apt package cache
+  ansible.builtin.apt:
+    update_cache: yes
+    cache_valid_time: 3600 # Update cache if older than 1 hour (in seconds)
+
+- name: Upgrade all installed packages
+  ansible.builtin.apt:
+    upgrade: dist 
 
 - name: Install dependencies for containerd
   ansible.builtin.apt:
