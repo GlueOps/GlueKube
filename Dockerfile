@@ -1,4 +1,4 @@
-FROM ubuntu:24.10@sha256:cdf755952ed117f6126ff4e65810bf93767d4c38f5c7185b50ec1f1078b464cc
+FROM ubuntu:oracular-20250619@sha256:cdf755952ed117f6126ff4e65810bf93767d4c38f5c7185b50ec1f1078b464cc
 ENV ANSIBLE_VERSION 2.16.14
 RUN apt-get update; \
     apt-get install -y gcc python3; \
