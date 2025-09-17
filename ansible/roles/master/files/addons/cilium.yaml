@@ -1437,7 +1437,7 @@ hubble:
       # @schema
       override: ~
       repository: "quay.io/cilium/hubble-relay"
-      tag: "v1.17.1"
+      tag: "v1.18.2@sha256:6079308ee15e44dff476fb522612732f7c5c4407a1017bc3470916242b0405ac"
       # hubble-relay-digest
       digest: "sha256:397e8fbb188157f744390a7b272a1dec31234e605bcbe22d8919a166d202a3dc"
       useDigest: true
