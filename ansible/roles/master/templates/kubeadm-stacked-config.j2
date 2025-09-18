@@ -33,6 +33,7 @@ apiServer:
   certSANs:
     - "{{ loadbalancer_apiserver }}"
     - "127.0.0.1"
+    - "0.0.0.0"
 certificatesDir: /etc/kubernetes/pki
 clusterName: kubernetes
 controllerManager: {}

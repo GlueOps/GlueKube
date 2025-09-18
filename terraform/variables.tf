@@ -15,11 +15,6 @@ variable "worker_node_count" {
   default = 3 
 }
 
-variable "lb_node_count" {
-  type = number
-  default = 1
-}
-
 variable "location" {
   type = string
   default = "fsn1"
