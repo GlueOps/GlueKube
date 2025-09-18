@@ -1,9 +1,4 @@
 ---
-# - hosts: loadbalancer
-#   become: true
-#   roles:
-#     - loadbalancer
-
 - hosts: masters
   become: true
   roles:

@@ -8,3 +8,9 @@ etcd_version: "3.5.11"
 etcd_data_dir: "/var/lib/etcd"
 etcd_peer_port: 2380
 etcd_client_port: 2379
+
+ufw_private_cidr: "10.0.0.0/24"
+ufw_public_ports:
+  - 22
+  - 80
+  - 443
