@@ -1,14 +1,5 @@
 all:
   children:
-    loadbalancer:
-      hosts:
-      %{ for index, vm in loadbalancer_ipv4_address }
-        lb-node-${index}:
-          ansible_host: ${vm.public}
-          ansible_user: haproxyadmin
-          ip: ${vm.private}
-          ansible_ssh_private_key_file: ../keys/vm_node
-      %{ endfor }
     masters:
       hosts:
       %{ for index, vm in master_ipv4_addresses }
