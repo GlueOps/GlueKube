@@ -3654,7 +3654,7 @@ authentication:
             # @schema
             override: ~
             repository: "ghcr.io/spiffe/spire-agent"
-            tag: "1.9.6"
+            tag: "1.13.2@sha256:6d8a6691d3fc9d391cfe365c4f223c66728fab79732739ebf089e628ad6328d9"
             digest: "sha256:5106ac601272a88684db14daf7f54b9a45f31f77bb16a906bd5e87756ee7b97c"
             useDigest: true
             pullPolicy: "IfNotPresent"
