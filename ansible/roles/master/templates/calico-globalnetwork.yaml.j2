@@ -1,0 +1,20 @@
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: block-port-80-on-lb-nodes
+spec:
+  preDNAT: true
+  applyOnForward: true
+  types:
+    - Ingress
+    - Egress
+  ingress:
+    - action: Allow
+      protocol: TCP
+      destination:
+        ports:
+          - 80
+          - 443
+    - action: Deny
+  egress:
+    - action: Allow

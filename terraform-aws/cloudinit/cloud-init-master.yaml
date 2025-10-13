@@ -20,14 +20,5 @@ write_files:
     path: /etc/sysctl.d/k8s.conf
 runcmd:
   - sudo sysctl --system
-  - sudo ip link set public up
-    if [ "${cloud_provider}" = "aws" ]; then
-      sudo ip link property add dev ens6 altname public
-      sudo dhcpcd public
-    elseif [ "${cloud_provider}" = "hetzner" ]; then
-      sudo ip link property add dev eth0 altname public
-      sudo dhclient public
-    elseif [ "${cloud_provider}" = "exoscale" ]; then
-      sudo ip link property add dev eth0 altname public
-      sudo dhclient public
-    fi
+  - sudo ip link property add dev ens6 altname public
+  - sudo dhcpcd public

@@ -14,6 +14,11 @@ data "aws_ami" "ubuntu" {
   owners = ["099720109477"] # Canonical
 }
 
+resource "aws_key_pair" "ssh-key" {
+  key_name   = "ssh-key"
+  public_key = var.public_key
+}
+
 
 resource "aws_security_group" "k8s_nodes" {
   name        = "${var.cluster_name}-nodes"
@@ -42,55 +47,13 @@ resource "aws_security_group" "k8s_nodes" {
 
 
 
-resource "aws_key_pair" "deployer" {
-  key_name   = "ssh-key"
-  public_key = var.public_key
-}
-
-
-resource "aws_network_interface" "test" {
-
-  subnet_id       = aws_subnet.private.id
-  security_groups = [aws_security_group.k8s_nodes.id]
-  private_ips     = ["10.0.1.91"]
-}
-
-resource "aws_eip" "one" {
-  domain                    = "vpc"
-  network_interface         = aws_network_interface.test.id
-  associate_with_private_ip = "10.0.1.91"
-}
-
-resource "aws_instance" "testwith_eni" {
-    ami           = data.aws_ami.ubuntu.id
-    instance_type = "t3.medium"
-    subnet_id     = aws_subnet.public.id
-    vpc_security_group_ids = [aws_security_group.k8s_nodes.id]
-    private_ip         = "10.0.0.90"
-    user_data = <<-EOF
-      #cloud-config
-      runcmd:
-        - sudo ip link set ens6 up
-        - sudo dhcpcd ens6
-      EOF
-}
-
-resource "aws_network_interface_attachment" "test" {
-  instance_id   = aws_instance.testwith_eni.id
-  network_interface_id = aws_network_interface.test.id
-  device_index  = 1
-}
-
-
-
-
 resource "aws_instance" "master" {
     for_each = toset([for i in range(0, var.master_node_count) : tostring(i)])
     ami           = data.aws_ami.ubuntu.id
     instance_type = "t3.medium"
     subnet_id     = aws_subnet.public.id
     vpc_security_group_ids = [aws_security_group.k8s_nodes.id]
-    key_name      = aws_key_pair.deployer.key_name
+    key_name      = aws_key_pair.ssh-key.key_name
     tags = {
         Name = "master-node-${each.key}"
         Role = "master"
@@ -98,7 +61,7 @@ resource "aws_instance" "master" {
     private_ip         = "10.0.0.3${each.key}"
     user_data_base64 = base64encode("${templatefile("${path.module}/cloudinit/cloud-init-master.yaml",{
         public_key = var.public_key,
-        hostname = "master-node-${each.key}"
+        hostname = "master-node-${each.key}",
     })}")
 }
 
@@ -108,7 +71,7 @@ resource "aws_instance" "worker" {
     instance_type = "t3.medium"
     subnet_id     = aws_subnet.public.id
     vpc_security_group_ids = [aws_security_group.k8s_nodes.id]
-    key_name      = aws_key_pair.deployer.key_name
+    key_name      = aws_key_pair.ssh-key.key_name
     tags = {
         Name = "worker-node-${each.key}"
         Role = "worker"

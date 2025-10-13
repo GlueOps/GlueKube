@@ -29,7 +29,7 @@ apiServer:
     - "127.0.0.1"
     - "0.0.0.0"
   {% for ip in etcd_initial_cluster %}
-    - {{ ip }}
+  - "{{ ip }}"
   {% endfor %}
 certificatesDir: /etc/kubernetes/pki
 clusterName: kubernetes
@@ -49,6 +49,7 @@ etcd:
     {% for ip in etcd_initial_cluster %}
       - {{ ip }}
     {% endfor %}
+
     peerCertSANs: 
     {% for ip in etcd_initial_cluster %}
       - {{ ip }}

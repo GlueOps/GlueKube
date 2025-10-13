@@ -4,14 +4,14 @@ resource "local_file" "hosts_cfg" {
       master_ipv4_addresses = {
         for idx, instance in aws_instance.master :
         idx => {
-          private = instance.private_ip
+          private = "10.0.1.3${idx}"
           public  = instance.public_ip
         }
       }
       worker_ipv4_addresses = {
         for idx, instance in aws_instance.worker :
         idx => {
-          private = instance.private_ip
+          private = "10.0.1.2${idx}"
           public  = instance.public_ip
         }
       }

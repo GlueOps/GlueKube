@@ -1,7 +1,7 @@
 #cloud-config
 packages:
   - curl
-
+hostname: ${hostname}
 ssh_pwauth: true
 chpasswd:
   expire: false
@@ -21,3 +21,4 @@ write_files:
 runcmd:
   - sudo sysctl --system
   - sudo swapoff -a
+  - sudo ip link property add dev eth0 altname public

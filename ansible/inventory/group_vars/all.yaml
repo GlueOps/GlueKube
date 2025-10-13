@@ -9,8 +9,8 @@ etcd_data_dir: "/var/lib/etcd"
 etcd_peer_port: 2380
 etcd_client_port: 2379
 
-ufw_private_cidr: "10.0.0.0/24"
-ufw_public_ports:
-  - 22
-  - 80
-  - 443
+lb_nodes:
+  - worker-node-0
+  - worker-node-1
+  - worker-node-3
+  - worker-node-4
