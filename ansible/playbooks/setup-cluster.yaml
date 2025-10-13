@@ -22,3 +22,4 @@
       vars:
         values: "{{ hostvars| dict2items | community.general.json_query(\"[?starts_with(key, 'master') 
           || starts_with(key, 'worker')].{host:key,extra:value.extra}\")  }}"
+      tags: label_nodes

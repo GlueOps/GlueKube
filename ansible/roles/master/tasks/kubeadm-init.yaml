@@ -1,6 +1,6 @@
 - name: Generate Kubeadm configuration
   ansible.builtin.template:
-    src: "kubeadm-stacked-config.j2"
+    src: "kubeadm-stacked-config.yaml.j2"
     dest: "{{ kubeadm_config_file }}"
     owner: root
     group: root

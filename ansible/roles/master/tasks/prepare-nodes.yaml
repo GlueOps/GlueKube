@@ -2,40 +2,6 @@
 - name: Disable swap immediately
   command: swapoff -a
 
-- name: Ensure UFW is installed
-  ansible.builtin.package:
-    name: ufw
-    state: present
-
-- name: Reset UFW rules
-  ansible.builtin.command: ufw --force reset
-  changed_when: false
-
-- name: Set default deny incoming
-  community.general.ufw:
-    rule: deny
-    direction: incoming
-
-- name: Set default allow outgoing
-  community.general.ufw:
-    rule: allow
-    direction: outgoing
-
-- name: Allow public ports
-  community.general.ufw:
-    rule: allow
-    port: "{{ item }}"
-    proto: tcp
-  loop: "{{ ufw_public_ports }}"
-
-- name: Allow all from private CIDR
-  community.general.ufw:
-    rule: allow
-    from_ip: "{{ ufw_private_cidr }}"
-
-- name: Enable ufw
-  community.general.ufw:
-    state: enabled
   
 - name: Load required kernel modules
   community.general.modprobe:
@@ -242,40 +208,40 @@
   tags: kubernetes_component_kubelet
 
 # install helm
-- name: Add Helm GPG key
+
+- name: Download Helm binary tarball
   ansible.builtin.get_url:
-    url: https://packages.buildkite.com/helm-linux/helm-debian/gpgkey
-    dest: /usr/share/keyrings/helm.gpg
+    url: https://get.helm.sh/helm-v3.18.6-linux-amd64.tar.gz
+    dest: /tmp/helm-v3.18.6-linux-amd64.tar.gz
     mode: '0644'
-  register: helm_gpg
 
-- name: Dearmor Helm GPG key
-  ansible.builtin.command: gpg --dearmor -o /usr/share/keyrings/helm.gpg
+- name: Extract Helm binary
+  ansible.builtin.unarchive:
+    src: /tmp/helm-v3.18.6-linux-amd64.tar.gz
+    dest: /tmp/
+    remote_src: yes
+
+- name: Move Helm binary to /usr/local/bin
+  ansible.builtin.command:
+    cmd: mv /tmp/linux-amd64/helm /usr/bin/helm
   args:
-    creates: /usr/share/keyrings/helm.gpg
-  tags: install_helm
+    creates: /usr/local/bin/helm
 
-- name: Install apt-transport-https
-  ansible.builtin.apt:
-    name: apt-transport-https
-    state: present
-  tags: install_helm
+- name: Ensure Helm binary is executable
+  ansible.builtin.file:
+    path: /usr/bin/helm
+    mode: '0755'
 
-- name: Add Helm repository
-  ansible.builtin.apt_repository:
-    repo: >-
-      deb [signed-by=/usr/share/keyrings/helm.gpg]
-      https://packages.buildkite.com/helm-linux/helm-debian/any/ any main
-    filename: helm-stable-debian
-    state: present
-  tags: install_helm
+- name: Verify Helm installation
+  ansible.builtin.command: helm version
+  register: helm_version
+  changed_when: false
 
-- name: Update repositories cache and install "helm" package
-  ansible.builtin.apt:
-    name: helm
-    update_cache: true
-    state: present
-  tags: install_helm
+- name: Show Helm version
+  ansible.builtin.debug:
+    msg: "{{ helm_version.stdout }}"
+
+
 
 # install k9s
 - name: Install k9s
