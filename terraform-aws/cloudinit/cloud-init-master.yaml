@@ -21,4 +21,4 @@ write_files:
 runcmd:
   - sudo sysctl --system
   - sudo ip link property add dev ens6 altname public
-  - sudo dhcpcd public
+  - sudo dhcpcd ens6

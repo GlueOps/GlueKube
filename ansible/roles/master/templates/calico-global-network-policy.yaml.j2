@@ -7,7 +7,6 @@ spec:
   applyOnForward: true
   types:
     - Ingress
-    - Egress
   ingress:
     - action: Allow
       protocol: TCP
@@ -16,5 +15,4 @@ spec:
           - 80
           - 443
     - action: Deny
-  egress:
-    - action: Allow
+ 
