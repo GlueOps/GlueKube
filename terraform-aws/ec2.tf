@@ -50,7 +50,7 @@ resource "aws_security_group" "k8s_nodes" {
 resource "aws_instance" "master" {
     for_each = toset([for i in range(0, var.master_node_count) : tostring(i)])
     ami           = data.aws_ami.ubuntu.id
-    instance_type = "t3.medium"
+    instance_type = "t3a.xlarge"
     subnet_id     = aws_subnet.public.id
     vpc_security_group_ids = [aws_security_group.k8s_nodes.id]
     key_name      = aws_key_pair.ssh-key.key_name
@@ -63,18 +63,26 @@ resource "aws_instance" "master" {
         public_key = var.public_key,
         hostname = "master-node-${each.key}",
     })}")
+    root_block_device {
+      volume_size = 30    # new desired size (GiB)
+      volume_type = "gp3"
+    }
 }
 
 resource "aws_instance" "worker" {
     for_each = toset([for i in range(0, var.worker_node_count) : tostring(i)])
     ami           = data.aws_ami.ubuntu.id
-    instance_type = "t3.medium"
+    instance_type = "t3a.xlarge"
     subnet_id     = aws_subnet.public.id
     vpc_security_group_ids = [aws_security_group.k8s_nodes.id]
     key_name      = aws_key_pair.ssh-key.key_name
     tags = {
         Name = "worker-node-${each.key}"
         Role = "worker"
+    }
+    root_block_device {
+      volume_size = 30    # new desired size (GiB)
+      volume_type = "gp3"
     }
     private_ip         = "10.0.0.2${each.key}"
     user_data_base64 = base64encode("${templatefile("${path.module}/cloudinit/cloud-init-worker.yaml",{

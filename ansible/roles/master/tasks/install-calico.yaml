@@ -40,16 +40,16 @@
     kubeconfig: /opt/kubernetes/.kube/config
   tags: install_calico
 
-- name: Apply Calico HostEndpoint manifest for each node
-  ansible.builtin.shell: |
-    export KUBECONFIG=/opt/kubernetes/.kube/config
-    sed 's/node_name/{{ item }}/g' /opt/kubernetes/calico-hostendpoint.yaml | kubectl apply -f -
-  loop: "{{ lb_nodes }}"
+# - name: Apply Calico HostEndpoint manifest for each node
+#   ansible.builtin.shell: |
+#     export KUBECONFIG=/opt/kubernetes/.kube/config
+#     sed 's/node_name/{{ item }}/g' /opt/kubernetes/calico-hostendpoint.yaml | kubectl apply -f -
+#   loop: "{{ lb_nodes }}"
 
-- name: Apply Calico Configs
-  ansible.builtin.shell: |
-    export KUBECONFIG=/opt/kubernetes/.kube/config 
-    kubectl apply -f /opt/kubernetes/calico-felix.yaml
-    kubectl apply -f /opt/kubernetes/calico-global-network-policy.yaml
-  tags: install_calico
+# - name: Apply Calico Configs
+#   ansible.builtin.shell: |
+#     export KUBECONFIG=/opt/kubernetes/.kube/config 
+#     kubectl apply -f /opt/kubernetes/calico-felix.yaml
+#     kubectl apply -f /opt/kubernetes/calico-global-network-policy.yaml
+#   tags: install_calico
 

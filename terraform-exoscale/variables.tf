@@ -1,14 +1,9 @@
-variable "vpc_cidr" {
-  description = "CIDR block for the VPC"
+variable "prefix" {
+  description = "Prefix for resource names"
   type        = string
-  default     = "10.0.0.0/16"
+  default     = "gluekube"
 }
 
-variable "cluster_name" {
-  description = "Name of the Kubernetes cluster"
-  type        = string
-  default     = "gluekube-aws"
-}
 
 variable "public_key" {
   sensitive = true
@@ -22,4 +17,18 @@ variable "master_node_count" {
 variable "worker_node_count" {
   type = number
   default = 6
+}
+
+variable "zone" {
+  type = string
+  default = "ch-gva-2"
+  
+}
+
+variable "excoscale_key" {
+  type = string
+}
+
+variable "excoscale_secret" {
+  type = string
 }
