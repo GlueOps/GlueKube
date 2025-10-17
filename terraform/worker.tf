@@ -15,7 +15,7 @@ resource "hcloud_server" "worker-node" {
   }
   user_data = base64encode("${templatefile("${path.module}/cloudinit/cloud-init-worker.yaml",{
     public_key = var.public_key
-    hostname = "master-node-${each.key}"
+    hostname = "worker-node-${each.key}"
   })}")
 
   depends_on = [hcloud_network_subnet.private_network_subnet, hcloud_server.master-node]

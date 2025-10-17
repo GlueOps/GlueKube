@@ -24,6 +24,5 @@ all:
             taints:
               - glueops.dev/role=glueops-platform:NoSchedule
             labels:
-              - public-ip=${vm.public}
               - use-as-lb=true
       %{ endfor }
