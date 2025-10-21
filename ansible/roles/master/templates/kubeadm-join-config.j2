@@ -1,0 +1,25 @@
+apiVersion: kubeadm.k8s.io/v1beta3
+kind: JoinConfiguration
+nodeRegistration:
+    criSocket: unix:///var/run/containerd/containerd.sock
+    kubeletExtraArgs:
+      node-ip: "{{ hostvars[inventory_hostname].ip }}"
+    imagePullPolicy: IfNotPresent
+    taints:
+      - key: "node-role.kubernetes.io/control-plane"
+        value: "false"
+        effect: "NoSchedule"
+
+discovery:
+  bootstrapToken:
+    token: "{{ hostvars[groups['masters'][0]]['join_token'].stdout }}"
+    apiServerEndpoint: "{{ loadbalancer_apiserver }}:6443"
+    caCertHashes:
+      - "sha256:{{ hostvars[groups['masters'][0]]['join_hash'].stdout }}"
+
+controlPlane:
+  localAPIEndpoint:
+    advertiseAddress: "{{ hostvars[inventory_hostname].ip }}"
+    bindPort: 6443
+  certificateKey: "{{ certificate_key }}"
+  

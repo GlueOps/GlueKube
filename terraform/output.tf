@@ -11,10 +11,3 @@ output "worker_ipv4_addresses" {
   }
   description = "The public IPv4 addresses of the Hetzner worker servers"
 }
-
-output "lb_ipv4_addresses" {
-  value = {
-    for key, server in hcloud_server.lb-node : key => server.ipv4_address
-  }
-  description = "The public IPv4 addresses of the Hetzner loadbalancer servers"
-}

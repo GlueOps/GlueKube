@@ -20,5 +20,5 @@ write_files:
     path: /etc/sysctl.d/k8s.conf
 runcmd:
   - sudo sysctl --system
-  - sudo swapoff -a
-  - sudo ip link property add dev eth0 altname public
+  - sudo ip link property add dev ens6 altname public
+  - sudo dhcpcd ens6

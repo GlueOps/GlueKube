@@ -14,6 +14,7 @@ resource "hcloud_server" "master-node" {
   }
   user_data = base64encode("${templatefile("${path.module}/cloudinit/cloud-init-master.yaml",{
     public_key = var.public_key
+    hostname = "master-node-${each.key}"
   })}")
 
   # If we don't specify this, Terraform will create the resources in parallel

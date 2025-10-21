@@ -1,0 +1,121 @@
+apiVersion: projectcalico.org/v3
+kind: FelixConfiguration
+metadata:
+  name: default
+spec:
+  # Drop all traffic to/from host interfaces unless explicitly allowed by policy
+  defaultEndpointToHostAction: Drop
+
+  # Enable failsafe ports so you don't lock yourself out of cluster mgmt
+  failsafeInboundHostPorts:
+    - protocol: tcp
+      net: 10.0.0.0/8
+      port: 22
+    - protocol: tcp
+      net: 10.0.0.0/8
+      port: 68
+    - protocol: tcp
+      net: 10.0.0.0/8
+      port: 179
+    - protocol: tcp
+      net: 10.0.0.0/8
+      port: 2379
+    - protocol: tcp
+      net: 10.0.0.0/8
+      port: 6443
+    - protocol: tcp
+      net: 10.0.0.0/8
+      port: 5473
+    - protocol: tcp
+      net: 10.0.0.0/8
+      port: 6666
+    - protocol: tcp
+      net: 10.0.0.0/8
+      port: 6667
+    - protocol: udp
+      net: 10.0.0.0/8
+      port: 53
+    - protocol: udp
+      net: 10.0.0.0/8
+      port: 67
+    - protocol: udp
+      net: 10.0.0.0/8
+      port: 68
+    - protocol: tcp
+      net: 10.0.0.0/8
+      port: 2380
+    
+    - protocol: tcp
+      net: 172.16.0.0/12
+      port: 22
+    - protocol: tcp
+      net: 172.16.0.0/12
+      port: 68
+    - protocol: tcp
+      net: 172.16.0.0/12
+      port: 179
+    - protocol: tcp
+      net: 172.16.0.0/12
+      port: 2379
+    - protocol: tcp
+      net: 172.16.0.0/12
+      port: 6443
+    - protocol: tcp
+      net: 172.16.0.0/12
+      port: 5473
+    - protocol: tcp
+      net: 172.16.0.0/12
+      port: 6666
+    - protocol: tcp
+      net: 172.16.0.0/12
+      port: 6667
+    - protocol: udp
+      net: 172.16.0.0/12
+      port: 53
+    - protocol: udp
+      net: 172.16.0.0/12
+      port: 67
+    - protocol: udp
+      net: 172.16.0.0/12
+      port: 68
+    - protocol: tcp
+      net: 172.16.0.0/12
+      port: 2380
+    
+    - protocol: tcp
+      net: 192.168.0.0/16
+      port: 22
+    - protocol: tcp
+      net: 192.168.0.0/16
+      port: 68
+    - protocol: tcp
+      net: 192.168.0.0/16
+      port: 179
+    - protocol: tcp
+      net: 192.168.0.0/16
+      port: 2379
+    - protocol: tcp
+      net: 192.168.0.0/16
+      port: 6443
+    - protocol: tcp
+      net: 192.168.0.0/16
+      port: 5473
+    - protocol: tcp
+      net: 192.168.0.0/16
+      port: 6666
+    - protocol: tcp
+      net: 192.168.0.0/16
+      port: 6667
+    - protocol: udp
+      net: 192.168.0.0/16
+      port: 53
+    - protocol: udp
+      net: 192.168.0.0/16
+      port: 67
+    - protocol: udp
+      net: 192.168.0.0/16
+      port: 68
+    - protocol: tcp
+      net: 192.168.0.0/16
+      port: 2380
+

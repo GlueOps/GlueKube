@@ -24,5 +24,5 @@ all:
             taints:
               - glueops.dev/role=glueops-platform:NoSchedule
             labels:
-              - use-as-lb=true
+              - glueops.dev/role=glueops-platform
       %{ endfor }
