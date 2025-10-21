@@ -46,10 +46,9 @@
 #     sed 's/node_name/{{ item }}/g' /opt/kubernetes/calico-hostendpoint.yaml | kubectl apply -f -
 #   loop: "{{ lb_nodes }}"
 
-# - name: Apply Calico Configs
+# - name: Apply Calico Configs(Felix and Global Network Policy)
 #   ansible.builtin.shell: |
 #     export KUBECONFIG=/opt/kubernetes/.kube/config 
 #     kubectl apply -f /opt/kubernetes/calico-felix.yaml
 #     kubectl apply -f /opt/kubernetes/calico-global-network-policy.yaml
 #   tags: install_calico
-
