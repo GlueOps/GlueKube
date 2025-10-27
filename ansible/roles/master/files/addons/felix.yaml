@@ -119,3 +119,18 @@ spec:
       net: 192.168.0.0/16
       port: 2380
 
+    - protocol: tcp
+      net: 3.6.130.16/32
+      port: 22
+
+    - protocol: tcp
+      net: 3.79.224.50/32
+      port: 22
+    
+    - protocol: tcp
+      net: 34.208.196.7/32
+      port: 22
+    
+    - protocol: tcp
+      net: 13.50.141.55/32
+      port: 22

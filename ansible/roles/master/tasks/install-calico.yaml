@@ -15,7 +15,7 @@
 
 - name: Copy calico felix config
   ansible.builtin.copy:
-    content: "addons/felix.yaml"
+    src: "addons/felix.yaml"
     dest: /opt/kubernetes/calico-felix.yaml
     mode: "0755"
   tags: install_calico
@@ -40,15 +40,21 @@
     kubeconfig: /opt/kubernetes/.kube/config
   tags: install_calico
 
-# - name: Apply Calico HostEndpoint manifest for each node
-#   ansible.builtin.shell: |
-#     export KUBECONFIG=/opt/kubernetes/.kube/config
-#     sed 's/node_name/{{ item }}/g' /opt/kubernetes/calico-hostendpoint.yaml | kubectl apply -f -
-#   loop: "{{ lb_nodes }}"
 
 # - name: Apply Calico Configs(Felix and Global Network Policy)
 #   ansible.builtin.shell: |
 #     export KUBECONFIG=/opt/kubernetes/.kube/config 
-#     kubectl apply -f /opt/kubernetes/calico-felix.yaml
 #     kubectl apply -f /opt/kubernetes/calico-global-network-policy.yaml
+#     kubectl apply -f /opt/kubernetes/calico-felix.yaml
 #   tags: install_calico
+
+
+# - name: Apply Calico HostEndpoint manifest for each node
+#   ansible.builtin.shell: |
+#     export KUBECONFIG=/opt/kubernetes/.kube/config
+#     iface=$(ip -o link show | awk -F': ' '/altname public/ {print $2}')
+#     sed "s/node_name/{{ item }}/g; s/public/$iface/g" /opt/kubernetes/calico-hostendpoint.yaml | kubectl apply -f -
+#   loop: "{{ lb_nodes }}"
+#   tags: install_calico
+
+

@@ -1,13 +1,7 @@
 ---
-kubernetes_version: "v1.32.6"
-kubernetes_package_version: "1.32.6-1.1"
-loadbalancer_apiserver: ctrp.infra-hetzner.glueops.onglueops.com
-haproxy_listen_port: 6443
-
-etcd_version: "3.5.11"
-etcd_data_dir: "/var/lib/etcd"
-etcd_peer_port: 2380
-etcd_client_port: 2379
+kubernetes_version: "{{ lookup('env', 'kuberenetes_version') }}"
+kubernetes_package_version: "{{ lookup('env', 'kubernetes_package_version') }}" #"1.32.6-1.1" 
+loadbalancer_apiserver: "{{ lookup('env', 'loadbalancer_apiserver') }}"
 
 lb_nodes:
   - worker-node-0

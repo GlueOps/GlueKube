@@ -34,8 +34,6 @@ apiServer:
 certificatesDir: /etc/kubernetes/pki
 clusterName: kubernetes
 controllerManager: {}
-dns:
-  imageTag: "{{ coredns_version }}"
 imageRepository: registry.k8s.io
 kubernetesVersion: "{{ kubernetes_version }}"
 controlPlaneEndpoint: "{{ loadbalancer_apiserver }}:6443"

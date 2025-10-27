@@ -7,8 +7,8 @@ service_subnet: "192.168.0.0/16" # if you change this, you need to change the ca
 
 # calico
 calico_node_to_node_encryption: false
-calico_chart_version: "v3.29.3"
-calico_tiger_operator_version: "v1.36.7"
+calico_chart_version: "{{ lookup('env', 'calico_chart_version') }}" #"v3.29.3"
+calico_tiger_operator_version:  "{{ lookup('env', 'calico_tiger_operator_version') }}" #"v1.36.7"
 
 nodes: |
   {% for host in groups['masters'] %}
@@ -16,11 +16,7 @@ nodes: |
   {% endfor %}
 
 etcd_nodes_endpoints: "{{ nodes | trim}}"
-
-kubeconfig_export_path: "./.kube/config"
-
+etcd_initial_cluster: "{{ groups['masters'] | map('extract', hostvars, 'ip') | list }}"
 etcd_secret_namespace: "glueops-core-kube-prometheus-stack"
 
-coredns_version: "v1.11.3"
-
-etcd_initial_cluster: "{{ groups['masters'] | map('extract', hostvars, 'ip') | list }}"
+kubeconfig_export_path: "./.kube/config"
