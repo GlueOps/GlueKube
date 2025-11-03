@@ -1,24 +1,29 @@
 FROM python:3.12-slim
 
+# Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
-ENV kuberenetes_version="1.32.6"
+ENV kuberenetes_version="v1.32.6"
 ENV kubernetes_package_version="1.32.6-1.1"
 ENV calico_tiger_operator_version="v1.36.7"
 ENV calico_chart_version="v3.29.3"
 ENV ANSIBLE_ROLES_PATH=/opt/gluekube/ansible/roles
 ENV ANSIBLE_HOST_KEY_CHECKING=False
 
-RUN apt-get update && apt-get upgrade -y && apt-get install -y build-essential
+# Install system dependencies, install Python packages, and clean up in a single layer
+RUN apt-get update && apt-get upgrade -y && \
+    # Install build-essential for pip packages that need compilation
+    apt-get install -y build-essential && \
+    # Install ansible and jmespath using pip for Python 3.12
+    # Use --no-cache-dir to keep the image slim
+    pip install --no-cache-dir ansible jmespath && \
+    apt-get install openssh-client -y && \
+    apt-get install jq -y
 
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        ansible && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
-
-RUN pip install jmespath
-
+# Set working directory
 WORKDIR /opt/gluekube
 
+# Copy application files
 COPY . /opt/gluekube
 
+# Define default command
 CMD ["bash"]
