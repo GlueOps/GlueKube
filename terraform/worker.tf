@@ -14,7 +14,7 @@ resource "hcloud_server" "worker-node" {
     ip         = "10.0.0.2${each.key}"
   }
   user_data = base64encode("${templatefile("${path.module}/cloudinit/cloud-init-worker.yaml",{
-    public_key = var.public_key
+    public_key = autoglue_ssh_key.worker.public_key
     hostname = "worker-node-${each.key}"
   })}")
 
@@ -44,4 +44,20 @@ resource "hcloud_firewall" "workerfirewall" {
       "::/0"
     ]
   }
+}
+
+
+resource "autoglue_ssh_key" "worker" {
+  name = "gluekube-worker"
+  comment = "GlueKube worker SSH Key"
+}
+
+resource "autoglue_server" "worker" {
+  for_each = toset([for i in range(0, var.worker_node_count) : tostring(i)])
+  hostname = "worker-node-${each.key}"
+  public_ip_address = hcloud_server.worker-node[each.key].ipv4_address
+  private_ip_address = tolist(hcloud_server.worker-node[each.key].network)[0].ip
+  role = "worker"
+  ssh_key_id = autoglue_ssh_key.worker.id
+  ssh_user = "cluster"
 }
