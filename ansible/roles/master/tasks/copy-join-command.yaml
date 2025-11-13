@@ -11,11 +11,6 @@
   register: join_token
   tags: create_join_command
 
-- name: Get Join Token
-  ansible.builtin.command: kubeadm token create --ttl 10m
-  when: inventory_hostname == groups['masters'][0]
-  register: join_token
-  tags: create_join_command
 
 - name: Get Join hash
   ansible.builtin.shell: |
