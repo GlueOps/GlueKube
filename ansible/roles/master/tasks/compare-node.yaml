@@ -60,5 +60,5 @@
 - name: List of nodes changes
   ansible.builtin.debug:
     msg:
-    - "Nodes to remove: '{{ nodes_to_remove.stdout }}'."
+    - "Nodes to remove: {{ nodes_to_remove.stdout | split(',') }}."
     - "Nodes to add '{{ nodes_to_add.stdout }}'."

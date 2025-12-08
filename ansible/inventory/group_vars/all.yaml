@@ -1,7 +1,7 @@
 ---
 kubernetes_version: "{{ lookup('env', 'kuberenetes_version') }}"
 kubernetes_package_version: "{{ lookup('env', 'kubernetes_package_version') }}" #"1.32.6-1.1" 
-loadbalancer_apiserver: loadbalancer_apiserver_placeholder
+loadbalancer_apiserver: "{{ lookup('env', 'loadbalancer_apiserver') }}"
 
 lb_nodes:
   - worker-node-0

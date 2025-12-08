@@ -1,5 +1,5 @@
-certificate_key: certificate_key_placeholder
-random_token: random_token_placeholder
+certificate_key: "{{ lookup('env', 'CERTIFICATE_KEY') }}"
+random_token: "{{ lookup('env', 'RANDOM_TOKEN') }}"
 
 kubeadm_config_file: "/etc/kubernetes/kubeadm-config.yaml" 
 cni_type: calico # calico, cilium
