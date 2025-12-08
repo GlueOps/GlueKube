@@ -1,7 +1,3 @@
-resource "autoglue_ssh_key" "master" {
-  name = "gluekube-master"
-  comment = "GlueKube Master SSH Key"
-}
 
 resource "hcloud_server" "master-node" {
   for_each = toset([for i in range(0, var.master_node_count) : tostring(i)])
@@ -18,7 +14,7 @@ resource "hcloud_server" "master-node" {
     ip         = "10.0.0.3${each.key}"
   }
   user_data = base64encode("${templatefile("${path.module}/cloudinit/cloud-init-master.yaml",{
-    public_key = autoglue_ssh_key.master.public_key
+    public_key = var.public_key
     hostname = "master-node-${each.key}"
   })}")
 
@@ -54,13 +50,3 @@ resource "hcloud_firewall" "myfirewall" {
 
 
 
-
-resource "autoglue_server" "example" {
-  for_each = toset([for i in range(0, var.master_node_count) : tostring(i)])
-  hostname = "master-node-${each.key}"
-  public_ip_address = hcloud_server.master-node[each.key].ipv4_address
-  private_ip_address = tolist(hcloud_server.master-node[each.key].network)[0].ip
-  role = "master"
-  ssh_key_id = autoglue_ssh_key.master.id
-  ssh_user = "cluster"
-}

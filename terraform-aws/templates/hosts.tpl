@@ -25,4 +25,6 @@ all:
               - glueops.dev/role=glueops-platform:NoSchedule
             labels:
               - glueops.dev/role=glueops-platform
+              - node-public-ip=${vm.public}
+              - use-as-loadbalancer=platform
       %{ endfor }

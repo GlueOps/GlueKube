@@ -16,14 +16,10 @@
   tasks:
     - name: Taint all nodes
       ansible.builtin.include_role:
-        name: master
+        name: master:p
         tasks_from: taint-nodes.yaml
       vars:
         values: "{{ hostvars| dict2items | community.general.json_query(\"[?starts_with(key, 'master') 
           || starts_with(key, 'worker')].{host:key,extra:value.extra}\")  }}"
 
 
-- hosts: loadbalancer
-  become: true
-  roles:
-    - loadbalancer

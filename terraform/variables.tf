@@ -12,7 +12,7 @@ variable "master_node_count" {
 
 variable "worker_node_count" {
   type = number
-  default = 6
+  default = 9
 }
 
 variable "location" {
