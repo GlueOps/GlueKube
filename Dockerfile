@@ -8,6 +8,8 @@ ENV calico_tiger_operator_version="v1.36.7"
 ENV calico_chart_version="v3.29.3"
 ENV ANSIBLE_ROLES_PATH=/opt/gluekube/ansible/roles
 ENV ANSIBLE_HOST_KEY_CHECKING=False
+ENV ANSIBLE_LOG_PATH=/opt/gluekube/ansible/ansible.log
+
 
 # Install system dependencies, install Python packages, and clean up in a single layer
 RUN apt-get update && apt-get upgrade -y && \

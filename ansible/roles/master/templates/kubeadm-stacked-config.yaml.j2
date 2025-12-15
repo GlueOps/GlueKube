@@ -52,4 +52,5 @@ etcd:
     {% for ip in etcd_initial_cluster %}
       - {{ ip }}
     {% endfor %}
+
 scheduler: {}

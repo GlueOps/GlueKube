@@ -14,7 +14,7 @@ resource "hcloud_server" "worker-node" {
     ip         = "10.0.0.2${each.key}"
   }
   user_data = base64encode("${templatefile("${path.module}/cloudinit/cloud-init-worker.yaml",{
-    public_key = var.public_key
+    public_key = autoglue_ssh_key.worker.public_key
     hostname = "worker-node-${each.key}"
   })}")
 
