@@ -20,3 +20,8 @@ etcd_initial_cluster: "{{ groups['masters'] | map('extract', hostvars, 'ip') | l
 etcd_secret_namespace: "glueops-core-kube-prometheus-stack"
 
 kubeconfig_export_path: "./.kube/config"
+
+
+autoglue_org_key: "{{ lookup('env', 'AUTOGLUE_ORG_KEY') }}"
+autoglue_org_secret: "{{ lookup('env', 'AUTOGLUE_ORG_SECRET') }}"
+clusterID: "{{ lookup('env', 'AUTOGLUE_CLUSTER_ID') }}"

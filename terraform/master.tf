@@ -14,7 +14,7 @@ resource "hcloud_server" "master-node" {
     ip         = "10.0.0.3${each.key}"
   }
   user_data = base64encode("${templatefile("${path.module}/cloudinit/cloud-init-master.yaml",{
-    public_key = var.public_key
+    public_key = autoglue_ssh_key.master.public_key
     hostname = "master-node-${each.key}"
   })}")
 
@@ -23,6 +23,8 @@ resource "hcloud_server" "master-node" {
   depends_on = [hcloud_network_subnet.private_network_subnet]
   firewall_ids = [hcloud_firewall.myfirewall.id]
 }
+
+
 
 resource "hcloud_firewall" "myfirewall" {
   name = "my-firewall"
