@@ -265,7 +265,7 @@
 #   when: calico_node_to_node_encryption
 
 # install etcd
-- name: Install wireguard
+- name: Install etcd-client
   ansible.builtin.apt:
     name: etcd-client
     state: present

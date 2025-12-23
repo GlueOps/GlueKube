@@ -61,17 +61,16 @@
     - kubeconfig_setup
     - kubeconfig_autoglue
 
+
 - name: Save Kubeconfig to AutoGlue
-  ansible.builtin.uri:
-    url: "https://autoglue.glueopshosted.com/api/v1/clusters/{{clusterID}}/kubeconfig"
-    method: POST
-    body: "{{ kubeconfig_content.content | b64decode }}"
-    status_code: 200
-    body_format: json
-    headers:
-      X-ORG-KEY: "{{ autoglue_org_key }}"
-      X-ORG-SECRET: "{{ autoglue_org_secret }}"
-  ignore_errors: true
+  ansible.builtin.shell: |
+    curl -sS -X POST \
+      -H "Content-Type: application/json" \
+      -H "X-ORG-KEY: {{ autoglue_org_key }}" \
+      -H "X-ORG-SECRET: {{ autoglue_org_secret }}" \
+      -d "$(jq -Rs '{kubeconfig: .}' < /etc/kubernetes/admin.conf)" \
+      "https://autoglue.glueopshosted.com/api/v1/clusters/{{clusterID}}/kubeconfig"
+  
   tags: 
     - kubeconfig_setup
     - kubeconfig_autoglue

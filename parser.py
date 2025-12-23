@@ -38,10 +38,9 @@ for node_pool in platform_data["node_pools"]:
     for label in node_pool.get("labels", []):
         labels.append("{}={}".format(label["key"], label["value"]))
     for taint in node_pool.get("taints", []):
-        taints.append(f"{taint['key']}={taint['value']}")
+        taints.append(f"{taint['key']}={taint['value']}:{taint['effect']}")
     for node in node_pool["servers"]:
-        labels.append("node-public-ip={}".format(node["public_ip_address"]))
-        labels.append("node-private-ip={}".format(node["private_ip_address"]))
+        per_node_labels = [f"node-public-ip={node['public_ip_address']}", f"node-private-ip={node['private_ip_address']}"]
 
         server = {
                 "ansible_host": node["public_ip_address"],
@@ -49,7 +48,7 @@ for node_pool in platform_data["node_pools"]:
                 "ip": node["private_ip_address"],
                 "ansible_ssh_private_key_file": f"/root/.ssh/autoglue/keys/{node['ssh_key_id']}.pem",
                 "extra": {
-                    "labels": list(labels),
+                    "labels": list(labels)+ list(per_node_labels),
                     "taints": list(taints)
                 }
             }
@@ -57,7 +56,6 @@ for node_pool in platform_data["node_pools"]:
            masters[node['hostname']] = server
         elif node["role"] == "worker":
            workers[node['hostname']] = server
-
 
 
 default_structure["all"]["children"]["masters"]["hosts"] = masters
