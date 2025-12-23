@@ -1,5 +1,3 @@
-import json
-
 with open("/opt/kubernetes/new_nodes_list") as f:
     new_nodes_list = f.read().splitlines()
 with open("/opt/kubernetes/current_nodes_list") as f:
