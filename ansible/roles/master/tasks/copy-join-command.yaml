@@ -5,7 +5,7 @@
   tags: create_join_command
 
 
-- name: Get Certificate Key
+- name: Get Join token
   ansible.builtin.command: kubeadm token create --ttl 10m
   when: inventory_hostname == groups['masters'][0]
   register: join_token
