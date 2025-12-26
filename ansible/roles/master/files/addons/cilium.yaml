@@ -191,7 +191,7 @@ image:
   # @schema
   override: ~
   repository: "quay.io/cilium/cilium"
-  tag: "v1.17.1"
+  tag: "v1.18.5@sha256:2c92fb05962a346eaf0ce11b912ba434dc10bd54b9989e970416681f4a069628"
   pullPolicy: "IfNotPresent"
   # cilium-digest
   digest: "sha256:8969bfd9c87cbea91e40665f8ebe327268c99d844ca26d7d12165de07f702866"
@@ -2982,7 +2982,7 @@ preflight:
     # @schema
     override: ~
     repository: "quay.io/cilium/cilium"
-    tag: "v1.17.1"
+    tag: "v1.18.5@sha256:2c92fb05962a346eaf0ce11b912ba434dc10bd54b9989e970416681f4a069628"
     # cilium-digest
     digest: "sha256:8969bfd9c87cbea91e40665f8ebe327268c99d844ca26d7d12165de07f702866"
     useDigest: true
