@@ -2697,7 +2697,7 @@ operator:
     # @schema
     override: ~
     repository: "quay.io/cilium/operator"
-    tag: "v1.17.1"
+    tag: "v1.18.5@sha256:c6806ee97ef35a79aa72d411bc7f12745a1ea684208853e7d13c8e7f84cbb606"
     # operator-generic-digest
     genericDigest: "sha256:628becaeb3e4742a1c36c4897721092375891b58bae2bfcae48bbf4420aaee97"
     # operator-azure-digest
