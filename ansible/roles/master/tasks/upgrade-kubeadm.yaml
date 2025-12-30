@@ -31,7 +31,3 @@
     allow_change_held_packages: true
     allow_downgrade: true
 
-- name: Hold kube packages
-  ansible.builtin.dpkg_selections:
-    name: kubeadm
-    selection: hold

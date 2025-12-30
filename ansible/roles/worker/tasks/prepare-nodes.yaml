@@ -161,23 +161,8 @@
     allow_downgrade: true
   tags: kubernetes_component
 
-- name: Hold kube packages
-  ansible.builtin.dpkg_selections:
-    name: kubelet
-    selection: hold
-  tags: kubernetes_component
 
-- name: Hold kube packages
-  ansible.builtin.dpkg_selections:
-    name: kubeadm
-    selection: hold
-  tags: kubernetes_component
 
-- name: Hold kube packages
-  ansible.builtin.dpkg_selections:
-    name: kubectl
-    selection: hold
-  tags: kubernetes_component
 
 - name: Enable kubelet
   ansible.builtin.systemd_service:
