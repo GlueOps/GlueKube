@@ -4,7 +4,7 @@ FROM python:3.12-slim
 ENV DEBIAN_FRONTEND=noninteractive
 ENV kubernetes_version="v1.32.6"
 ENV kubernetes_package_version="1.32.6-1.1"
-ENV calico_tiger_operator_version="v1.36.7"
+ENV calico_tigera_operator_version="v1.36.7"
 ENV calico_chart_version="v3.29.3"
 ENV ANSIBLE_ROLES_PATH=/opt/gluekube/ansible/roles
 ENV ANSIBLE_LOG_PATH=/opt/gluekube/ansible/ansible.log
