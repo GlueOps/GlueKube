@@ -67,7 +67,7 @@
     method: POST
     body: "{{ kubeconfig_content.content }}"
     status_code: 200
-    body_format: json
+    body_format: raw
     headers:
       X-ORG-KEY: "{{ autoglue_org_key }}"
       X-ORG-SECRET: "{{ autoglue_org_secret }}"
