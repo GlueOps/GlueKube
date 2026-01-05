@@ -120,6 +120,24 @@
     line: '\1SystemdCgroup = true'
     backrefs: true
 
+- name: Configure containerd registry mirrors for Nexus
+  ansible.builtin.blockinfile:
+    path: /etc/containerd/config.toml
+    marker: "# {mark} ANSIBLE MANAGED - Nexus Registry Mirrors"
+    insertafter: "\\[plugins\\.'io\\.containerd\\.grpc\\.v1\\.cri'\\.registry\\]"
+    block: |
+      [plugins."io.containerd.grpc.v1.cri".registry.mirrors]
+        [plugins."io.containerd.grpc.v1.cri".registry.mirrors."docker.io"]
+          endpoint = ["https://dockerhub.repo.gpkg.io"]
+        [plugins."io.containerd.grpc.v1.cri".registry.mirrors."ghcr.io"]
+          endpoint = ["https://ghcr.repo.gpkg.io"]
+        [plugins."io.containerd.grpc.v1.cri".registry.mirrors."quay.io"]
+          endpoint = ["https://quay.repo.gpkg.io"]
+        [plugins."io.containerd.grpc.v1.cri".registry.mirrors."public.ecr.aws"]
+          endpoint = ["https://ecr.repo.gpkg.io"]
+        [plugins."io.containerd.grpc.v1.cri".registry.mirrors."registry.k8s.io"]
+          endpoint = ["https://k8s.repo.gpkg.io"]
+
 - name: Reload systemd and enable containerd
   ansible.builtin.systemd:
     name: containerd
@@ -127,27 +145,49 @@
     state: restarted
 
 - name: Download Kubernetes GPG key
-  ansible.builtin.apt_key:
+  ansible.builtin.get_url:
     url: https://pkgs.k8s.io/core:/stable:/{{ kubernetes_version.split('.')[0] }}.{{ kubernetes_version.split('.')[1] }}/deb/Release.key
-    keyring: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-    state: present
+    dest: /tmp/kubernetes-release.key
+    mode: '0644'
   tags: kubernetes_component
 
-# sign the keyring
-- name: Sign the Kubernetes keyring
-  ansible.builtin.command: gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+- name: Convert Kubernetes GPG key to keyring format
+  ansible.builtin.shell: |
+    cat /tmp/kubernetes-release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+    chmod a+r /etc/apt/keyrings/kubernetes-apt-keyring.gpg
   args:
     creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
   tags: kubernetes_component
   
-- name: Add Kubernetes repository
+- name: Add Kubernetes repository via Nexus
   ansible.builtin.apt_repository:
     repo: >-
       deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg]
-      https://pkgs.k8s.io/core:/stable:/{{ kubernetes_version.split('.')[0] }}.{{ kubernetes_version.split('.')[1] }}/deb /
-    filename: kubernetes
+      https://repo.gpkg.io/repository/kubernetes-{{ kubernetes_version.split('.')[0] }}-{{ kubernetes_version.split('.')[1] }} /
+    filename: nexus-kubernetes
     state: present
   tags: kubernetes_component
+
+- name: Download Helm GPG key
+  ansible.builtin.get_url:
+    url: https://packages.buildkite.com/helm-linux/helm-debian/gpgkey
+    dest: /tmp/helm-gpg.key
+    mode: '0644'
+
+- name: Convert Helm GPG key to keyring format
+  ansible.builtin.shell: |
+    cat /tmp/helm-gpg.key | gpg --dearmor -o /etc/apt/keyrings/helm-apt-keyring.gpg
+    chmod a+r /etc/apt/keyrings/helm-apt-keyring.gpg
+  args:
+    creates: /etc/apt/keyrings/helm-apt-keyring.gpg
+
+- name: Add Helm repository via Nexus
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [signed-by=/etc/apt/keyrings/helm-apt-keyring.gpg]
+      https://repo.gpkg.io/repository/helm-apt any main
+    filename: nexus-helm
+    state: present
 
 - name: Update package list and install kube components
   ansible.builtin.apt:

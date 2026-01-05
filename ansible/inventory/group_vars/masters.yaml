@@ -8,7 +8,7 @@ service_subnet: "192.168.0.0/16" # if you change this, you need to change the ca
 # calico
 calico_node_to_node_encryption: false
 calico_chart_version: "{{ lookup('env', 'calico_chart_version') }}" #"v3.29.3"
-calico_tiger_operator_version:  "{{ lookup('env', 'calico_tiger_operator_version') }}" #"v1.36.7"
+calico_tigera_operator_version:  "{{ lookup('env', 'calico_tigera_operator_version') }}" #"v1.36.7"
 
 nodes: |
   {% for host in groups['masters'] %}
@@ -21,7 +21,7 @@ etcd_secret_namespace: "glueops-core-kube-prometheus-stack"
 
 kubeconfig_export_path: "./.kube/config"
 
-autoglue_base_url: "{{ lookup('env', 'AUTOGLUE_BASE_URL') | default('https://autoglue.glueopshosted.com', true) }}"
+autoglue_base_url: "{{ lookup('env', 'AUTOGLUE_BASE_URL') | default('https://autoglue.glueopshosted.rocks', true) }}"
 autoglue_org_key: "{{ lookup('env', 'AUTOGLUE_ORG_KEY') }}"
 autoglue_org_secret: "{{ lookup('env', 'AUTOGLUE_ORG_SECRET') }}"
 clusterID: "{{ lookup('env', 'AUTOGLUE_CLUSTER_ID') }}"
