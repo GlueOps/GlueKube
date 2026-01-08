@@ -37,6 +37,8 @@ controllerManager: {}
 imageRepository: k8s.repo.gpkg.io
 kubernetesVersion: "{{ kubernetes_version }}"
 controlPlaneEndpoint: "{{ loadbalancer_apiserver }}:6443"
+dns:
+  imageRepository: k8s.repo.gpkg.io/coredns
 networking:
   dnsDomain: cluster.local
   serviceSubnet: 192.168.0.0/16
