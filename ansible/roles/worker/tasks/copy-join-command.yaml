@@ -4,11 +4,29 @@
   register: join_command
   tags: create_join_command
 
-# copy the join command to the worker node
-- name: Copy the join command to the worker node
-  ansible.builtin.copy:
-    dest: /opt/token.sh
-    content: "{{ hostvars[groups['masters'][0]]['join_command'].stdout }}"
+
+- name: Get Join Token
+  ansible.builtin.command: kubeadm token create --ttl 10m
+  when: inventory_hostname == groups['masters'][0]
+  register: join_token
+  tags: create_join_command
+
+
+- name: Generate Kubeadm Join configuration
+  ansible.builtin.template:
+    src: kubeadm-join-config.j2
+    dest: /opt/kubeadm_join.yaml
     mode: "0755"
   when: inventory_hostname in groups['workers']
   tags: create_join_command
+
+
+# # copy the join command to the worker node
+# - name: Copy the join command to the worker node
+#   ansible.builtin.template:
+#     dest: /opt/token.sh
+#     content: "{{ hostvars[groups['masters'][0]]['join_command'].stdout }} "
+#     mode: "0755"
+#   when: inventory_hostname in groups['workers']
+#   tags: create_join_command
+

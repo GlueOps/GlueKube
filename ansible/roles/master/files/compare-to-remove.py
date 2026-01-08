@@ -4,4 +4,4 @@ with open("/opt/kubernetes/current_nodes_list") as f:
     current_nodes_list = f.read().splitlines()
 new_diff = list(set(current_nodes_list) - set(new_nodes_list))
 
-print(new_diff)
+print(",".join(new_diff))

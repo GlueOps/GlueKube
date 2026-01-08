@@ -23,7 +23,3 @@
           || starts_with(key, 'worker')].{host:key,extra:value.extra}\")  }}"
 
 
-- hosts: loadbalancer
-  become: true
-  roles:
-    - loadbalancer

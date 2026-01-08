@@ -13,7 +13,7 @@
   tags: join_nodes
 
 - name: Join the control-node to the Kubernetes cluster
-  ansible.builtin.command: sh /opt/token.sh
+  ansible.builtin.command: kubeadm join --config /opt/kubeadm_join.yaml
   args:
     creates: /opt/kubernetes/join_command.sh
   tags: join_worker
@@ -22,7 +22,7 @@
 # create a directory for the kubeconfig file
 - name: Generate Kubeadm configuration
   ansible.builtin.template:
-    src: "kubeadm-stacked-config.j2"
+    src: "kubeadm-stacked-config.yaml.j2"
     dest: "{{ kubeadm_config_file }}"
     owner: root
     group: root

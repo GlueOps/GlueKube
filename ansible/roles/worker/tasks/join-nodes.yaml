@@ -22,7 +22,7 @@
   when: inventory_hostname in groups['workers'] and inventory_hostname not in hostvars[groups['masters'][0]]['current_cluster_nodes'].stdout
 
 - name: Join the worker node to the Kubernetes cluster
-  ansible.builtin.command: sh /opt/token.sh
+  ansible.builtin.command: kubeadm join --config /opt/kubeadm_join.yaml
   args:
     creates: /opt/kubernetes/join_command.sh
   tags: join_worker

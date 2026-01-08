@@ -2,22 +2,22 @@
   ansible.builtin.shell: |
     export KUBECONFIG=/opt/kubernetes/.kube/config
     kubectl cordon {{ item }}
-  with_items: "{{ nodes_to_remove.stdout }}"
-  when: nodes_to_remove.stdout is defined
+  with_items: "{{ nodes_to_remove.stdout | default('') | split(',') | reject('eq', '') | list }}"
+  when: nodes_to_remove.stdout is defined and nodes_to_remove.stdout | length > 0
 
 - name: Drain Nodes
   ansible.builtin.shell: |
     export KUBECONFIG=/opt/kubernetes/.kube/config
     kubectl drain {{ item }} --ignore-daemonsets  --delete-emptydir-data 
-  with_items: "{{ nodes_to_remove.stdout }}"
-  when: nodes_to_remove.stdout is defined
+  with_items: "{{ nodes_to_remove.stdout | default('') | split(',') | reject('eq', '') | list }}"
+  when: nodes_to_remove.stdout is defined and nodes_to_remove.stdout | length > 0
 
 - name: Delete Nodes
   ansible.builtin.shell: |
     export KUBECONFIG=/opt/kubernetes/.kube/config
     kubectl delete node {{ item }} 
-  with_items: "{{ nodes_to_remove.stdout }}"
-  when: nodes_to_remove.stdout is defined
+  with_items: "{{ nodes_to_remove.stdout | default('') | split(',') | reject('eq', '') | list }}"
+  when: nodes_to_remove.stdout is defined and nodes_to_remove.stdout | length > 0
 
 - name: Remove etcd members only if it's control plane node
   ansible.builtin.shell: |
@@ -34,7 +34,7 @@
       --key=/etc/kubernetes/pki/etcd/server.key \
       member remove $ETCD_MEMBER_ID
 
-  with_items: "{{ nodes_to_remove.stdout }}"
+  with_items: "{{ nodes_to_remove.stdout | default('') | split(',') | reject('eq', '') | list }}"
   when: 
-    - inventory_hostname == groups['masters'][0] and nodes_to_remove.stdout is defined
+    - inventory_hostname == groups['masters'][0] and nodes_to_remove.stdout is defined and nodes_to_remove.stdout | length > 0
     - item is search("master-node-*")

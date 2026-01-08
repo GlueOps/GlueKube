@@ -1,0 +1,27 @@
+# Nexus Docker Registry Mirrors Configuration
+# This file configures containerd to use Nexus as a pull-through cache for various registries
+
+# Docker Hub
+[host."https://dockerhub.repo.gpkg.io"]
+  capabilities = ["pull", "resolve"]
+  skip_verify = false
+
+# GitHub Container Registry
+[host."https://ghcr.repo.gpkg.io"]
+  capabilities = ["pull", "resolve"]
+  skip_verify = false
+
+# Quay.io
+[host."https://quay.repo.gpkg.io"]
+  capabilities = ["pull", "resolve"]
+  skip_verify = false
+
+# AWS ECR Public
+[host."https://ecr.repo.gpkg.io"]
+  capabilities = ["pull", "resolve"]
+  skip_verify = false
+
+# Kubernetes Registry
+[host."https://k8s.repo.gpkg.io"]
+  capabilities = ["pull", "resolve"]
+  skip_verify = false
