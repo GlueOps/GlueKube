@@ -1,4 +1,4 @@
-FROM python:3.12-slim@sha256:a75662dfec8d90bd7161c91050be2e0a9b21d284f3b7a7253d5db25f7d583fb3
+FROM python:3.13-slim@sha256:1f3781f578e17958f55ada96c0a827bf279a11e10d6a458ecb8bde667afbb669
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
