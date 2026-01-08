@@ -31,15 +31,22 @@ apiServer:
 certificatesDir: /etc/kubernetes/pki
 clusterName: kubernetes
 controllerManager: {}
-dns:
-  imageTag: "{{ coredns_version }}"
-  disabled: false
-imageRepository: registry.k8s.io
+imageRepository: k8s.repo.gpkg.io
 kubernetesVersion: "{{ kubernetes_version }}"
 controlPlaneEndpoint: "{{ loadbalancer_apiserver }}:6443"
 networking:
   dnsDomain: cluster.local
   serviceSubnet: 192.168.0.0/16
   podSubnet: "172.16.0.0/16"
-etcd: {}
+etcd:
+  local:
+    serverCertSANs: 
+    {% for ip in etcd_initial_cluster %}
+      - {{ ip }}
+    {% endfor %}
+
+    peerCertSANs: 
+    {% for ip in etcd_initial_cluster %}
+      - {{ ip }}
+    {% endfor %}
 scheduler: {}

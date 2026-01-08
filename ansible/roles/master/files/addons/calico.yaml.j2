@@ -39,10 +39,10 @@ podLabels: {}
 # Image and registry configuration for the tigera/operator pod.
 tigeraOperator:
   image: tigera/operator
-  version: "{{ calico_tiger_operator_version }}"
-  registry: quay.io
+  version: "{{ calico_tigera_operator_version }}"
+  registry: quay.repo.gpkg.io
 calicoctl:
-  image: docker.io/calico/ctl
+  image: dockerhub.repo.gpkg.io/calico/ctl
   tag: "{{ calico_chart_version }}"
 
 defaultFelixConfiguration:
