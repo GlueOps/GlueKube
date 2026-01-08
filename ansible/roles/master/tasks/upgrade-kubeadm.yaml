@@ -1,22 +1,23 @@
 - name: Download Kubernetes GPG key
-  ansible.builtin.apt_key:
+  ansible.builtin.get_url:
     url: https://pkgs.k8s.io/core:/stable:/{{ kubernetes_version.split('.')[0] }}.{{ kubernetes_version.split('.')[1] }}/deb/Release.key
-    keyring: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-    state: present
+    dest: /tmp/kubernetes-release.key
+    mode: '0644'
 
-# sign the keyring
-- name: Sign the Kubernetes keyring
-  ansible.builtin.command: gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+- name: Convert Kubernetes GPG key to keyring format
+  ansible.builtin.shell: |
+    cat /tmp/kubernetes-release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+    chmod a+r /etc/apt/keyrings/kubernetes-apt-keyring.gpg
   args:
     creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
   
   
-- name: Add Kubernetes repository
+- name: Add Kubernetes repository via Nexus
   ansible.builtin.apt_repository:
     repo: >-
       deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg]
-      https://pkgs.k8s.io/core:/stable:/{{ kubernetes_version.split('.')[0] }}.{{ kubernetes_version.split('.')[1] }}/deb /
-    filename: kubernetes
+      https://repo.gpkg.io/repository/kubernetes-{{ kubernetes_version.split('.')[0] }}-{{ kubernetes_version.split('.')[1] }} /
+    filename: nexus-kubernetes
     state: present
   tags: 
     - kubernetes_component_kubeadm
@@ -31,7 +32,3 @@
     allow_change_held_packages: true
     allow_downgrade: true
 
-- name: Hold kube packages
-  ansible.builtin.dpkg_selections:
-    name: kubeadm
-    selection: hold

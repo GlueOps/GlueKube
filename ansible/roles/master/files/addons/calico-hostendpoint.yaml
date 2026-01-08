@@ -1,0 +1,7 @@
+apiVersion: projectcalico.org/v3
+kind: HostEndpoint
+metadata:
+  name: node_name
+spec:
+  node: node_name
+  interfaceName: "public"

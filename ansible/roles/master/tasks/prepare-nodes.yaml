@@ -1,4 +1,8 @@
 ---
+- name: Disable swap immediately
+  command: swapoff -a
+
+  
 - name: Load required kernel modules
   community.general.modprobe:
     name: overlay
@@ -18,6 +22,15 @@
   ansible.posix.sysctl:
     name: vm.swappiness
     value: 0
+
+- name: Update apt package cache
+  ansible.builtin.apt:
+    update_cache: yes
+    cache_valid_time: 3600 # Update cache if older than 1 hour (in seconds)
+
+- name: Upgrade all installed packages
+  ansible.builtin.apt:
+    upgrade: dist 
 
 - name: Install dependencies for containerd
   ansible.builtin.apt:
@@ -108,6 +121,24 @@
     line: '\1SystemdCgroup = true'
     backrefs: true
 
+- name: Configure containerd registry mirrors for Nexus
+  ansible.builtin.blockinfile:
+    path: /etc/containerd/config.toml
+    marker: "# {mark} ANSIBLE MANAGED - Nexus Registry Mirrors"
+    insertafter: "\\[plugins\\.'io\\.containerd\\.grpc\\.v1\\.cri'\\.registry\\]"
+    block: |
+      [plugins."io.containerd.grpc.v1.cri".registry.mirrors]
+        [plugins."io.containerd.grpc.v1.cri".registry.mirrors."docker.io"]
+          endpoint = ["https://dockerhub.repo.gpkg.io"]
+        [plugins."io.containerd.grpc.v1.cri".registry.mirrors."ghcr.io"]
+          endpoint = ["https://ghcr.repo.gpkg.io"]
+        [plugins."io.containerd.grpc.v1.cri".registry.mirrors."quay.io"]
+          endpoint = ["https://quay.repo.gpkg.io"]
+        [plugins."io.containerd.grpc.v1.cri".registry.mirrors."public.ecr.aws"]
+          endpoint = ["https://ecr.repo.gpkg.io"]
+        [plugins."io.containerd.grpc.v1.cri".registry.mirrors."registry.k8s.io"]
+          endpoint = ["https://k8s.repo.gpkg.io"]
+
 - name: Reload systemd and enable containerd
   ansible.builtin.systemd:
     name: containerd
@@ -115,29 +146,51 @@
     state: restarted
 
 - name: Download Kubernetes GPG key
-  ansible.builtin.apt_key:
+  ansible.builtin.get_url:
     url: https://pkgs.k8s.io/core:/stable:/{{ kubernetes_version.split('.')[0] }}.{{ kubernetes_version.split('.')[1] }}/deb/Release.key
-    keyring: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-    state: present
+    dest: /tmp/kubernetes-release.key
+    mode: '0644'
   tags: kubernetes_component
 
-# sign the keyring
-- name: Sign the Kubernetes keyring
-  ansible.builtin.command: gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+- name: Convert Kubernetes GPG key to keyring format
+  ansible.builtin.shell: |
+    cat /tmp/kubernetes-release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+    chmod a+r /etc/apt/keyrings/kubernetes-apt-keyring.gpg
   args:
     creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
   tags: kubernetes_component
   
-- name: Add Kubernetes repository
+- name: Add Kubernetes repository via Nexus
   ansible.builtin.apt_repository:
     repo: >-
       deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg]
-      https://pkgs.k8s.io/core:/stable:/{{ kubernetes_version.split('.')[0] }}.{{ kubernetes_version.split('.')[1] }}/deb /
-    filename: kubernetes
+      https://repo.gpkg.io/repository/kubernetes-{{ kubernetes_version.split('.')[0] }}-{{ kubernetes_version.split('.')[1] }} /
+    filename: nexus-kubernetes
     state: present
   tags: 
     - kubernetes_component_kubeadm
     - kubernetes_component_kubelet
+
+- name: Download Helm GPG key
+  ansible.builtin.get_url:
+    url: https://packages.buildkite.com/helm-linux/helm-debian/gpgkey
+    dest: /tmp/helm-gpg.key
+    mode: '0644'
+
+- name: Convert Helm GPG key to keyring format
+  ansible.builtin.shell: |
+    cat /tmp/helm-gpg.key | gpg --dearmor -o /etc/apt/keyrings/helm-apt-keyring.gpg
+    chmod a+r /etc/apt/keyrings/helm-apt-keyring.gpg
+  args:
+    creates: /etc/apt/keyrings/helm-apt-keyring.gpg
+
+- name: Add Helm repository via Nexus
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [signed-by=/etc/apt/keyrings/helm-apt-keyring.gpg]
+      https://repo.gpkg.io/repository/helm-apt any main
+    filename: nexus-helm
+    state: present
 
 - name: Update package list and install kube components
   ansible.builtin.apt:
@@ -147,12 +200,6 @@
     allow_unauthenticated: true
     allow_change_held_packages: true
     allow_downgrade: true
-  tags: kubernetes_component_kubeadm
-
-- name: Hold kube packages
-  ansible.builtin.dpkg_selections:
-    name: kubeadm
-    selection: hold
   tags: kubernetes_component_kubeadm
 
 - name: Update package list and install kube components
@@ -166,17 +213,6 @@
     allow_downgrade: true
   tags: kubernetes_component_kubelet
 
-- name: Hold kube packages
-  ansible.builtin.dpkg_selections:
-    name: kubelet
-    selection: hold
-  tags: kubernetes_component_kubelet
-
-- name: Hold kube packages
-  ansible.builtin.dpkg_selections:
-    name: kubectl
-    selection: hold
-  tags: kubernetes_component_kubelet
 
 - name: Enable kubelet
   ansible.builtin.systemd_service:
@@ -195,39 +231,40 @@
   tags: kubernetes_component_kubelet
 
 # install helm
-- name: Download Helm GPG key
-  ansible.builtin.apt_key:
-    url: https://baltocdn.com/helm/signing.asc
-    keyring: /usr/share/keyrings/helm.gpg
-  tags: install_helm
 
-- name: Dearmor Helm GPG key
-  ansible.builtin.command: gpg --dearmor -o /usr/share/keyrings/helm.gpg
+- name: Download Helm binary tarball
+  ansible.builtin.get_url:
+    url: https://get.helm.sh/helm-v3.18.6-linux-amd64.tar.gz
+    dest: /tmp/helm-v3.18.6-linux-amd64.tar.gz
+    mode: '0644'
+
+- name: Extract Helm binary
+  ansible.builtin.unarchive:
+    src: /tmp/helm-v3.18.6-linux-amd64.tar.gz
+    dest: /tmp/
+    remote_src: yes
+
+- name: Move Helm binary to /usr/local/bin
+  ansible.builtin.command:
+    cmd: mv /tmp/linux-amd64/helm /usr/bin/helm
   args:
-    creates: /usr/share/keyrings/helm.gpg
-  tags: install_helm
+    creates: /usr/local/bin/helm
 
-- name: Install apt-transport-https
-  ansible.builtin.apt:
-    name: apt-transport-https
-    state: present
-  tags: install_helm
+- name: Ensure Helm binary is executable
+  ansible.builtin.file:
+    path: /usr/bin/helm
+    mode: '0755'
 
-- name: Add Helm repository
-  ansible.builtin.apt_repository:
-    repo: >-
-      deb [arch=amd64 signed-by=/usr/share/keyrings/helm.gpg]
-      https://baltocdn.com/helm/stable/debian/ all main
-    filename: helm-stable-debian
-    state: present
-  tags: install_helm
+- name: Verify Helm installation
+  ansible.builtin.command: helm version
+  register: helm_version
+  changed_when: false
 
-- name: Update repositories cache and install "helm" package
-  ansible.builtin.apt:
-    name: helm
-    update_cache: true
-    state: present
-  tags: install_helm
+- name: Show Helm version
+  ansible.builtin.debug:
+    msg: "{{ helm_version.stdout }}"
+
+
 
 # install k9s
 - name: Install k9s
@@ -251,7 +288,7 @@
 #   when: calico_node_to_node_encryption
 
 # install etcd
-- name: Install wireguard
+- name: Install etcd-client
   ansible.builtin.apt:
     name: etcd-client
     state: present

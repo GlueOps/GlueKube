@@ -4,11 +4,13 @@
     src: "taint-label-nodes.py"
     dest: "/opt/kubernetes/taint-label-nodes.py"
     mode: "0644"
+  tags: label_nodes
 
 
 - name: taint and label Nodes
   ansible.builtin.shell: |
     export KUBECONFIG=/opt/kubernetes/.kube/config
     export DATA="{{ item }}"
-    python3 /opt/kubernetes/taint-label-nodes.py 
+    python3 /opt/kubernetes/taint-label-nodes.py
   with_items: "{{ values }}"
+  tags: label_nodes
