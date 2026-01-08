@@ -34,7 +34,7 @@ apiServer:
 certificatesDir: /etc/kubernetes/pki
 clusterName: kubernetes
 controllerManager: {}
-imageRepository: registry.k8s.io
+imageRepository: k8s.repo.gpkg.io
 kubernetesVersion: "{{ kubernetes_version }}"
 controlPlaneEndpoint: "{{ loadbalancer_apiserver }}:6443"
 networking:
@@ -52,5 +52,4 @@ etcd:
     {% for ip in etcd_initial_cluster %}
       - {{ ip }}
     {% endfor %}
-
 scheduler: {}

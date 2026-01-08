@@ -121,24 +121,6 @@
     line: '\1SystemdCgroup = true'
     backrefs: true
 
-- name: Configure containerd registry mirrors for Nexus
-  ansible.builtin.blockinfile:
-    path: /etc/containerd/config.toml
-    marker: "# {mark} ANSIBLE MANAGED - Nexus Registry Mirrors"
-    insertafter: "\\[plugins\\.'io\\.containerd\\.grpc\\.v1\\.cri'\\.registry\\]"
-    block: |
-      [plugins."io.containerd.grpc.v1.cri".registry.mirrors]
-        [plugins."io.containerd.grpc.v1.cri".registry.mirrors."docker.io"]
-          endpoint = ["https://dockerhub.repo.gpkg.io"]
-        [plugins."io.containerd.grpc.v1.cri".registry.mirrors."ghcr.io"]
-          endpoint = ["https://ghcr.repo.gpkg.io"]
-        [plugins."io.containerd.grpc.v1.cri".registry.mirrors."quay.io"]
-          endpoint = ["https://quay.repo.gpkg.io"]
-        [plugins."io.containerd.grpc.v1.cri".registry.mirrors."public.ecr.aws"]
-          endpoint = ["https://ecr.repo.gpkg.io"]
-        [plugins."io.containerd.grpc.v1.cri".registry.mirrors."registry.k8s.io"]
-          endpoint = ["https://k8s.repo.gpkg.io"]
-
 - name: Reload systemd and enable containerd
   ansible.builtin.systemd:
     name: containerd
