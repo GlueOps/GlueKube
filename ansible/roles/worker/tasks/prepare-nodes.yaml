@@ -40,6 +40,7 @@
       - curl
       - apt-transport-https
       - ca-certificates
+      - nfs-common
     state: present
 
 - name: Create directory for Docker's GPG key
