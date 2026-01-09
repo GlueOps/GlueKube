@@ -65,7 +65,7 @@
   ansible.builtin.uri:
     url: "{{ autoglue_base_url }}/api/v1/clusters/{{clusterID}}/kubeconfig"
     method: POST
-    body: "{{ kubeconfig_content.content }}"
+    body: "{{ kubeconfig_content.content | replace('\n', '') }}"
     status_code: 200
     body_format: raw
     headers:
