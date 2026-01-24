@@ -20,19 +20,19 @@
     - "Have a look the upgrade plan in /tmp/upgrade_plan.txt"
   tags: upgrade
   
-- pause:
-    prompt: "Do you want to apply the above changes? (Y/n)"
-  register: my_pause
-  delegate_to: localhost
-  run_once: true
-  tags: upgrade
+# - pause:
+#     prompt: "Do you want to apply the above changes? (Y/n)"
+#   register: my_pause
+#   delegate_to: localhost
+#   run_once: true
+#   tags: upgrade
 
-- name: Confirm sync changes
-  fail:
-    msg: "Maybe in the next life"
-  when: my_pause.user_input|lower != 'y'
-  run_once: true
-  tags: upgrade
+# - name: Confirm sync changes
+#   fail:
+#     msg: "Maybe in the next life"
+#   when: my_pause.user_input|lower != 'y'
+#   run_once: true
+#   tags: upgrade
 
 
 # debug
