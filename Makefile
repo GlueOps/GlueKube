@@ -21,5 +21,7 @@ rotate-certs: .env
 	echo "Rotating certificates for GlueKube..."
 upgrade-cluster: .env
 	echo "Upgrading the GlueKube cluster..."
+	ansible-playbook -i ansible/inventory/hosts.yaml ansible/playbooks/upgrade-cluster.yaml
+
 patch-os: .env
 	echo "Patching the operating system for GlueKube nodes..."

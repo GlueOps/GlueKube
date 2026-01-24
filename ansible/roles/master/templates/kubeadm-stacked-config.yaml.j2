@@ -31,7 +31,6 @@ apiServer:
   {% for ip in etcd_initial_cluster %}
   - "{{ ip }}"
   {% endfor %}
-certificatesDir: /etc/kubernetes/pki
 clusterName: kubernetes
 controllerManager: {}
 imageRepository: k8s.repo.gpkg.io
