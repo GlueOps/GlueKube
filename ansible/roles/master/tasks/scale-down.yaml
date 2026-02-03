@@ -1,6 +1,7 @@
 - name: Cordon Nodes
   ansible.builtin.shell: |
     export KUBECONFIG=/opt/kubernetes/.kube/config
+    echo "Cordon Node: {{ item }}"
     kubectl cordon {{ item }}
   with_items: "{{ nodes_to_remove.stdout | default('') | split(',') | reject('eq', '') | list }}"
   when: nodes_to_remove.stdout is defined and nodes_to_remove.stdout | length > 0
@@ -8,13 +9,18 @@
 - name: Drain Nodes
   ansible.builtin.shell: |
     export KUBECONFIG=/opt/kubernetes/.kube/config
-    kubectl drain {{ item }} --ignore-daemonsets  --delete-emptydir-data 
+    echo "Drain Node: {{ item }}"
+    kubectl drain {{ item }} --ignore-daemonsets  --delete-emptydir-data --grace-period=900
+    kubectl get pods --all-namespaces -o json \
+      | jq -r '.items[] | select(.spec.nodeName=="{{ item }}") | .metadata.namespace as $ns | .spec.volumes[].persistentVolumeClaim.claimName | select(. != null) | "\($ns) \(.)"' \
+      | while read -r ns pvc; do kubectl delete pvc "$pvc" -n "$ns"; done
   with_items: "{{ nodes_to_remove.stdout | default('') | split(',') | reject('eq', '') | list }}"
   when: nodes_to_remove.stdout is defined and nodes_to_remove.stdout | length > 0
 
 - name: Delete Nodes
   ansible.builtin.shell: |
     export KUBECONFIG=/opt/kubernetes/.kube/config
+    echo "Deleting Node: {{ item }}"
     kubectl delete node {{ item }} 
   with_items: "{{ nodes_to_remove.stdout | default('') | split(',') | reject('eq', '') | list }}"
   when: nodes_to_remove.stdout is defined and nodes_to_remove.stdout | length > 0
