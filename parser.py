@@ -40,10 +40,10 @@ for node_pool in platform_data["node_pools"]:
     for taint in node_pool.get("taints", []):
         taints.append(f"{taint['key']}={taint['value']}:{taint['effect']}")
     for node in node_pool["servers"]:
-        per_node_labels = [f"node-public-ip={node['public_ip_address']}", f"node-private-ip={node['private_ip_address']}"]
+        per_node_labels = [f"node-public-ip={node.get('public_ip_address', '')}", f"node-private-ip={node['private_ip_address']}"]
 
         server = {
-                "ansible_host": node['private_ip_address'], #node["public_ip_address"],
+                "ansible_host": node['private_ip_address'],
                 "ansible_user": node["ssh_user"],
                 "ip": node["private_ip_address"],
                 "ansible_ssh_private_key_file": f"/root/.ssh/autoglue/keys/{node['ssh_key_id']}.pem",
