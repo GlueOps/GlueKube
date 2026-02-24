@@ -1,0 +1,33 @@
+---
+- name: Get current cluster master node IPs from kubectl
+  ansible.builtin.shell: |
+    export KUBECONFIG=/etc/kubernetes/admin.conf
+    kubectl get nodes -l node-role.kubernetes.io/control-plane -o jsonpath='{.items[*].status.addresses[?(@.type=="InternalIP")].address}'
+  register: kubectl_node_ips
+  delegate_to: "{{ orchestrator_node }}"
+
+  
+- name: Build updated master IPs list (add new, exclude old)
+  set_fact:
+    updated_master_ips: "{{ (kubectl_node_ips.stdout.split()) | difference([hostvars[orchestrator_node]['ip']]) | unique }}"
+
+- name: Update DNS records with master node IPs via AutoGlue API
+  ansible.builtin.uri:
+    url: "{{ autoglue_base_url }}/api/v1/dns/records/{{ autoglue_record_id }}"
+    method: PATCH
+    headers:
+      accept: application/json
+      x-api-key: "{{ autoglue_api_key }}"
+      content-type: application/json
+      x-org-id: "{{ autoglue_org_id }}"
+    body_format: json
+    body:
+      name: ctrp
+      ttl: 60
+      type: A
+      values: "{{ updated_master_ips }}"
+    status_code: [200, 201, 204]
+
+- name: Sleep for 70 seconds and wait for the dns to propagate and cluster to stabilize before removing old master
+  ansible.builtin.wait_for:
+    timeout: 70

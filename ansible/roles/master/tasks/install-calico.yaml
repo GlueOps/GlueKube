@@ -37,13 +37,13 @@
     create_namespace: true
     values_files:
       - /opt/kubernetes/calico.yaml
-    kubeconfig: /opt/kubernetes/.kube/config
+    kubeconfig: /etc/kubernetes/admin.conf
   tags: install_calico
 
 
 # - name: Apply Calico Configs(Felix and Global Network Policy)
 #   ansible.builtin.shell: |
-#     export KUBECONFIG=/opt/kubernetes/.kube/config 
+#     export KUBECONFIG=/etc/kubernetes/admin.conf 
 #     kubectl apply -f /opt/kubernetes/calico-global-network-policy.yaml
 #     kubectl apply -f /opt/kubernetes/calico-felix.yaml
 #   tags: install_calico
@@ -51,7 +51,7 @@
 
 # - name: Apply Calico HostEndpoint manifest for each node
 #   ansible.builtin.shell: |
-#     export KUBECONFIG=/opt/kubernetes/.kube/config
+#     export KUBECONFIG=/etc/kubernetes/admin.conf
 #     iface=$(ip -o link show | awk -F': ' '/altname public/ {print $2}')
 #     sed "s/node_name/{{ item }}/g; s/public/$iface/g" /opt/kubernetes/calico-hostendpoint.yaml | kubectl apply -f -
 #   loop: "{{ lb_nodes }}"

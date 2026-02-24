@@ -1,0 +1,46 @@
+---
+# Add a single master node to the cluster
+# Runs from orchestrator, delegates to new node where needed
+
+- name: "Adding master node: {{ node_to_add }}"
+  debug:
+    msg: "Starting add process for {{ node_to_add }}"
+
+# Tasks that run ON the new node
+- name: Prepare and join new node
+  block:
+    - name: Prepare new node
+      ansible.builtin.include_tasks: prepare-nodes.yaml
+  delegate_to: "{{ node_to_add }}"
+
+# Tasks that run ON the orchestrator
+- name: Copy join command and reupload certs on orchestrator
+  block:
+    - name: Copy join command on orchestrator
+      ansible.builtin.include_tasks: master-node-rotation/copy-join-command.yaml
+
+    - name: Reupload certs on orchestrator
+      ansible.builtin.include_tasks: reupload-certs.yaml
+  delegate_to: "{{ execution_host | default(groups['masters'][0]) }}"
+
+- name: Join new node to cluster
+  block:
+    - name: Reset new node
+      ansible.builtin.include_tasks: reset-nodes.yaml
+    - name: Join new node to cluster
+      ansible.builtin.include_tasks: master-node-rotation/join-nodes.yaml
+  delegate_to: "{{ node_to_add }}"
+
+- name: Wait for new master to be ready
+  ansible.builtin.shell: |
+    export KUBECONFIG=/etc/kubernetes/admin.conf
+    kubectl wait --for=condition=Ready node/{{ node_to_add }} --timeout=120s
+  delegate_to: "{{ execution_host | default(groups['masters'][0]) }}"
+  register: node_ready
+  retries: 5
+  delay: 10
+  until: node_ready.rc == 0
+
+- name: "Successfully added master node: {{ node_to_add }}"
+  debug:
+    msg: "Node {{ node_to_add }} has been added to the cluster"

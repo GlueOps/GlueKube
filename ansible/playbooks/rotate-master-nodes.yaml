@@ -1,0 +1,13 @@
+---
+- name: Rotate Master Nodes
+  hosts:
+    - masters
+  become: true
+  tasks:
+    - name: Rotate Master Nodes
+      ansible.builtin.include_role:
+        name: master
+        tasks_from: rotate-master-nodes.yaml
+
+
+

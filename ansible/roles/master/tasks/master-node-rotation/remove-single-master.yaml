@@ -1,0 +1,58 @@
+---
+# Remove a single master node from the cluster
+# All commands run FROM the orchestrator
+
+- name: "Removing master node: {{ node_to_remove }}"
+  debug:
+    msg: "Orchestrator node {{ execution_host }}: Starting removal process for {{ node_to_remove }}"
+
+# Step 1: Cordon the node
+- name: Cordon node {{ node_to_remove }}
+  ansible.builtin.shell: |
+    export KUBECONFIG=/etc/kubernetes/admin.conf
+    kubectl cordon {{ node_to_remove }}
+  delegate_to: "{{ execution_host }}"
+
+# Step 2: Drain the node
+- name: Drain node {{ node_to_remove }}
+  ansible.builtin.shell: |
+    export KUBECONFIG=/etc/kubernetes/admin.conf
+    kubectl drain {{ node_to_remove }} --ignore-daemonsets --delete-emptydir-data --grace-period=120 --timeout=300s
+  delegate_to: "{{ execution_host }}"
+
+# Step 3: Remove etcd member
+- name: Get etcd member ID for {{ node_to_remove }}
+  ansible.builtin.shell: |
+    export ETCDCTL_API=3
+    etcdctl \
+      --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+      --cert=/etc/kubernetes/pki/etcd/server.crt \
+      --key=/etc/kubernetes/pki/etcd/server.key \
+      member list | grep {{ node_to_remove }} | awk '{print $1}' | tr -d ','
+  delegate_to: "{{ execution_host }}"
+  register: etcd_member_id
+  failed_when: false
+
+- name: Remove etcd member {{ node_to_remove }}
+  ansible.builtin.shell: |
+    export ETCDCTL_API=3
+    etcdctl member remove {{ etcd_member_id.stdout }} \
+      --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+      --cert=/etc/kubernetes/pki/etcd/server.crt \
+      --key=/etc/kubernetes/pki/etcd/server.key \
+  delegate_to: "{{ execution_host }}"
+  when: etcd_member_id.stdout | length > 0
+  register: etcd_remove_result
+  failed_when: etcd_remove_result.rc != 0 and 'member not found' not in etcd_remove_result.stderr | default('')
+
+# Step 4: Delete the node from Kubernetes
+- name: Delete node {{ node_to_remove }}
+  ansible.builtin.shell: |
+    export KUBECONFIG=/etc/kubernetes/admin.conf
+    kubectl delete node {{ node_to_remove }}
+  delegate_to: "{{ execution_host }}"
+  register: delete_result
+
+- name: "Successfully removed master node: {{ node_to_remove }}"
+  debug:
+    msg: "Node {{ node_to_remove }} has been removed from the cluster"

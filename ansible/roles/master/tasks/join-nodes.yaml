@@ -1,6 +1,6 @@
 - name: List current nodes
   ansible.builtin.shell: |
-    export KUBECONFIG=/opt/kubernetes/.kube/config
+    export KUBECONFIG=/etc/kubernetes/admin.conf
     kubectl get nodes --no-headers -o custom-columns=":metadata.name"
   tags: join_nodes
   register: current_cluster_nodes

@@ -1,6 +1,6 @@
 - name: Rotate certs
   ansible.builtin.shell: |
-    export KUBECONFIG=/opt/kubernetes/.kube/config
+    export KUBECONFIG=/etc/kubernetes/admin.conf
     kubeadm certs renew all
   tags: rotate-certs
 
@@ -13,7 +13,7 @@
   
 - name: remove static pods 
   ansible.builtin.shell: |
-    export KUBECONFIG=/opt/kubernetes/.kube/config
+    export KUBECONFIG=/etc/kubernetes/admin.conf
     mv  /etc/kubernetes/manifests/* /opt/kubernetes/manifests/
   tags: rotate-certs
 

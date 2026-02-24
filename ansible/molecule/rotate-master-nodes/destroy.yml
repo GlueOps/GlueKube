@@ -3,8 +3,8 @@
   hosts: localhost
   gather_facts: true
   vars:
-    num_master_nodes: 3
-    num_worker_nodes: 3
+    num_master_nodes: 6
+    num_worker_nodes: 1
   tasks:
     - name: Delete Master Nodes
       hetzner.hcloud.server:

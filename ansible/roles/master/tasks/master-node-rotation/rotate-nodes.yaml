@@ -1,0 +1,99 @@
+---
+
+- name: Set orchestrator node fact
+  set_fact:
+    orchestrator_node: "{{ groups['masters'][0] }}"
+  run_once: true
+
+- name: Display nodes to add/remove for debugging
+  debug:
+    msg: |
+      Nodes to add: {{ hostvars[orchestrator_node]['nodes_to_add'].stdout }}
+      Nodes to remove: {{ hostvars[orchestrator_node]['nodes_to_remove'].stdout }}
+  run_once: true
+
+- name: Parse nodes to add/remove as lists
+  set_fact:
+    nodes_to_add_list: "{{ hostvars[orchestrator_node]['nodes_to_add'].stdout | from_json }}"
+    nodes_to_remove_list: "{{ hostvars[orchestrator_node]['nodes_to_remove'].stdout | from_json }}"
+  run_once: true
+
+- name: Filter master nodes only
+  set_fact:
+    master_nodes_to_add: "{{ nodes_to_add_list | select('search', 'master') | sort | list }}"
+    master_nodes_to_remove: "{{ nodes_to_remove_list | select('search', 'master') | sort | list }}"
+  run_once: true
+
+- name: Filter nodes to remove (excluding orchestrator)
+  set_fact:
+    master_nodes_to_remove_non_orchestrator: "{{ master_nodes_to_remove | difference([orchestrator_node]) }}"
+  run_once: true
+
+- name: Determine rotation count (min of add/remove lists)
+  set_fact:
+    rotation_count: "{{ [master_nodes_to_add | length, master_nodes_to_remove_non_orchestrator | length] | min }}"
+  run_once: true
+
+- name: Display rotation plan
+  debug:
+    msg: |
+      === 3-4-3 Master Rotation Plan ===
+      Orchestrator: {{ orchestrator_node }}
+      Masters to add: {{ master_nodes_to_add }}
+      Masters to remove (non-orchestrator): {{ master_nodes_to_remove_non_orchestrator }}
+      Rotation count: {{ rotation_count }}
+  run_once: true
+
+# 3-4-3 Loop: Add one, remove one, repeat
+- name: Rotate masters using 3-4-3 strategy
+  ansible.builtin.include_tasks: rotate-single-node.yaml
+  vars:
+    node_to_add: "{{ master_nodes_to_add[rotation_idx | int] }}"
+    node_to_remove: "{{ master_nodes_to_remove_non_orchestrator[rotation_idx | int] }}"
+    execution_host: "{{ orchestrator_node }}"
+  loop: "{{ range(0, rotation_count | int) | list }}"
+  loop_control:
+    loop_var: rotation_idx
+  when: rotation_count | int > 0
+
+
+# Handle orchestrator rotation (if orchestrator needs to be removed)
+- name: Check if orchestrator needs rotation
+  set_fact:
+    orchestrator_needs_rotation: "{{ orchestrator_node in master_nodes_to_remove }}"
+  run_once: true
+
+- name: Display orchestrator rotation warning
+  debug:
+    msg: |
+      === Rotating Orchestrator Node ===
+      Current orchestrator {{ orchestrator_node }} will be removed.
+      New orchestrator will be: {{ master_nodes_to_add[0] }}
+
+- name: Determine new orchestrator for deletion commands
+  set_fact:
+    new_orchestrator: "{{ master_nodes_to_add[0] }}"
+  run_once: true
+
+- name: Add new master to replace orchestrator (if not already added)
+  ansible.builtin.include_tasks: add-single-master.yaml
+  vars:
+    node_to_add: "{{ master_nodes_to_add[rotation_count | int] }}"
+    execution_host: "{{ orchestrator_node }}"
+  when: master_nodes_to_add | length > rotation_count | int
+
+- name: Update DNS records and wait for propagation
+  ansible.builtin.include_tasks: update-dns-records.yaml
+
+- name: Remove orchestrator node (delegated to new orchestrator)
+  ansible.builtin.include_tasks: remove-single-master.yaml
+  vars:
+    node_to_remove: "{{ orchestrator_node }}"
+    execution_host: "{{ new_orchestrator }}"
+  
+
+- name: Check etcd health
+  ansible.builtin.include_tasks: check-etcd-health.yaml
+  vars:
+    health_check_stage: "after removing orchestrator {{ orchestrator_node }}"
+    execution_host: "{{ new_orchestrator }}"

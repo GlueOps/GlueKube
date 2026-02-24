@@ -14,6 +14,10 @@ setup: .env
 sync: .env
 	export $(grep -v '^#' .env | xargs);\
 	ansible-playbook -i ansible/inventory/hosts.yaml ansible/playbooks/sync-resources.yaml
+rotate-master-nodes: .env
+	export $(grep -v '^#' .env | xargs);\
+	ansible-playbook -i ansible/inventory/hosts.yaml ansible/playbooks/rotate-master-nodes.yaml
+
 label-taint-nodes: .env
 	export $(grep -v '^#' .env | xargs);\
 	ansible-playbook -i ansible/inventory/hosts.yaml ansible/playbooks/setup-cluster.yaml --tags label_nodes

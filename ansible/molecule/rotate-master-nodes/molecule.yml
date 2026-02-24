@@ -1,0 +1,29 @@
+---
+platforms: 
+  - name: instance-1
+# driver:
+#   name: default
+
+provisioner:
+  name: ansible
+  inventory:
+    links:
+      hosts: inventory/hosts.yaml
+      group_vars: inventory/group_vars
+  playbooks:
+    side_effect: side_effect/rotate_master_nodes.yaml
+    verify: tests/test_cluster_healthy.yaml
+    
+
+scenario:
+  name: rotate-master-nodes
+  test_sequence:
+    - create
+    - converge
+    - verify
+    - side_effect 
+    - verify
+    - destroy
+
+verifier:
+  name: ansible

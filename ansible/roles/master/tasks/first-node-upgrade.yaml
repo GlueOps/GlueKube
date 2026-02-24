@@ -1,6 +1,6 @@
 - name: show upgrade plan
   ansible.builtin.shell: |
-    export KUBECONFIG=/opt/kubernetes/.kube/config
+    export KUBECONFIG=/etc/kubernetes/admin.conf
     kubeadm upgrade plan --allow-release-candidate-upgrades > /opt/kubernetes/upgrade_plan.txt
   register: upgrade_plan
   tags: upgrade
@@ -46,6 +46,6 @@
 
 - name: making the upgrade
   ansible.builtin.shell: |
-    export KUBECONFIG=/opt/kubernetes/.kube/config
+    export KUBECONFIG=/etc/kubernetes/admin.conf
     kubeadm upgrade apply {{ kubernetes_version }} -y
   tags: upgrade
