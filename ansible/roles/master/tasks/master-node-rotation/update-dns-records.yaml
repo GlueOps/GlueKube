@@ -9,7 +9,7 @@
   
 - name: Build updated master IPs list (add new, exclude old)
   set_fact:
-    updated_master_ips: "{{ (kubectl_node_ips.stdout.split()) | difference([hostvars[orchestrator_node]['ip']]) | unique }}"
+    updated_master_ips: "{{ (kubectl_node_ips.stdout.split()) | difference([hostvars[node_to_remove]['ip']]) | unique }}"
 
 - name: Update DNS records with master node IPs via AutoGlue API
   ansible.builtin.uri:

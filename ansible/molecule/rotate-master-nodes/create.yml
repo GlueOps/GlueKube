@@ -3,7 +3,7 @@
   hosts: localhost
   gather_facts: false
   vars:
-    num_master_nodes: 2
+    num_master_nodes: 6
     num_worker_nodes: 1
     public_key: "{{ lookup('file', 'keys/vm_node.pub') }}"
 
@@ -47,7 +47,7 @@
     - name: Create Master Nodes
       hetzner.hcloud.server:
         name: "master-node-{{ item + 1 }}"
-        server_type: cpx32
+        server_type: ccx13
         image: ubuntu-24.04
         location: "{{ lookup('env', 'HCLOUD_LOCATION') | default('hel1') }}"
         enable_ipv4: true
@@ -64,7 +64,7 @@
     - name: Create Worker Nodes
       hetzner.hcloud.server:
         name: "worker-node-{{ item + 1 }}"
-        server_type: cpx32
+        server_type: ccx13
         image: ubuntu-24.04
         location: "{{ lookup('env', 'HCLOUD_LOCATION') | default('hel1') }}"
         enable_ipv4: true
@@ -85,7 +85,7 @@
             children:
               masters:
                 hosts:
-                  {% for node in master_nodes.results[:1] -%}
+                  {% for node in master_nodes.results[:3] -%}
                     {{ node.hcloud_server.name }}:
                       ansible_host: {{ node.hcloud_server.ipv4_address }}
                       ip: {{ node.hcloud_server.private_networks_info[0].ip }}
