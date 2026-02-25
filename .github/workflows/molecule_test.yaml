@@ -57,11 +57,6 @@ jobs:
           ansible-galaxy collection install community.docker hetzner.hcloud kubernetes.core
           ansible-galaxy collection install ansible.posix
 
-      - name: Generate SSH key for VMs
-        run: |
-          mkdir -p keys
-          ssh-keygen -t rsa -b 4096 -f keys/vm_node -N "" -C "molecule-test-key"
-
       - name: Set up environment variables
         env:
           KUBERNETES_VERSION: 'v1.33.7'
@@ -101,12 +96,14 @@ jobs:
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.scenario == 'all' || github.event.inputs.scenario == 'scale-cluster'
         working-directory: ansible
         run: |
+          ssh-keygen -t rsa -b 4096 -f keys/vm_node -N "" -C "molecule-test-key"
           molecule test -s scale-cluster
       
       - name: Run Molecule Test - rotate-master-nodes
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.scenario == 'all' || github.event.inputs.scenario == 'rotate-master-nodes'
         working-directory: ansible
         run: |
+          ssh-keygen -t rsa -b 4096 -f keys/vm_node -N "" -C "molecule-test-key"
           molecule test -s rotate-master-nodes
 
       - name: Upload test results
