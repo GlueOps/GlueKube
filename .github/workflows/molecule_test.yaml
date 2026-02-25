@@ -50,10 +50,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install molecule molecule-plugins[docker] ansible-core ansible-lint yamllint
           pip install docker
+          pip install jmespath
 
       - name: Install Ansible collections
         run: |
-          ansible-galaxy collection install community.docker
+          ansible-galaxy collection install community.docker hetzner.hcloud kubernetes.core
           ansible-galaxy collection install ansible.posix
 
       - name: Set up environment variables
