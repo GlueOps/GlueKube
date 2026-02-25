@@ -40,8 +40,12 @@ terraform.rc
 kubeconfig
 config.yaml
 hosts.yaml
+scale-down-worker.yaml
+scale-up-worker.yaml
+hosts.old.yaml
+scale-down-ctrp.yaml
+scale-up-ctrp.yaml
+rotate-master-nodes.yaml
 hosts.ini
 .kube
 .env
-
-**/inventory/*.yaml

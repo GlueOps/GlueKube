@@ -8,7 +8,7 @@ provisioner:
   name: ansible
   inventory:
     links:
-      hosts: inventory/hosts.yaml
+      hosts: inventory/empty-hosts.yaml
       group_vars: inventory/group_vars
   playbooks:
     side_effect: side_effect/rotate_master_nodes.yaml
