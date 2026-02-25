@@ -55,7 +55,7 @@ jobs:
       - name: Install Ansible collections
         run: |
           ansible-galaxy collection install community.docker hetzner.hcloud kubernetes.core
-          ansible-galaxy collection install ansible.posix community.general.modprobe
+          ansible-galaxy collection install ansible.posix community.general
 
       - name: Set up environment variables
         env:
