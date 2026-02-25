@@ -211,7 +211,8 @@
         method: PATCH
         headers:
           accept: application/json
-          x-api-key: "{{ lookup('env', 'AUTOGLUE_API_KEY') }}"
+          x-org-key: "{{ lookup('env', 'AUTOGLUE_ORG_KEY') }}"
+          x-org-secret: "{{ lookup('env', 'AUTOGLUE_ORG_SECRET') }}"
           content-type: application/json
           x-org-id: "{{ lookup('env', 'AUTOGLUE_ORG_ID') }}"
         body_format: json

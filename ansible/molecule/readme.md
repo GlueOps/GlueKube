@@ -14,7 +14,6 @@ export ANSIBLE_ROLES_PATH=/workspaces/glueops/GlueKube/ansible/roles
 # this envs because we are using internal tool to manage route53 records 
 
 export AUTOGLUE_BASE_URL=""
-export AUTOGLUE_API_KEY=""
 
 export AUTOGLUE_ORG_KEY=""
 export AUTOGLUE_ORG_SECRET=""

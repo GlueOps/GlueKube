@@ -25,6 +25,5 @@ autoglue_base_url: "{{ lookup('env', 'AUTOGLUE_BASE_URL') | default('https://aut
 autoglue_org_key: "{{ lookup('env', 'AUTOGLUE_ORG_KEY') }}"
 autoglue_org_secret: "{{ lookup('env', 'AUTOGLUE_ORG_SECRET') }}"
 autoglue_org_id: "{{ lookup('env', 'AUTOGLUE_ORG_ID') }}"
-autoglue_api_key: "{{ lookup('env', 'AUTOGLUE_API_KEY') }}"
 autoglue_record_id: "{{ lookup('env', 'AUTOGLUE_RECORD_ID') }}"
 autoglue_cluster_id: "{{ lookup('env', 'AUTOGLUE_CLUSTER_ID') }}"

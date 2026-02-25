@@ -17,7 +17,8 @@
     method: PATCH
     headers:
       accept: application/json
-      x-api-key: "{{ autoglue_api_key }}"
+      x-org-key: "{{ autoglue_org_key }}"
+      x-org-secret: "{{ autoglue_org_secret }}"
       content-type: application/json
       x-org-id: "{{ autoglue_org_id }}"
     body_format: json
@@ -31,3 +32,74 @@
 - name: Sleep for 70 seconds and wait for the dns to propagate and cluster to stabilize before removing old master
   ansible.builtin.wait_for:
     timeout: 70
+
+# - name: Get authoritative NS servers for domain
+#   ansible.builtin.shell: |
+#     DOMAIN="{{ loadbalancer_apiserver }}"
+    
+#     # Try to find NS records by progressively removing subdomains
+#     CURRENT_DOMAIN="$DOMAIN"
+#     while [ -n "$CURRENT_DOMAIN" ]; do
+#       NS_RESULT=$(dig +short NS "$CURRENT_DOMAIN" | grep -v '^$' || true)
+#       if [ -n "$NS_RESULT" ]; then
+#         echo "$NS_RESULT" | sed 's/\.$//' | sort
+#         exit 0
+#       fi
+#       # Remove the leftmost subdomain
+#       CURRENT_DOMAIN=$(echo "$CURRENT_DOMAIN" | sed 's/^[^.]*\.//')
+#       # Stop if we've reached a TLD
+#       if [ "$(echo "$CURRENT_DOMAIN" | grep -o '\.' | wc -l)" -lt 1 ]; then
+#         break
+#       fi
+#     done
+    
+#     # Fallback: get NS from authority section without +short
+#     dig NS "$DOMAIN" | awk '/^;; AUTHORITY SECTION:/,/^$/ {if ($4 == "NS") print $5}' | sed 's/\.$//' | sort
+#   register: ns_servers
+#   changed_when: false
+
+# - name: Display NS servers
+#   debug:
+#     msg: "Authoritative NS servers: {{ ns_servers.stdout_lines }}"
+
+# - name: Verify DNS propagation on at least 2 NS servers
+#   ansible.builtin.shell: |
+#     set -e
+#     EXPECTED_IPS='{{ updated_master_ips | sort | join(" ") }}'
+#     NS_SERVERS='{{ ns_servers.stdout_lines | join(" ") }}'
+#     RECORD_NAME="{{ loadbalancer_apiserver }}"
+    
+#     # Counter for successful verifications
+#     SUCCESS_COUNT=0
+#     REQUIRED_SUCCESS=2
+    
+#     for ns in $NS_SERVERS; do
+#       # Query the NS server directly
+#       ACTUAL_IPS=$(dig +short @${ns} ${RECORD_NAME} A | sort | tr '\n' ' ' | sed 's/ $//')
+      
+#       if [ "$ACTUAL_IPS" = "$EXPECTED_IPS" ]; then
+#         echo "✓ NS ${ns}: Match"
+#         SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+#       else
+#         echo "✗ NS ${ns}: Expected [${EXPECTED_IPS}] but got [${ACTUAL_IPS}]"
+#       fi
+      
+#       # Exit success if we have enough confirmations
+#       if [ $SUCCESS_COUNT -ge $REQUIRED_SUCCESS ]; then
+#         echo "DNS propagated successfully (verified on ${SUCCESS_COUNT} NS servers)"
+#         exit 0
+#       fi
+#     done
+    
+#     echo "Only ${SUCCESS_COUNT}/${REQUIRED_SUCCESS} NS servers confirmed propagation"
+#     exit 1
+#   register: dns_check
+#   retries: 3
+#   delay: 60
+#   until: dns_check.rc == 0
+#   changed_when: false
+#   delegate_to: "{{ orchestrator_node }}"
+
+# - name: Display DNS verification result
+#   debug:
+#     msg: "{{ dns_check.stdout_lines }}"
