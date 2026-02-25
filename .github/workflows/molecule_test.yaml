@@ -57,6 +57,11 @@ jobs:
           ansible-galaxy collection install community.docker hetzner.hcloud kubernetes.core
           ansible-galaxy collection install ansible.posix
 
+      - name: Generate SSH key for VMs
+        run: |
+          mkdir -p keys
+          ssh-keygen -t rsa -b 4096 -f keys/vm_node -N "" -C "molecule-test-key"
+
       - name: Set up environment variables
         env:
           KUBERNETES_VERSION: 'v1.33.7'
