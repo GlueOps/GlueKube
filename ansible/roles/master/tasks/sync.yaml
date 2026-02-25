@@ -35,8 +35,8 @@
   vars:
     nodes_to_add: "{{ nodes_to_add_list }}"
 
-- name: Update DNS records and wait for propagation
-  ansible.builtin.include_tasks: master-node-rotation/update-dns-records.yaml
+# - name: Update DNS records and wait for propagation
+#   ansible.builtin.include_tasks: master-node-rotation/update-dns-records.yaml
 
 # scale down
 - name: Scale down nodes

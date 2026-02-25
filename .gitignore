@@ -39,7 +39,7 @@ terraform.rc
 **/keys/**
 kubeconfig
 config.yaml
-hosts.yaml
+# hosts.yaml
 scale-down-worker.yaml
 scale-up-worker.yaml
 hosts.old.yaml

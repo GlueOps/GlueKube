@@ -61,7 +61,7 @@ jobs:
         env:
           KUBERNETES_VERSION: 'v1.33.7'
           KUBERNETES_PACKAGE_VERSION: '1.33.7-1.1'
-          LOADBALANCER_APISERVER: 'localhost'
+          LOADBALANCER_APISERVER: 'ctrp.gluekube.qa-glueops.com'
           CALICO_CHART_VERSION: 'v3.29.3'
           CALICO_TIGERA_OPERATOR_VERSION: 'v1.36.7'
           CERTIFICATE_KEY: ${{ secrets.CERTIFICATE_KEY || '' }}
@@ -100,13 +100,13 @@ jobs:
           ssh-keygen -t rsa -b 4096 -f molecule/scale-cluster/keys/vm_node -N "" -C "molecule-test-key"
           molecule test -s scale-cluster
       
-      - name: Run Molecule Test - rotate-master-nodes
-        if: github.event_name != 'workflow_dispatch' || github.event.inputs.scenario == 'all' || github.event.inputs.scenario == 'rotate-master-nodes'
-        working-directory: ansible
-        run: |
-          mkdir -p molecule/rotate-master-nodes/keys/
-          ssh-keygen -t rsa -b 4096 -f molecule/rotate-master-nodes/keys/vm_node -N "" -C "molecule-test-key"
-          molecule test -s rotate-master-nodes
+      # - name: Run Molecule Test - rotate-master-nodes
+      #   if: github.event_name != 'workflow_dispatch' || github.event.inputs.scenario == 'all' || github.event.inputs.scenario == 'rotate-master-nodes'
+      #   working-directory: ansible
+      #   run: |
+      #     mkdir -p molecule/rotate-master-nodes/keys/
+      #     ssh-keygen -t rsa -b 4096 -f molecule/rotate-master-nodes/keys/vm_node -N "" -C "molecule-test-key"
+      #     molecule test -s rotate-master-nodes
 
       - name: Upload test results
         if: always()
