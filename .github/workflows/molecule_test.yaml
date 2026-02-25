@@ -96,14 +96,14 @@ jobs:
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.scenario == 'all' || github.event.inputs.scenario == 'scale-cluster'
         working-directory: ansible
         run: |
-          ssh-keygen -t rsa -b 4096 -f keys/vm_node -N "" -C "molecule-test-key"
+          ssh-keygen -t rsa -b 4096 -f molecule/scale-cluster/keys/vm_node -N "" -C "molecule-test-key"
           molecule test -s scale-cluster
       
       - name: Run Molecule Test - rotate-master-nodes
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.scenario == 'all' || github.event.inputs.scenario == 'rotate-master-nodes'
         working-directory: ansible
         run: |
-          ssh-keygen -t rsa -b 4096 -f keys/vm_node -N "" -C "molecule-test-key"
+          ssh-keygen -t rsa -b 4096 -f molecule/rotate-master-nodes/keys/vm_node -N "" -C "molecule-test-key"
           molecule test -s rotate-master-nodes
 
       - name: Upload test results
