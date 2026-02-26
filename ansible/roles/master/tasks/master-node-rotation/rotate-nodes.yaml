@@ -82,7 +82,7 @@
 - name: Update DNS records and wait for propagation
   ansible.builtin.include_tasks: update-dns-records.yaml
   vars:
-    node_to_remove: "{{ orchestrator_node }}"
+    nodes_to_remove: ["{{ orchestrator_node }}"]
   when: orchestrator_needs_rotation
 
 - name: Remove orchestrator node (delegated to new orchestrator)

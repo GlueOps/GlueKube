@@ -17,6 +17,8 @@
 
 - name: Update DNS records and wait for propagation
   ansible.builtin.include_tasks: update-dns-records.yaml
+  vars:
+    nodes_to_remove: ["{{ node_to_remove }}"]
 
 - name: Display DNS propagation status
   debug:
