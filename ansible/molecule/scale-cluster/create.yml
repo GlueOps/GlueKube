@@ -1,26 +1,25 @@
 ---
 - name: Create Hetzner VMs and Firewall
   hosts: localhost
-  gather_facts: false
+  gather_facts: true
   vars:
     num_master_nodes: 3
-    num_lb_nodes: 3
     num_worker_nodes: 3
-    public_key: "{{ lookup('file', 'keys/k8s_cluster.pub') }}"
+    public_key: "{{ lookup('file', 'keys/vm_node.pub') }}"
 
   tasks:
     - name: Create Hetzner Network
       hetzner.hcloud.network:
-        name: abonded-network
-        ip_range: "10.0.0.0/16"
+        name: test-molecule-network
+        ip_range: "10.1.0.0/16"
         api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
       register: network
 
     - name: Create Hetzner Network Subnet
       hetzner.hcloud.subnetwork:
-        network: abonded-network
+        network: test-molecule-network
         network_zone: "eu-central"
-        ip_range: "10.0.0.0/24"
+        ip_range: "10.1.0.0/24"
         api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
         type: cloud
       register: subnet
@@ -44,220 +43,117 @@
         api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
       register: firewall
 
-    - name: Create LoadBalancer Nodes
-      hetzner.hcloud.server:
-        name: "lb-node-{{ item + 1 }}"
-        server_type: cpx31
-        image: ubuntu-24.04
-        location: "{{ lookup('env', 'HCLOUD_LOCATION') | default('fsn1') }}"
-        enable_ipv4: true
-        enable_ipv6: false
-        firewalls:
-          - my-firewall
-        user_data: "{{ lookup('template', 'cloudinit/cloud-init-lb.yaml.j2')}}"
-        api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
-      loop: "{{ range(0, num_lb_nodes) | list }}"
-      register: lb_nodes
 
     - name: Create Master Nodes
       hetzner.hcloud.server:
         name: "master-node-{{ item + 1 }}"
-        server_type: cpx31
+        server_type: ccx13
         image: ubuntu-24.04
-        location: "{{ lookup('env', 'HCLOUD_LOCATION') | default('fsn1') }}"
+        location: "{{ lookup('env', 'HCLOUD_LOCATION') | default('hel1') }}"
         enable_ipv4: true
         enable_ipv6: false
         firewalls:
           - my-firewall
         user_data: "{{ lookup('template', 'cloudinit/cloud-init-master.yaml.j2')}}"
         api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
+        private_networks:
+          - test-molecule-network
       loop: "{{ range(0, num_master_nodes) | list }}"
       register: master_nodes
-
+    
     - name: Create Worker Nodes
       hetzner.hcloud.server:
         name: "worker-node-{{ item + 1 }}"
-        server_type: cpx31
+        server_type: ccx13
         image: ubuntu-24.04
-        location: "{{ lookup('env', 'HCLOUD_LOCATION') | default('fsn1') }}"
+        location: "{{ lookup('env', 'HCLOUD_LOCATION') | default('hel1') }}"
         enable_ipv4: true
         enable_ipv6: false
         firewalls:
           - my-firewall
         user_data: "{{ lookup('template', 'cloudinit/cloud-init-worker.yaml.j2')}}"
         api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
+        private_networks:
+          - test-molecule-network
       loop: "{{ range(0, num_worker_nodes) | list }}"
       register: worker_nodes
-
-    - name: Create a server network and specify the ip address
-      hetzner.hcloud.server_network:
-        network: abonded-network
-        server: "lb-node-{{ item + 1 }}"
-        ip: "10.0.0.1{{ item + 1 }}"
-        state: present
-      loop: "{{ range(0, num_lb_nodes) | list }}"
-
-    - name: Create a server network and specify the ip address
-      hetzner.hcloud.server_network:
-        network: abonded-network
-        server: "master-node-{{ item + 1 }}"
-        ip: "10.0.0.2{{ item + 1 }}"
-        state: present
-      loop: "{{ range(0, num_master_nodes) | list }}"
-
-    - name: Create a server network and specify the ip address
-      hetzner.hcloud.server_network:
-        network: abonded-network
-        server: "worker-node-{{ item + 1 }}"
-        ip: "10.0.0.3{{ item + 1 }}"
-        state: present
-      loop: "{{ range(0, num_worker_nodes) | list }}"
 
     - name: Store default inventory
       ansible.builtin.copy:
         content: |
           all:
             children:
-              loadbalancer:
-                hosts:
-                  {% for node in lb_nodes.results -%}
-                    lb-node-{{ node.item + 1 }}:
-                      ansible_host: {{ node.hcloud_server.ipv4_address }}
-                      ip: 10.0.0.1{{ node.item + 1 }}
-                      ansible_user: haproxyadmin
-                      ansible_ssh_private_key_file: keys/k8s_cluster
-                  {% endfor +%}
               masters:
                 hosts:
-                  {% for node in master_nodes.results -%}
-                    master-node-{{ node.item + 1 }}:
+                  {% for node in master_nodes.results[:1] -%}
+                    {{ node.hcloud_server.name }}:
                       ansible_host: {{ node.hcloud_server.ipv4_address }}
-                      ip: 10.0.0.2{{ node.item + 1 }}
+                      ip: {{ node.hcloud_server.private_networks_info[0].ip }}
                       ansible_user: cluster
-                      ansible_ssh_private_key_file: keys/k8s_cluster
+                      ansible_ssh_private_key_file: keys/vm_node
                       extra:
                         taints:
                           - node-role.kubernetes.io/control-plane:NoSchedule-
                   {% endfor +%}
               workers:
                 hosts:
-                  {% for node in worker_nodes.results -%}
-                    worker-node-{{ node.item + 1 }}:
+                  {% for node in worker_nodes.results[:2] -%}
+                    {{ node.hcloud_server.name }}:
                       ansible_host: {{ node.hcloud_server.ipv4_address }}
-                      ip: 10.0.0.3{{ node.item + 1 }}
+                      ip: {{ node.hcloud_server.private_networks_info[0].ip }}
                       ansible_user: cluster
-                      ansible_ssh_private_key_file: keys/k8s_cluster
+                      ansible_ssh_private_key_file: keys/vm_node
                       extra:
                         taints:
                           - node-role.kubernetes.io/control-plane:NoSchedule-
                   {% endfor +%}
         dest: "./inventory/hosts.yaml"
         mode: "0644"
-
-    - name: Store inventory(for scale down control plane)
+    
+    - name: Store Scale Up control plane inventory
       ansible.builtin.copy:
         content: |
           all:
             children:
-              loadbalancer:
-                hosts:
-                  {% for node in lb_nodes.results -%}
-                    lb-node-{{ node.item + 1 }}:
-                      ansible_host: {{ node.hcloud_server.ipv4_address }}
-                      ip: 10.0.0.1{{ node.item + 1 }}
-                      ansible_user: haproxyadmin
-                      ansible_ssh_private_key_file: keys/k8s_cluster
-                  {% endfor +%}
-              masters:
-                hosts:
-                  {% for node in master_nodes.results[:1] -%}
-                    master-node-{{ node.item + 1 }}:
-                      ansible_host: {{ node.hcloud_server.ipv4_address }}
-                      ip: 10.0.0.2{{ node.item + 1 }}
-                      ansible_user: cluster
-                      ansible_ssh_private_key_file: keys/k8s_cluster
-                      extra:
-                        taints:
-                          - node-role.kubernetes.io/control-plane:NoSchedule-
-                  {% endfor +%}
-              workers:
-                hosts:
-                  {% for node in worker_nodes.results -%}
-                    worker-node-{{ node.item + 1 }}:
-                      ansible_host: {{ node.hcloud_server.ipv4_address }}
-                      ip: 10.0.0.3{{ node.item + 1 }}
-                      ansible_user: cluster
-                      ansible_ssh_private_key_file: keys/k8s_cluster
-                      extra:
-                        taints:
-                          - node-role.kubernetes.io/control-plane:NoSchedule-
-                  {% endfor +%}
-        dest: "./inventory/scale-down-ctrp.yaml"
-        mode: "0644"
-
-    - name: Store inventory(for scale up control-plane node)
-      ansible.builtin.copy:
-        content: |
-          all:
-            children:
-              loadbalancer:
-                hosts:
-                  {% for node in lb_nodes.results -%}
-                    lb-node-{{ node.item + 1 }}:
-                      ansible_host: {{ node.hcloud_server.ipv4_address }}
-                      ip: 10.0.0.1{{ node.item + 1 }}
-                      ansible_user: haproxyadmin
-                      ansible_ssh_private_key_file: keys/k8s_cluster
-                  {% endfor +%}
               masters:
                 hosts:
                   {% for node in master_nodes.results -%}
-                    master-node-{{ node.item + 1 }}:
+                    {{ node.hcloud_server.name }}:
                       ansible_host: {{ node.hcloud_server.ipv4_address }}
-                      ip: 10.0.0.2{{ node.item + 1 }}
+                      ip: {{ node.hcloud_server.private_networks_info[0].ip }}
                       ansible_user: cluster
-                      ansible_ssh_private_key_file: keys/k8s_cluster
+                      ansible_ssh_private_key_file: keys/vm_node
                       extra:
                         taints:
                           - node-role.kubernetes.io/control-plane:NoSchedule-
                   {% endfor +%}
               workers:
                 hosts:
-                  {% for node in worker_nodes.results -%}
-                    worker-node-{{ node.item + 1 }}:
+                  {% for node in worker_nodes.results[:2] -%}
+                    {{ node.hcloud_server.name }}:
                       ansible_host: {{ node.hcloud_server.ipv4_address }}
-                      ip: 10.0.0.3{{ node.item + 1 }}
+                      ip: {{ node.hcloud_server.private_networks_info[0].ip }}
                       ansible_user: cluster
-                      ansible_ssh_private_key_file: keys/k8s_cluster
+                      ansible_ssh_private_key_file: keys/vm_node
                       extra:
                         taints:
                           - node-role.kubernetes.io/control-plane:NoSchedule-
                   {% endfor +%}
         dest: "./inventory/scale-up-ctrp.yaml"
         mode: "0644"
-
     - name: Store inventory(for scale up worker node)
       ansible.builtin.copy:
         content: |
           all:
             children:
-              loadbalancer:
-                hosts:
-                  {% for node in lb_nodes.results -%}
-                    lb-node-{{ node.item + 1 }}:
-                      ansible_host: {{ node.hcloud_server.ipv4_address }}
-                      ip: 10.0.0.1{{ node.item + 1 }}
-                      ansible_user: haproxyadmin
-                      ansible_ssh_private_key_file: keys/k8s_cluster
-                  {% endfor +%}
               masters:
                 hosts:
                   {% for node in master_nodes.results -%}
-                    master-node-{{ node.item + 1 }}:
+                    {{ node.hcloud_server.name }}:
                       ansible_host: {{ node.hcloud_server.ipv4_address }}
-                      ip: 10.0.0.2{{ node.item + 1 }}
+                      ip: {{ node.hcloud_server.private_networks_info[0].ip }}
                       ansible_user: cluster
-                      ansible_ssh_private_key_file: keys/k8s_cluster
+                      ansible_ssh_private_key_file: keys/vm_node
                       extra:
                         taints:
                           - node-role.kubernetes.io/control-plane:NoSchedule-
@@ -265,11 +161,11 @@
               workers:
                 hosts:
                   {% for node in worker_nodes.results -%}
-                    worker-node-{{ node.item + 1 }}:
+                    {{ node.hcloud_server.name }}:
                       ansible_host: {{ node.hcloud_server.ipv4_address }}
-                      ip: 10.0.0.3{{ node.item + 1 }}
+                      ip: {{ node.hcloud_server.private_networks_info[0].ip }}
                       ansible_user: cluster
-                      ansible_ssh_private_key_file: keys/k8s_cluster
+                      ansible_ssh_private_key_file: keys/vm_node
                       extra:
                         taints:
                           - node-role.kubernetes.io/control-plane:NoSchedule-
@@ -282,23 +178,14 @@
         content: |
           all:
             children:
-              loadbalancer:
-                hosts:
-                  {% for node in lb_nodes.results -%}
-                    lb-node-{{ node.item + 1 }}:
-                      ansible_host: {{ node.hcloud_server.ipv4_address }}
-                      ip: 10.0.0.1{{ node.item + 1 }}
-                      ansible_user: haproxyadmin
-                      ansible_ssh_private_key_file: keys/k8s_cluster
-                  {% endfor +%}
               masters:
                 hosts:
                   {% for node in master_nodes.results -%}
-                    master-node-{{ node.item + 1 }}:
+                    {{ node.hcloud_server.name }}:
                       ansible_host: {{ node.hcloud_server.ipv4_address }}
-                      ip: 10.0.0.2{{ node.item + 1 }}
+                      ip: {{ node.hcloud_server.private_networks_info[0].ip }}
                       ansible_user: cluster
-                      ansible_ssh_private_key_file: keys/k8s_cluster
+                      ansible_ssh_private_key_file: keys/vm_node
                       extra:
                         taints:
                           - node-role.kubernetes.io/control-plane:NoSchedule-
@@ -306,14 +193,36 @@
               workers:
                 hosts:
                   {% for node in worker_nodes.results[:1] -%}
-                    worker-node-{{ node.item + 1 }}:
+                    {{ node.hcloud_server.name }}:
                       ansible_host: {{ node.hcloud_server.ipv4_address }}
-                      ip: 10.0.0.3{{ node.item + 1 }}
+                      ip: {{ node.hcloud_server.private_networks_info[0].ip }}
                       ansible_user: cluster
-                      ansible_ssh_private_key_file: keys/k8s_cluster
+                      ansible_ssh_private_key_file: keys/vm_node
                       extra:
                         taints:
                           - node-role.kubernetes.io/control-plane:NoSchedule-
                   {% endfor +%}
         dest: "./inventory/scale-down-worker.yaml"
         mode: "0644"
+      
+    - name: Update DNS records with master node IPs via AutoGlue API
+      ansible.builtin.uri:
+        url: "{{ lookup('env', 'AUTOGLUE_BASE_URL') }}/api/v1/dns/records/{{ lookup('env', 'AUTOGLUE_RECORD_ID') }}"
+        method: PATCH
+        headers:
+          accept: application/json
+          x-org-key: "{{ lookup('env', 'AUTOGLUE_ORG_KEY') }}"
+          x-org-secret: "{{ lookup('env', 'AUTOGLUE_ORG_SECRET') }}"
+          content-type: application/json
+          x-org-id: "{{ lookup('env', 'AUTOGLUE_ORG_ID') }}"
+        body_format: json
+        body:
+          name: ctrp
+          ttl: 60
+          type: A
+          values: "{{ master_nodes.results | map(attribute='hcloud_server') | map(attribute='private_networks_info') | map('first') | map(attribute='ip') | list }}"
+        status_code: [200, 201, 204]
+
+    - name: wait for 60 seconds to ensure that the nodes are up and running
+      ansible.builtin.pause:
+        seconds: 60

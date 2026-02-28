@@ -1,0 +1,22 @@
+- name: Print Kubeadm join node command
+  ansible.builtin.command: kubeadm token create --print-join-command --ttl 10m
+  when: inventory_hostname == groups['masters'][0]
+  register: join_command
+  tags: create_join_command
+
+
+- name: Get Join token
+  ansible.builtin.command: kubeadm token create --ttl 10m
+  when: inventory_hostname == groups['masters'][0]
+  register: join_token
+  tags: create_join_command
+
+
+- name: Get Join hash
+  ansible.builtin.shell: |
+    openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt \
+    | openssl rsa -pubin -outform der 2>/dev/null \
+    | openssl dgst -sha256 -hex | sed 's/^.* //'
+  when: inventory_hostname == groups['masters'][0]
+  register: join_hash
+  tags: create_join_command

@@ -46,7 +46,7 @@
       delegate_to: "{{ groups['masters'][0] }}"
       become: yes 
       ansible.builtin.shell: |
-        export KUBECONFIG=/opt/kubernetes/.kube/config
+        export KUBECONFIG=/etc/kubernetes/admin.conf
         kubectl cordon {{ inventory_hostname }}
         kubectl drain {{ inventory_hostname }} --ignore-daemonsets --delete-emptydir-data
           
@@ -68,7 +68,7 @@
       delegate_to: "{{ groups['masters'][0] }}"
       become: yes
       ansible.builtin.shell: |
-        export KUBECONFIG=/opt/kubernetes/.kube/config
+        export KUBECONFIG=/etc/kubernetes/admin.conf
         kubectl uncordon {{ inventory_hostname }}
       register: uncordon_result
       changed_when: "'uncordoned' in uncordon_result.stdout"
@@ -101,7 +101,7 @@
       delegate_to: "{{ groups['masters'][0] }}"
       become: yes 
       ansible.builtin.shell: |
-        export KUBECONFIG=/opt/kubernetes/.kube/config
+        export KUBECONFIG=/etc/kubernetes/admin.conf
         kubectl cordon {{ inventory_hostname }}
         kubectl drain {{ inventory_hostname }} --ignore-daemonsets --delete-emptydir-data
           
@@ -124,7 +124,7 @@
       delegate_to: "{{ groups['masters'][0] }}"
       become: yes
       ansible.builtin.shell: |
-        export KUBECONFIG=/opt/kubernetes/.kube/config
+        export KUBECONFIG=/etc/kubernetes/admin.conf
         kubectl uncordon {{ inventory_hostname }}
       register: uncordon_result
       changed_when: "'uncordoned' in uncordon_result.stdout"

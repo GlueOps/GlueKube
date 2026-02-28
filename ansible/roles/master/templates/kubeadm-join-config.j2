@@ -3,7 +3,7 @@ kind: JoinConfiguration
 nodeRegistration:
     criSocket: unix:///var/run/containerd/containerd.sock
     kubeletExtraArgs:
-      node-ip: "{{ hostvars[inventory_hostname].ip }}"
+      node-ip: "{{ hostvars[node_to_add | default(inventory_hostname)].ip }}"
     imagePullPolicy: IfNotPresent
     taints:
       - key: "node-role.kubernetes.io/control-plane"
@@ -19,7 +19,7 @@ discovery:
 
 controlPlane:
   localAPIEndpoint:
-    advertiseAddress: "{{ hostvars[inventory_hostname].ip }}"
+    advertiseAddress: "{{ hostvars[node_to_add | default(inventory_hostname)].ip }}"
     bindPort: 6443
   certificateKey: "{{ certificate_key }}"
   

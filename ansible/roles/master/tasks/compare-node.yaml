@@ -31,7 +31,7 @@
 
 - name: Write current nodes list
   ansible.builtin.shell: |
-    export KUBECONFIG=/opt/kubernetes/.kube/config
+    export KUBECONFIG=/etc/kubernetes/admin.conf
     kubectl get nodes -o json | jq -r '.items[] | select(.metadata.labels["kubernetes.io/hostname"]) | .metadata.name' | sort > /opt/kubernetes/current_nodes_list
 
 - name: Copy Compare python script
@@ -60,5 +60,5 @@
 - name: List of nodes changes
   ansible.builtin.debug:
     msg:
-    - "Nodes to remove: {{ nodes_to_remove.stdout | split(',') }}."
+    - "Nodes to remove: {{ nodes_to_remove.stdout }}."
     - "Nodes to add '{{ nodes_to_add.stdout }}'."

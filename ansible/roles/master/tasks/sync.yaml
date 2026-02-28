@@ -1,12 +1,17 @@
 ---
+- name: Set orchestrator node fact
+  set_fact:
+    orchestrator_node: "{{ groups['masters'][0] }}"
+  run_once: true
+
 - name: Compare resources
   ansible.builtin.import_tasks: compare-node.yaml
-  when: inventory_hostname == groups['masters'][0]
+  when: inventory_hostname == orchestrator_node
 
 - name: Check if resources are in sync
   fail:
     msg: "All resources are synced"
-  when: hostvars[groups['masters'][0]]['nodes_to_add'].stdout == "[]" and hostvars[groups['masters'][0]]['nodes_to_remove'].stdout == "[]"
+  when: hostvars[orchestrator_node]['nodes_to_add'].stdout == "[]" and hostvars[orchestrator_node]['nodes_to_remove'].stdout == "[]"
   run_once: true
   delegate_to: localhost
 
@@ -17,11 +22,28 @@
   run_once: true
   delegate_to: localhost
 
+
+- name: Parse nodes to add/remove as lists
+  set_fact:
+    nodes_to_add_list: "{{ hostvars[orchestrator_node]['nodes_to_add'].stdout | from_json }}"
+    nodes_to_remove_list: "{{ hostvars[orchestrator_node]['nodes_to_remove'].stdout | from_json }}"
+  run_once: true
+
 #scale up
-- name: Scale down nodes
-  ansible.builtin.import_tasks: scale-up.yaml
+- name: Scale up nodes
+  ansible.builtin.include_tasks: scale-up.yaml
+  vars:
+    nodes_to_add: "{{ nodes_to_add_list }}"
+
+- name: Update DNS records and wait for propagation
+  ansible.builtin.include_tasks: master-node-rotation/update-dns-records.yaml
+  vars:
+    nodes_to_remove: "{{ nodes_to_remove_list | select('search', 'master') | list }}"
+  when: inventory_hostname == orchestrator_node
 
 # scale down
 - name: Scale down nodes
-  ansible.builtin.import_tasks: scale-down.yaml
-  when: hostvars[groups['masters'][0]]['nodes_to_remove'].stdout != "[]" and inventory_hostname == groups['masters'][0]
+  ansible.builtin.include_tasks: scale-down.yaml
+  vars:
+    nodes_to_remove: "{{ nodes_to_remove_list }}"
+  when: nodes_to_remove_list | length > 0 and inventory_hostname == orchestrator_node

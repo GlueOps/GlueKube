@@ -1,0 +1,38 @@
+---
+# Rotate a single master node: add new, check health, remove old, check health
+
+- name: "=== Rotating: Add {{ node_to_add }}, Remove {{ node_to_remove }} ==="
+  debug:
+    msg: "Starting 3-4-3 rotation step"
+
+# Step 1: Add new master
+- name: Add new master node
+  ansible.builtin.include_tasks: add-single-master.yaml
+
+# # Step 2: Check etcd health after adding
+- name: Check etcd health after scale-up
+  ansible.builtin.include_tasks: check-etcd-health.yaml
+  vars:
+    health_check_stage: "after adding {{ node_to_add }}"
+
+- name: Update DNS records and wait for propagation
+  ansible.builtin.include_tasks: update-dns-records.yaml
+  vars:
+    nodes_to_remove: ["{{ node_to_remove }}"]
+
+- name: Display DNS propagation status
+  debug:
+    msg: |
+      Expected IPs: {{ updated_master_ips | sort }}
+      Current DNS IPs: {{ current_dns_ips | default([]) | sort }}
+      DNS propagated: {{ (current_dns_ips | default([]) | sort) == (updated_master_ips | sort) }}
+
+# Step 3: Remove old master
+- name: Remove old master node
+  ansible.builtin.include_tasks: remove-single-master.yaml
+
+# Step 4: Check etcd health after removing
+- name: Check etcd health after scale-down
+  ansible.builtin.include_tasks: check-etcd-health.yaml
+  vars:
+    health_check_stage: "after removing {{ node_to_remove }}"

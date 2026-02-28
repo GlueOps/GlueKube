@@ -4,7 +4,6 @@
   gather_facts: true
   vars:
     num_master_nodes: 3
-    num_lb_nodes: 3
     num_worker_nodes: 3
   tasks:
     - name: Delete Master Nodes
@@ -14,7 +13,7 @@
         api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
       loop: "{{ range(0, num_master_nodes) | list }}"
       register: delete_master_nodes
-
+    
     - name: Delete Worker Nodes
       hetzner.hcloud.server:
         name: "worker-node-{{ item + 1 }}"
@@ -23,13 +22,6 @@
       loop: "{{ range(0, num_worker_nodes) | list }}"
       register: delete_worker_nodes
 
-    - name: Delete Lb Nodes
-      hetzner.hcloud.server:
-        name: "lb-node-{{ item + 1 }}"
-        state: absent
-        api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
-      loop: "{{ range(0, num_lb_nodes) | list }}"
-      register: delete_lb_nodes
 
     - name: Delete Firewall
       hetzner.hcloud.firewall:
@@ -40,9 +32,9 @@
 
     - name: Delete Hetzner Network Subnet
       hetzner.hcloud.subnetwork:
-        network: "abonded-network"
+        network: "test-molecule-network"
         network_zone: "eu-central"
-        ip_range: "10.0.0.0/24"
+        ip_range: "10.1.0.0/24"
         api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
         type: cloud
         state: absent
@@ -50,7 +42,7 @@
 
     - name: Delete Hetzner Network
       hetzner.hcloud.network:
-        name: abonded-network
+        name: test-molecule-network
         api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
         state: absent
       register: network

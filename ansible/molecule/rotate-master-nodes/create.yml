@@ -1,0 +1,165 @@
+---
+- name: Create Hetzner VMs and Firewall
+  hosts: localhost
+  gather_facts: false
+  vars:
+    num_master_nodes: 6
+    num_worker_nodes: 1
+    public_key: "{{ lookup('file', 'keys/vm_node.pub') }}"
+
+  tasks:
+    - name: Create Hetzner Network
+      hetzner.hcloud.network:
+        name: test-molecule-network
+        ip_range: "10.1.0.0/16"
+        api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
+      register: network
+
+    - name: Create Hetzner Network Subnet
+      hetzner.hcloud.subnetwork:
+        network: test-molecule-network
+        network_zone: "eu-central"
+        ip_range: "10.1.0.0/24"
+        api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
+        type: cloud
+      register: subnet
+
+    - name: Create Firewall
+      hetzner.hcloud.firewall:
+        name: my-firewall
+        rules:
+          - direction: in
+            protocol: tcp
+            port: "1-65535"
+            source_ips:
+              - "0.0.0.0/0"
+              - "::/0"
+          - direction: in
+            protocol: udp
+            port: "1-65535"
+            source_ips:
+              - "0.0.0.0/0"
+              - "::/0"
+        api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
+      register: firewall
+
+
+    - name: Create Master Nodes
+      hetzner.hcloud.server:
+        name: "master-node-{{ item + 1 }}"
+        server_type: ccx13
+        image: ubuntu-24.04
+        location: "{{ lookup('env', 'HCLOUD_LOCATION') | default('hel1') }}"
+        enable_ipv4: true
+        enable_ipv6: false
+        firewalls:
+          - my-firewall
+        user_data: "{{ lookup('template', 'cloudinit/cloud-init-master.yaml.j2')}}"
+        api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
+        private_networks:
+          - test-molecule-network
+      loop: "{{ range(0, num_master_nodes) | list }}"
+      register: master_nodes
+    
+    - name: Create Worker Nodes
+      hetzner.hcloud.server:
+        name: "worker-node-{{ item + 1 }}"
+        server_type: ccx13
+        image: ubuntu-24.04
+        location: "{{ lookup('env', 'HCLOUD_LOCATION') | default('hel1') }}"
+        enable_ipv4: true
+        enable_ipv6: false
+        firewalls:
+          - my-firewall
+        user_data: "{{ lookup('template', 'cloudinit/cloud-init-worker.yaml.j2')}}"
+        api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
+        private_networks:
+          - test-molecule-network
+      loop: "{{ range(0, num_worker_nodes) | list }}"
+      register: worker_nodes
+
+    - name: Store default inventory
+      ansible.builtin.copy:
+        content: |
+          all:
+            children:
+              masters:
+                hosts:
+                  {% for node in master_nodes.results[:3] -%}
+                    {{ node.hcloud_server.name }}:
+                      ansible_host: {{ node.hcloud_server.ipv4_address }}
+                      ip: {{ node.hcloud_server.private_networks_info[0].ip }}
+                      ansible_user: cluster
+                      ansible_ssh_private_key_file: keys/vm_node
+                      extra:
+                        taints:
+                          - node-role.kubernetes.io/control-plane:NoSchedule-
+                  {% endfor +%}
+              workers:
+                hosts:
+                  {% for node in worker_nodes.results -%}
+                    {{ node.hcloud_server.name }}:
+                      ansible_host: {{ node.hcloud_server.ipv4_address }}
+                      ip: {{ node.hcloud_server.private_networks_info[0].ip }}
+                      ansible_user: cluster
+                      ansible_ssh_private_key_file: keys/vm_node
+                      extra:
+                        taints:
+                          - node-role.kubernetes.io/control-plane:NoSchedule-
+                  {% endfor +%}
+        dest: "./inventory/hosts.yaml"
+        mode: "0644"
+
+    - name: Store inventory(for scale rotate master nodes)
+      ansible.builtin.copy:
+        content: |
+          all:
+            children:
+              masters:
+                hosts:
+                  {% for node in master_nodes.results -%}
+                    {{ node.hcloud_server.name }}:
+                      ansible_host: {{ node.hcloud_server.ipv4_address }}
+                      ip: {{ node.hcloud_server.private_networks_info[0].ip }}
+                      ansible_user: cluster
+                      ansible_ssh_private_key_file: keys/vm_node
+                      extra:
+                        taints:
+                          - node-role.kubernetes.io/control-plane:NoSchedule-
+                  {% endfor +%}
+              workers:
+                hosts:
+                  {% for node in worker_nodes.results -%}
+                    {{ node.hcloud_server.name }}:
+                      ansible_host: {{ node.hcloud_server.ipv4_address }}
+                      ip: {{ node.hcloud_server.private_networks_info[0].ip }}
+                      ansible_user: cluster
+                      ansible_ssh_private_key_file: keys/vm_node
+                      extra:
+                        taints:
+                          - node-role.kubernetes.io/control-plane:NoSchedule-
+                  {% endfor +%}
+        dest: "./inventory/rotate-master-nodes.yaml"
+        mode: "0644"
+        
+    - name: Update DNS records with master node IPs via AutoGlue API
+      ansible.builtin.uri:
+        url: "{{ lookup('env', 'AUTOGLUE_BASE_URL') }}/api/v1/dns/records/{{ lookup('env', 'AUTOGLUE_RECORD_ID') }}"
+        method: PATCH
+        headers:
+          accept: application/json
+          x-org-key: "{{ lookup('env', 'AUTOGLUE_ORG_KEY') }}"
+          x-org-secret: "{{ lookup('env', 'AUTOGLUE_ORG_SECRET') }}"
+          content-type: application/json
+          x-org-id: "{{ lookup('env', 'AUTOGLUE_ORG_ID') }}"
+        body_format: json
+        body:
+          name: ctrp
+          ttl: 60
+          type: A
+          values: "{{ master_nodes.results[:1] | map(attribute='hcloud_server') | map(attribute='private_networks_info') | map('first') | map(attribute='ip') | list }}"
+        status_code: [200, 201, 204]
+
+    - name: wait for 60 seconds to ensure that the nodes are up and running
+      ansible.builtin.pause:
+        seconds: 60

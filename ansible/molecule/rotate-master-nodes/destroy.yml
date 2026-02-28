@@ -1,0 +1,48 @@
+---
+- name: Destroy Hetzner VMs and Firewall
+  hosts: localhost
+  gather_facts: true
+  vars:
+    num_master_nodes: 6
+    num_worker_nodes: 1
+  tasks:
+    - name: Delete Master Nodes
+      hetzner.hcloud.server:
+        name: "master-node-{{ item + 1 }}"
+        state: absent
+        api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
+      loop: "{{ range(0, num_master_nodes) | list }}"
+      register: delete_master_nodes
+    
+    - name: Delete Worker Nodes
+      hetzner.hcloud.server:
+        name: "worker-node-{{ item + 1 }}"
+        state: absent
+        api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
+      loop: "{{ range(0, num_worker_nodes) | list }}"
+      register: delete_worker_nodes
+
+
+    - name: Delete Firewall
+      hetzner.hcloud.firewall:
+        name: my-firewall
+        state: absent
+        api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
+      register: delete_firewall
+
+    - name: Delete Hetzner Network Subnet
+      hetzner.hcloud.subnetwork:
+        network: "test-molecule-network"
+        network_zone: "eu-central"
+        ip_range: "10.1.0.0/24"
+        api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
+        type: cloud
+        state: absent
+      register: subnet
+
+    - name: Delete Hetzner Network
+      hetzner.hcloud.network:
+        name: test-molecule-network
+        api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
+        state: absent
+      register: network

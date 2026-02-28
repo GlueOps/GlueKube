@@ -8,7 +8,7 @@
   tasks:
     - name: Get Kubernetes nodes
       ansible.builtin.shell: |
-        export KUBECONFIG=/opt/kubernetes/.kube/config
+        export KUBECONFIG=/etc/kubernetes/admin.conf
         kubectl get nodes --no-headers | grep master
       register: kube_nodes
       changed_when: false

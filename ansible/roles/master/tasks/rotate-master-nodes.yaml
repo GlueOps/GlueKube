@@ -1,0 +1,30 @@
+---
+# Entry point for master node rotation
+
+- name: Compare resources
+  ansible.builtin.import_tasks: master-node-rotation/compare-node.yaml
+  run_once: true
+  delegate_to: "{{ groups['masters'][0] }}"
+
+- name: Check if resources are in sync
+  fail:
+    msg: "All resources are synced - nothing to do"
+  when: 
+    - hostvars[groups['masters'][0]]['nodes_to_add'].stdout == "[]"
+    - hostvars[groups['masters'][0]]['nodes_to_remove'].stdout == "[]"
+  run_once: true
+  delegate_to: localhost
+
+- name: Confirm we have enough masters for rotation
+  fail:
+    msg: "Need more than 1 master for 3-4-3 rotation strategy"
+  when: groups['masters'] | length <= 1
+  run_once: true
+  delegate_to: localhost
+
+# Run 3-4-3 master rotation from orchestrator
+# Note: Runs on orchestrator by default, but can switch via delegation_host during orchestrator rotation
+- name: Rotate master nodes using 3-4-3 strategy
+  ansible.builtin.import_tasks: master-node-rotation/rotate-nodes.yaml
+  run_once: true
+  delegate_to: localhost

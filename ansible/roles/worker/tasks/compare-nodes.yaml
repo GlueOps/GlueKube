@@ -25,7 +25,7 @@
 
 - name: Write new worker node list
   ansible.builtin.shell: |
-    export KUBECONFIG=/opt/kubernetes/.kube/config
+    export KUBECONFIG=/etc/kubernetes/admin.conf
     kubectl get nodes -o json | jq -r '.items[] | select(.metadata.labels["kubernetes.io/hostname"] | startswith("worker-")) | .metadata.name' | sort > /opt/kubernetes/current_worker_list
 
 - name: Compare worker node list

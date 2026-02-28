@@ -1,0 +1,64 @@
+all:
+  children:
+    masters:
+      hosts:
+        master-node-1:
+            ansible_host: 168.119.186.189
+            ip: 10.1.0.2
+            ansible_user: cluster
+            ansible_ssh_private_key_file: keys/vm_node
+            extra:
+              taints:
+                - node-role.kubernetes.io/control-plane:NoSchedule-
+        master-node-2:
+            ansible_host: 168.119.186.81
+            ip: 10.1.0.3
+            ansible_user: cluster
+            ansible_ssh_private_key_file: keys/vm_node
+            extra:
+              taints:
+                - node-role.kubernetes.io/control-plane:NoSchedule-
+        master-node-3:
+            ansible_host: 168.119.50.100
+            ip: 10.1.0.4
+            ansible_user: cluster
+            ansible_ssh_private_key_file: keys/vm_node
+            extra:
+              taints:
+                - node-role.kubernetes.io/control-plane:NoSchedule-
+        master-node-4:
+            ansible_host: 91.107.192.18
+            ip: 10.1.0.5
+            ansible_user: cluster
+            ansible_ssh_private_key_file: keys/vm_node
+            extra:
+              taints:
+                - node-role.kubernetes.io/control-plane:NoSchedule-
+        master-node-5:
+            ansible_host: 49.13.69.171
+            ip: 10.1.0.6
+            ansible_user: cluster
+            ansible_ssh_private_key_file: keys/vm_node
+            extra:
+              taints:
+                - node-role.kubernetes.io/control-plane:NoSchedule-
+        master-node-6:
+            ansible_host: 138.199.232.69
+            ip: 10.1.0.7
+            ansible_user: cluster
+            ansible_ssh_private_key_file: keys/vm_node
+            extra:
+              taints:
+                - node-role.kubernetes.io/control-plane:NoSchedule-
+        
+    workers:
+      hosts:
+        worker-node-1:
+            ansible_host: 91.99.11.70
+            ip: 10.1.0.8
+            ansible_user: cluster
+            ansible_ssh_private_key_file: keys/vm_node
+            extra:
+              taints:
+                - node-role.kubernetes.io/control-plane:NoSchedule-
+        

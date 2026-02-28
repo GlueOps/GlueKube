@@ -1,0 +1,66 @@
+- name: New work nodes
+  ansible.builtin.debug:
+    var: groups['workers']
+
+- name: Remove file (delete file)
+  ansible.builtin.file:
+    path: "/opt/kubernetes/new_nodes_list"
+    state: absent
+
+
+- name: Remove file (delete file)
+  ansible.builtin.file:
+    path: "/opt/kubernetes/current_nodes_list"
+    state: absent
+
+
+- name: Write new nodes list
+  ansible.builtin.lineinfile:
+    path: "/opt/kubernetes/new_nodes_list"
+    line: "{{ item }}"
+    create: true
+    state: present
+    mode: "0644"
+  with_items: "{{ groups['workers'] + groups['masters'] }}"
+
+
+- name: List of nodes changes
+  ansible.builtin.debug:
+    msg:
+    - "{{ groups['workers'] + groups['masters'] }}"
+
+- name: Write current nodes list
+  ansible.builtin.shell: |
+    export KUBECONFIG=/etc/kubernetes/admin.conf
+    kubectl get nodes -o json | jq -r '.items[] | select(.metadata.labels["kubernetes.io/hostname"]) | .metadata.name' | sort > /opt/kubernetes/current_nodes_list
+
+- name: Copy Compare python script
+  ansible.builtin.copy:
+    src: "compare-to-add.py"
+    dest: "/opt/kubernetes/compare-to-add.py"
+    mode: "0644"
+
+
+- name: Copy Compare python script
+  ansible.builtin.copy:
+    src: "compare-to-remove.py"
+    dest: "/opt/kubernetes/compare-to-remove.py"
+    mode: "0644"
+
+- name: Register worker nodes to remove
+  ansible.builtin.shell: |
+    export KUBECONFIG=/etc/kubernetes/admin.conf
+    kubectl get nodes -o json | jq -c '[.items[] | select(.metadata.labels["kubernetes.io/hostname"]) | .metadata.name] | sort'
+  register: nodes_to_remove
+
+
+- name: Register worker nodes to add
+  ansible.builtin.command: python3 /opt/kubernetes/compare-to-add.py
+  register: nodes_to_add
+
+# debug
+- name: List of nodes changes
+  ansible.builtin.debug:
+    msg:
+    - "Nodes to remove: {{ nodes_to_remove.stdout }}."
+    - "Nodes to add '{{ nodes_to_add.stdout }}'."

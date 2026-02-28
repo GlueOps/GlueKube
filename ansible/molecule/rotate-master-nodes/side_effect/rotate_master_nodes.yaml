@@ -1,0 +1,23 @@
+- name: Copy and rename a file
+  hosts: localhost
+  tasks:
+    - name: Copy current host
+      ansible.builtin.copy:
+        src: ../inventory/hosts.yaml
+        dest: ../inventory/hosts.old.yaml
+        mode: "0644"
+
+    - name: Add new host file
+      ansible.builtin.copy:
+        src: ../inventory/rotate-master-nodes.yaml
+        dest: ../inventory/hosts.yaml
+        mode: "0644"
+        force: true
+
+
+    - name: Refresh inventory to ensure new instances exist
+      ansible.builtin.meta: refresh_inventory
+    
+
+- name: Rotate Cluster
+  ansible.builtin.import_playbook: ../../../playbooks/rotate-master-nodes.yaml 

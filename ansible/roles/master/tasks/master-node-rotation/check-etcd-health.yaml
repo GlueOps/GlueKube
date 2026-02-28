@@ -1,0 +1,33 @@
+---
+# Reusable etcd health check with retry logic
+
+- name: "Checking etcd health: {{ health_check_stage | default('routine check') }}"
+  ansible.builtin.shell: |
+    export ETCDCTL_API=3
+    etcdctl endpoint health \
+      --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+      --cert=/etc/kubernetes/pki/etcd/server.crt \
+      --key=/etc/kubernetes/pki/etcd/server.key \
+      --write-out=json
+  delegate_to: "{{ execution_host }}"
+  register: etcd_health
+  retries: 5
+  delay: 10
+  until: >
+    etcd_health.rc == 0 and
+    (etcd_health.stdout | from_json | selectattr('health', 'equalto', false) | list | length) == 0
+  failed_when: false
+
+- name: Fail if etcd is unhealthy
+  fail:
+    msg: |
+      etcd health check failed {{ health_check_stage | default('') }}
+      Output: {{ etcd_health.stdout | default('no output') }}
+      Error: {{ etcd_health.stderr | default('no error') }}
+  when: >
+    etcd_health.rc != 0 or
+    (etcd_health.stdout | from_json | selectattr('health', 'equalto', false) | list | length) > 0
+
+- name: Display etcd health status
+  debug:
+    msg: "etcd is healthy {{ health_check_stage | default('') }}"

@@ -20,14 +20,13 @@ scenario:
     - create
     - converge
     - verify tests/test_cluster_healthy.yaml
-    - side_effect side_effect/remove_control_plane.yaml
-    - verify tests/test_scale_down.yaml
     - side_effect side_effect/add_control_plane.yaml
     - verify tests/test_scale_up.yaml
     - side_effect side_effect/remove_worker_node.yaml
     - verify tests/test_scale_down_worker.yaml
     - side_effect side_effect/add_worker_node.yaml
     - verify tests/test_scale_up_worker.yaml
+    - verify tests/test_cluster_healthy.yaml
     - destroy
 
 verifier:

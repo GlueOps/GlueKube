@@ -1,0 +1,119 @@
+name: Molecule Tests
+
+on:
+  pull_request:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'ansible/**'
+      - '.github/workflows/molecule_test.yaml'
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'ansible/**'
+      - '.github/workflows/molecule_test.yaml'
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: 'Molecule scenario to run (leave empty for all)'
+        required: false
+        type: choice
+        options:
+          - 'all'
+          - 'test-cluster'
+          - 'rotate-master-nodes'
+          - 'scale-cluster'
+        default: 'all'
+
+env:
+  ANSIBLE_ROLES_PATH: ${{ github.workspace }}/ansible/roles
+
+jobs:
+  molecule:
+    name: Molecule Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
+
+      - name: Set up Python
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install molecule molecule-plugins[docker] ansible-core ansible-lint yamllint
+          pip install docker
+          pip install jmespath python-dateutil
+
+      - name: Install Ansible collections
+        run: |
+          ansible-galaxy collection install community.docker hetzner.hcloud kubernetes.core
+          ansible-galaxy collection install ansible.posix community.general
+
+      - name: Set up environment variables
+        env:
+          KUBERNETES_VERSION: 'v1.33.7'
+          KUBERNETES_PACKAGE_VERSION: '1.33.7-1.1'
+          LOADBALANCER_APISERVER: 'ctrp.gluekube.qa-glueops.com'
+          CALICO_CHART_VERSION: 'v3.29.3'
+          CALICO_TIGERA_OPERATOR_VERSION: 'v1.36.7'
+          CERTIFICATE_KEY: ${{ secrets.CERTIFICATE_KEY || '' }}
+          RANDOM_TOKEN: ${{ secrets.RANDOM_TOKEN || '' }}
+          AUTOGLUE_BASE_URL: https://autoglue.glueopshosted.rocks
+          AUTOGLUE_ORG_KEY: ${{ secrets.AUTOGLUE_ORG_KEY || '' }}
+          AUTOGLUE_ORG_SECRET: ${{ secrets.AUTOGLUE_ORG_SECRET || '' }}
+          AUTOGLUE_ORG_ID: ${{ secrets.AUTOGLUE_ORG_ID || '' }}
+          AUTOGLUE_RECORD_ID: ${{ secrets.AUTOGLUE_RECORD_ID || '' }}
+          AUTOGLUE_CLUSTER_ID: 'empty'
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN || '' }}
+        run: |
+          echo "kubernetes_version=${KUBERNETES_VERSION}" >> $GITHUB_ENV
+          echo "kubernetes_package_version=${KUBERNETES_PACKAGE_VERSION}" >> $GITHUB_ENV
+          echo "loadbalancer_apiserver=${LOADBALANCER_APISERVER}" >> $GITHUB_ENV
+          echo "calico_chart_version=${CALICO_CHART_VERSION}" >> $GITHUB_ENV
+          echo "calico_tigera_operator_version=${CALICO_TIGERA_OPERATOR_VERSION}" >> $GITHUB_ENV
+          echo "CERTIFICATE_KEY=${CERTIFICATE_KEY}" >> $GITHUB_ENV
+          echo "RANDOM_TOKEN=${RANDOM_TOKEN}" >> $GITHUB_ENV
+          echo "AUTOGLUE_BASE_URL=${AUTOGLUE_BASE_URL}" >> $GITHUB_ENV
+          echo "AUTOGLUE_ORG_KEY=${AUTOGLUE_ORG_KEY}" >> $GITHUB_ENV
+          echo "AUTOGLUE_ORG_SECRET=${AUTOGLUE_ORG_SECRET}" >> $GITHUB_ENV
+          echo "AUTOGLUE_ORG_ID=${AUTOGLUE_ORG_ID}" >> $GITHUB_ENV
+          echo "AUTOGLUE_RECORD_ID=${AUTOGLUE_RECORD_ID}" >> $GITHUB_ENV
+          echo "AUTOGLUE_CLUSTER_ID=${AUTOGLUE_CLUSTER_ID}" >> $GITHUB_ENV
+          echo "HCLOUD_TOKEN=${HCLOUD_TOKEN}" >> $GITHUB_ENV
+
+
+      
+
+      - name: Run Molecule Test - scale-cluster
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.scenario == 'all' || github.event.inputs.scenario == 'scale-cluster'
+        working-directory: ansible
+        run: |
+          mkdir -p molecule/scale-cluster/keys/
+          ssh-keygen -t rsa -b 4096 -f molecule/scale-cluster/keys/vm_node -N "" -C "molecule-test-key"
+          molecule test -s scale-cluster
+      
+      - name: Run Molecule Test - rotate-master-nodes
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.scenario == 'all' || github.event.inputs.scenario == 'rotate-master-nodes'
+        working-directory: ansible
+        run: |
+          mkdir -p molecule/rotate-master-nodes/keys/
+          ssh-keygen -t rsa -b 4096 -f molecule/rotate-master-nodes/keys/vm_node -N "" -C "molecule-test-key"
+          molecule test -s rotate-master-nodes
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: molecule-test-results
+          path: |
+            ansible/molecule/**/.molecule
+            ansible/molecule/**/tests
+          retention-days: 7
