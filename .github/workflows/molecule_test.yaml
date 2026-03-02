@@ -1,20 +1,6 @@
 name: Molecule Tests
 
 on:
-  pull_request:
-    branches:
-      - main
-      - develop
-    paths:
-      - 'ansible/**'
-      - '.github/workflows/molecule_test.yaml'
-  push:
-    branches:
-      - main
-      - develop
-    paths:
-      - 'ansible/**'
-      - '.github/workflows/molecule_test.yaml'
   workflow_dispatch:
     inputs:
       scenario:
