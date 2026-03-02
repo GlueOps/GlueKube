@@ -35,6 +35,18 @@
   vars:
     nodes_to_add: "{{ nodes_to_add_list }}"
 
+# taint/label nodes after scale up
+- name: Prepare values for taint/label
+  set_fact:
+    taint_label_values: "{{ hostvars | dict2items | community.general.json_query(\"[?starts_with(key, 'master') || starts_with(key, 'worker')].{host:key,extra:value.extra}\") }}"
+  when: inventory_hostname == orchestrator_node
+
+- name: Taint and label nodes
+  ansible.builtin.include_tasks: taint-nodes.yaml
+  vars:
+    values: "{{ taint_label_values }}"
+  when: inventory_hostname == orchestrator_node
+
 - name: Update DNS records and wait for propagation
   ansible.builtin.include_tasks: master-node-rotation/update-dns-records.yaml
   vars:
