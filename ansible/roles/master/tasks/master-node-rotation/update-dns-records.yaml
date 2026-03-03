@@ -62,6 +62,11 @@
   debug:
     msg: "Authoritative NS servers: {{ ns_servers.stdout_lines }}"
 
+- name: Wait for DNS propagation (no NS servers found)
+  ansible.builtin.pause:
+    seconds: 70
+  when: ns_servers.stdout_lines | length == 0
+
 - name: Verify DNS propagation on at least 2 NS servers
   ansible.builtin.shell:
     cmd: |
@@ -99,8 +104,10 @@
   delay: 60
   until: dns_check.rc == 0
   changed_when: false
-#   delegate_to: "{{ orchestrator_node }}"
+  when: ns_servers.stdout_lines | length > 0
 
 - name: Display DNS verification result
   debug:
     msg: "{{ dns_check.stdout_lines }}"
+  when: ns_servers.stdout_lines | length > 0
+
