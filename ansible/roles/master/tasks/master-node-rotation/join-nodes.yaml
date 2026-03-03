@@ -10,3 +10,12 @@
   args:
     creates: /opt/kubernetes/join_command.sh
   tags: join_worker
+
+- name: Generate Kubeadm configuration
+  ansible.builtin.template:
+    src: "kubeadm-stacked-config.yaml.j2"
+    dest: "{{ kubeadm_config_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+  tags: kubeconfig_setup

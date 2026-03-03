@@ -3,7 +3,7 @@
   hosts: localhost
   gather_facts: false
   vars:
-    num_master_nodes: 6
+    num_master_nodes: 9
     num_worker_nodes: 1
     public_key: "{{ lookup('file', 'keys/vm_node.pub') }}"
 
@@ -117,7 +117,7 @@
             children:
               masters:
                 hosts:
-                  {% for node in master_nodes.results -%}
+                  {% for node in master_nodes.results[3:6] -%}
                     {{ node.hcloud_server.name }}:
                       ansible_host: {{ node.hcloud_server.ipv4_address }}
                       ip: {{ node.hcloud_server.private_networks_info[0].ip }}
@@ -141,6 +141,38 @@
                   {% endfor +%}
         dest: "./inventory/rotate-master-nodes.yaml"
         mode: "0644"
+    
+    - name: Store inventory(for verifying the rotated nodes works)
+      ansible.builtin.copy:
+        content: |
+          all:
+            children:
+              masters:
+                hosts:
+                  {% for node in master_nodes.results[6:9] -%}
+                    {{ node.hcloud_server.name }}:
+                      ansible_host: {{ node.hcloud_server.ipv4_address }}
+                      ip: {{ node.hcloud_server.private_networks_info[0].ip }}
+                      ansible_user: cluster
+                      ansible_ssh_private_key_file: keys/vm_node
+                      extra:
+                        taints:
+                          - node-role.kubernetes.io/control-plane:NoSchedule-
+                  {% endfor +%}
+              workers:
+                hosts:
+                  {% for node in worker_nodes.results -%}
+                    {{ node.hcloud_server.name }}:
+                      ansible_host: {{ node.hcloud_server.ipv4_address }}
+                      ip: {{ node.hcloud_server.private_networks_info[0].ip }}
+                      ansible_user: cluster
+                      ansible_ssh_private_key_file: keys/vm_node
+                      extra:
+                        taints:
+                          - node-role.kubernetes.io/control-plane:NoSchedule-
+                  {% endfor +%}
+        dest: "./inventory/second-rotate-master-nodes.yaml"
+        mode: "0644"
         
     - name: Update DNS records with master node IPs via AutoGlue API
       ansible.builtin.uri:
@@ -157,7 +189,7 @@
           name: ctrp
           ttl: 60
           type: A
-          values: "{{ master_nodes.results[:1] | map(attribute='hcloud_server') | map(attribute='private_networks_info') | map('first') | map(attribute='ip') | list }}"
+          values: "{{ master_nodes.results[:3] | map(attribute='hcloud_server') | map(attribute='private_networks_info') | map('first') | map(attribute='ip') | list }}"
         status_code: [200, 201, 204]
 
     - name: wait for 60 seconds to ensure that the nodes are up and running

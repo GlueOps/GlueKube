@@ -1,8 +1,8 @@
 ---
 platforms: 
   - name: instance-1
-# driver:
-#   name: default
+driver:
+  name: default
 
 provisioner:
   name: ansible
@@ -11,8 +11,7 @@ provisioner:
       hosts: inventory/hosts.yaml
       group_vars: inventory/group_vars
   playbooks:
-    side_effect: side_effect/rotate_master_nodes.yaml
-    verify: tests/test_cluster_healthy.yaml
+    side_effect: side_effect/default.yaml
     
 
 scenario:
@@ -20,9 +19,11 @@ scenario:
   test_sequence:
     - create
     - converge
-    - verify
-    - side_effect 
-    - verify
+    - verify tests/test_cluster_healthy.yaml
+    - side_effect side_effect/rotate_master_nodes.yaml
+    - verify tests/test_cluster_healthy.yaml
+    - side_effect side_effect/second_rotate_master_nodes.yaml
+    - verify tests/test_cluster_healthy.yaml
     - destroy
 
 verifier:

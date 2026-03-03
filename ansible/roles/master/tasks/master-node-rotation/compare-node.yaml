@@ -1,4 +1,4 @@
-- name: New work nodes
+- name: Current work nodes
   ansible.builtin.debug:
     var: groups['workers']
 
@@ -22,12 +22,6 @@
     state: present
     mode: "0644"
   with_items: "{{ groups['workers'] + groups['masters'] }}"
-
-
-- name: List of nodes changes
-  ansible.builtin.debug:
-    msg:
-    - "{{ groups['workers'] + groups['masters'] }}"
 
 - name: Write current nodes list
   ansible.builtin.shell: |

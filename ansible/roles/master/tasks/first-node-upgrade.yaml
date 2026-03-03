@@ -14,7 +14,7 @@
   tags: upgrade
 
 # debug
-- name: List of nodes changes
+- name: Upgrade Plan
   ansible.builtin.debug:
     msg:
     - "Have a look the upgrade plan in /tmp/upgrade_plan.txt"

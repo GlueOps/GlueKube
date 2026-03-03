@@ -30,26 +30,3 @@
   tags: kubeconfig_setup
   when: 
     - inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[groups['masters'][0]]['current_cluster_nodes'].stdout_lines
-
-
-- name: Create kubeconfig directory
-  ansible.builtin.file:
-    path: "/opt/kubernetes/.kube"
-    state: directory
-    mode: "0755"
-  tags: kubeconfig_setup
-  when: 
-    - inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[groups['masters'][0]]['current_cluster_nodes'].stdout_lines
-
-
-- name: Copy kubeconfig to user home directory
-  ansible.builtin.copy:
-    src: /etc/kubernetes/admin.conf
-    dest: "/opt/kubernetes/.kube/config"
-    remote_src: true
-    owner: "root"
-    group: "root"
-    mode: "0644"
-  when: 
-    - inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[groups['masters'][0]]['current_cluster_nodes'].stdout_lines
-  tags: kubeconfig_setup
