@@ -117,7 +117,7 @@
             children:
               masters:
                 hosts:
-                  {% for node in master_nodes.results[3:6] -%}
+                  {% for node in master_nodes.results[:6] -%}
                     {{ node.hcloud_server.name }}:
                       ansible_host: {{ node.hcloud_server.ipv4_address }}
                       ip: {{ node.hcloud_server.private_networks_info[0].ip }}
@@ -149,7 +149,7 @@
             children:
               masters:
                 hosts:
-                  {% for node in master_nodes.results[6:9] -%}
+                  {% for node in master_nodes.results[3:9] -%}
                     {{ node.hcloud_server.name }}:
                       ansible_host: {{ node.hcloud_server.ipv4_address }}
                       ip: {{ node.hcloud_server.private_networks_info[0].ip }}
