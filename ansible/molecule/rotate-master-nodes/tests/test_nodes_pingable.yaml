@@ -1,0 +1,3 @@
+---
+- name: Pingable Check Between All Nodes
+  ansible.builtin.import_playbook: ../../../playbooks/check-network-connectivity.yaml

@@ -7,6 +7,14 @@ export
 
 ping-servers: .env
 	ansible all -i ansible/inventory/hosts.yaml -m ping
+	@echo "Checking network connectivity between all nodes..."
+	export $(grep -v '^#' .env | xargs);\
+	ansible-playbook -i ansible/inventory/hosts.yaml ansible/playbooks/check-network-connectivity.yaml
+
+check-connectivity: .env
+	@echo "Checking network connectivity between all nodes..."
+	export $(grep -v '^#' .env | xargs);\
+	ansible-playbook -i ansible/inventory/hosts.yaml ansible/playbooks/check-network-connectivity.yaml
 
 setup: .env
 	export $(grep -v '^#' .env | xargs);\

@@ -1,0 +1,43 @@
+---
+- name: Check Network Connectivity Between All Nodes
+  hosts: all
+  gather_facts: true
+  tasks:
+    - name: Gather all node IPs
+      set_fact:
+        all_nodes: "{{ groups['all'] | map('extract', hostvars, 'ansible_host') | list }}"
+        all_node_names: "{{ groups['all'] }}"
+      run_once: true
+      delegate_to: localhost
+      delegate_facts: true
+
+    - name: Display current node and IPs to test
+      debug:
+        msg: "Testing connectivity from {{ inventory_hostname }} ({{ ansible_host }}) to all other nodes"
+
+    - name: Ping all nodes from current node
+      ansible.builtin.command:
+        cmd: "ping -c 2 -W 2 {{ item }}"
+      loop: "{{ hostvars['localhost']['all_nodes'] }}"
+      when: item != ansible_host
+      register: ping_result
+      changed_when: false
+      failed_when: ping_result.rc != 0
+
+    - name: Report successful connectivity
+      debug:
+        msg: "✓ Successfully pinged {{ item.item }} from {{ inventory_hostname }}"
+      loop: "{{ ping_result.results }}"
+      when:
+        - not item.skipped | default(false)
+        - item.rc == 0
+      loop_control:
+        label: "{{ item.item }}"
+
+- name: Summary of Network Connectivity Check
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Display completion message
+      debug:
+        msg: "Network connectivity check completed successfully for all nodes!"
