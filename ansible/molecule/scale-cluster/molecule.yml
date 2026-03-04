@@ -18,7 +18,6 @@ scenario:
   name: scale-cluster
   test_sequence:
     - create
-    - side_effect tests/test_cluster_healthy.yaml
     - side_effect tests/test_nodes_pingable.yaml
     - converge
     - side_effect tests/test_cluster_healthy.yaml
