@@ -19,6 +19,7 @@ scenario:
   test_sequence:
     - create
     - verify tests/test_cluster_healthy.yaml
+    - verify tests/test_nodes_pingable.yaml
     - converge
     - verify tests/test_cluster_healthy.yaml
     - side_effect side_effect/add_control_plane.yaml
