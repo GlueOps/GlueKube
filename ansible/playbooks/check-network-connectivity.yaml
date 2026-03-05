@@ -5,7 +5,7 @@
   tasks:
     - name: Gather all node IPs
       set_fact:
-        all_nodes: "{{ groups['all'] | map('extract', hostvars, 'ansible_host') | list }}"
+        all_nodes: "{{ groups['all'] | map('extract', hostvars) | map(attribute='ansible_host') | list }}"
         all_node_names: "{{ groups['all'] }}"
       run_once: true
       delegate_to: localhost
