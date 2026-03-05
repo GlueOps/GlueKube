@@ -1,6 +1,4 @@
 ---
-platforms: 
-  - name: instance-1
 driver:
   name: default
 

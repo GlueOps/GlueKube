@@ -5,7 +5,7 @@
   tasks:
     - name: Gather all node IPs
       set_fact:
-        all_nodes: "{{ groups['all'] | map('extract', hostvars) | map(attribute='ansible_host') | list }}"
+        all_nodes: "{{ groups['all'] | map('extract', hostvars) | selectattr('ip', 'defined') | map(attribute='ip') | list }}"
         all_node_names: "{{ groups['all'] }}"
       run_once: true
       delegate_to: localhost
@@ -13,13 +13,13 @@
 
     - name: Display current node and IPs to test
       debug:
-        msg: "Testing connectivity from {{ inventory_hostname }} ({{ ansible_host }}) to all other nodes"
+        msg: "Testing connectivity from {{ inventory_hostname }} to all other nodes"
 
     - name: Ping all nodes from current node
       ansible.builtin.command:
         cmd: "ping -c 2 -W 2 {{ item }}"
       loop: "{{ hostvars['localhost']['all_nodes'] }}"
-      when: item != ansible_host
+      when: item != hostvars[inventory_hostname]['ip']
       register: ping_result
       changed_when: false
       failed_when: ping_result.rc != 0
