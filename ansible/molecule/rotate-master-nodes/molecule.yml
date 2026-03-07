@@ -18,13 +18,13 @@ scenario:
   name: rotate-master-nodes
   test_sequence:
     - create
-    - verify tests/test_cluster_healthy.yaml
+    - side_effect tests/test_cluster_healthy.yaml
     - converge
-    - verify tests/test_cluster_healthy.yaml
+    - side_effect tests/test_cluster_healthy.yaml
     - side_effect side_effect/rotate_master_nodes.yaml
-    - verify tests/test_cluster_healthy.yaml
+    - side_effect tests/test_cluster_healthy.yaml
     - side_effect side_effect/second_rotate_master_nodes.yaml
-    - verify tests/test_cluster_healthy.yaml
+    - side_effect tests/test_cluster_healthy.yaml
     - destroy
 
 verifier:
