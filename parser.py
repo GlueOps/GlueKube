@@ -82,5 +82,6 @@ with open(env_output_path, 'w') as f:
     f.write(f"AUTOGLUE_ORG_SECRET={platform_data.get('org_secret')}\n")
     f.write(f"AUTOGLUE_CLUSTER_ID={platform_data.get('id')}\n")
     f.write(f"AUTOGLUE_RECORD_ID={platform_data['control_plane_record_set']['id']}\n")
+    f.write(f"AUTOGLUE_BASE_URL={platform_data['base_url']}\n")
     
     print(f"✅ Successfully wrote to {env_output_path} and {ansible_output_path}")
