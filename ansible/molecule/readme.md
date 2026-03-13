@@ -1,12 +1,12 @@
 - create .env file with the following data:
 ```
-export kubernetes_version=v1.33.7
-export kubernetes_package_version=1.33.7-1.1
+export kubernetes_version=v1.34.5
+export kubernetes_package_version=1.34.5-1.1
 export loadbalancer_apiserver="domain"
 export CERTIFICATE_KEY=""
 export RANDOM_TOKEN=""
-export calico_chart_version=v3.29.3
-export calico_tigera_operator_version=v1.36.7
+export calico_chart_version=v3.31.4
+export calico_tigera_operator_version=v1.40.7
 
 export ANSIBLE_ROLES_PATH=/workspaces/glueops/GlueKube/ansible/roles
 
