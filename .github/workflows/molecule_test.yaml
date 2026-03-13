@@ -45,11 +45,11 @@ jobs:
 
       - name: Set up environment variables
         env:
-          KUBERNETES_VERSION: 'v1.33.7'
-          KUBERNETES_PACKAGE_VERSION: '1.33.7-1.1'
+          KUBERNETES_VERSION: 'v1.34.5'
+          KUBERNETES_PACKAGE_VERSION: '1.34.5-1.1'
           LOADBALANCER_APISERVER: 'ctrp.gluekube.qa-glueops.com'
-          CALICO_CHART_VERSION: 'v3.29.3'
-          CALICO_TIGERA_OPERATOR_VERSION: 'v1.36.7'
+          CALICO_CHART_VERSION: 'v3.31.4'
+          CALICO_TIGERA_OPERATOR_VERSION: 'v1.40.7'
           CERTIFICATE_KEY: ${{ secrets.CERTIFICATE_KEY || '' }}
           RANDOM_TOKEN: ${{ secrets.RANDOM_TOKEN || '' }}
           AUTOGLUE_BASE_URL: https://autoglue.glueopshosted.rocks
