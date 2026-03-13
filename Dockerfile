@@ -2,8 +2,8 @@ FROM python:3.14-slim@sha256:caa9622dab9a2b41c988cda23de8d13d52c328df79d9c341c36
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
-ENV kubernetes_version="v1.33.9"
-ENV kubernetes_package_version="1.33.9-1.1"
+ENV kubernetes_version="v1.34.5"
+ENV kubernetes_package_version="1.34.5-1.1"
 ENV calico_tigera_operator_version="v1.40.7"
 ENV calico_chart_version="v3.31.4"
 ENV ANSIBLE_ROLES_PATH=/opt/gluekube/ansible/roles
