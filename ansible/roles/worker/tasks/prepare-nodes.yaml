@@ -127,12 +127,6 @@
     enabled: true
     state: restarted
 
-- name: Download Kubernetes GPG key
-  ansible.builtin.get_url:
-    url: https://pkgs.k8s.io/core:/stable:/{{ kubernetes_version.split('.')[0] }}.{{ kubernetes_version.split('.')[1] }}/deb/Release.key
-    dest: /tmp/kubernetes-release.key
-    mode: '0644'
-  tags: kubernetes_component
 
 - name: Convert Kubernetes GPG key to keyring format
   ansible.builtin.shell: |

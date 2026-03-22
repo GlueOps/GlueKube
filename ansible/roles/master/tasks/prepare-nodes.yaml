@@ -26,7 +26,7 @@
 - name: Update apt package cache
   ansible.builtin.apt:
     update_cache: yes
-    cache_valid_time: 3600 # Update cache if older than 1 hour (in seconds)
+    cache_valid_time: 0 # Update cache if older than 1 hour (in seconds)
 
 - name: Upgrade all installed packages
   ansible.builtin.apt:
@@ -127,9 +127,9 @@
     enabled: true
     state: restarted
 
-- name: Download Kubernetes GPG key
-  ansible.builtin.get_url:
-    url: https://pkgs.k8s.io/core:/stable:/{{ kubernetes_version.split('.')[0] }}.{{ kubernetes_version.split('.')[1] }}/deb/Release.key
+- name: Copy Kubernetes GPG key
+  ansible.builtin.copy:
+    src: /opt/gluekube/kubernetes-release.key
     dest: /tmp/kubernetes-release.key
     mode: '0644'
   tags: kubernetes_component
