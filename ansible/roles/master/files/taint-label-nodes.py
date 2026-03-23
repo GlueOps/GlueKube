@@ -12,3 +12,7 @@ for taint in json_data['extra'].get('taints', []):
 for label in json_data['extra'].get('labels', []):
     print(["kubectl", "label", "nodes", json_data['host'], label,"--overwrite"])
     subprocess.run(["kubectl", "label", "nodes", json_data['host'], label,"--overwrite"])
+
+for annotation in json_data['extra'].get('annotations', []):
+    print(["kubectl", "annotate", "nodes", json_data['host'], annotation,"--overwrite"])
+    subprocess.run(["kubectl", "annotate", "nodes", json_data['host'], annotation,"--overwrite"])

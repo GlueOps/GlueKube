@@ -35,10 +35,15 @@ workers = {}
 for node_pool in platform_data["node_pools"]:
     labels = []
     taints = []
+    annotations = []
     for label in node_pool.get("labels", []):
         labels.append("{}={}".format(label["key"], label["value"]))
+    
+    for annotation in node_pool.get("annotations", []):
+        annotations.append("{}={}".format(annotation["key"], annotation["value"]))
     for taint in node_pool.get("taints", []):
         taints.append(f"{taint['key']}={taint['value']}:{taint['effect']}")
+    
     for node in node_pool["servers"]:
         per_node_labels = [f"node-public-ip={node.get('public_ip_address', '')}", f"node-private-ip={node['private_ip_address']}"]
 
@@ -49,7 +54,9 @@ for node_pool in platform_data["node_pools"]:
                 "ansible_ssh_private_key_file": f"/root/.ssh/autoglue/keys/{node['ssh_key_id']}.pem",
                 "extra": {
                     "labels": list(labels)+ list(per_node_labels),
-                    "taints": list(taints)
+                    "taints": list(taints),
+                    "annotations": list(annotations)
+
                 }
             }
         if node["role"] == "master":
