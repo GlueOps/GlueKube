@@ -19,13 +19,17 @@ RUN apt-get update && apt-get upgrade -y && \
     # Use --no-cache-dir to keep the image slim
     pip install --no-cache-dir ansible jmespath && \
     apt-get install openssh-client -y && \
-    apt-get install jq -y
+    apt-get install jq curl -y
 
 # Set working directory
 WORKDIR /opt/gluekube
 
 # Copy application files
 COPY . /opt/gluekube
+
+# Download Kubernetes GPG key at build time
+RUN K8S_MINOR=$(echo $kubernetes_version | cut -d. -f1,2) && \
+    curl -fsSL "https://pkgs.k8s.io/core:/stable:/${K8S_MINOR}/deb/Release.key" -o /opt/gluekube/kubernetes-release.key
 
 # Define default command
 CMD ["bash"]
