@@ -3131,7 +3131,7 @@ clustermesh:
       # @schema
       override: ~
       repository: "quay.io/cilium/clustermesh-apiserver"
-      tag: "v1.17.1@sha256:1de22f46bfdd638de72c2224d5223ddc3bbeacda1803cb75799beca3d4bf7a4c"
+      tag: "v1.17.14@sha256:6cc4e47b2a50649e739dbb61f266497e7ef53d048b60dc32ba563bd4efd7f0ba"
       # clustermesh-apiserver-digest
       digest: "sha256:1de22f46bfdd638de72c2224d5223ddc3bbeacda1803cb75799beca3d4bf7a4c"
       useDigest: true
