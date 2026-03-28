@@ -261,14 +261,6 @@
     state: present
   tags: install_k9s
 
-# # install wireguard
-# - name: Install wireguard
-#   ansible.builtin.apt:
-#     name: wireguard
-#     state: present
-#   tags: install_wireguard
-#   when: calico_node_to_node_encryption
-
 # install etcd
 - name: Install etcd-client
   ansible.builtin.apt:
