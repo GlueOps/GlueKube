@@ -6,9 +6,3 @@
   ansible.builtin.command: "kubeadm certs check-expiration --output json"
   register: old_cert_expiry
   when: inventory_hostname == groups['masters'][0]
-
-# # debug 
-
-# - name: Print old certificate expiration dates
-#   ansible.builtin.debug:
-#     var: old_cert_expiry.stdout
