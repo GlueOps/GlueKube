@@ -4,36 +4,22 @@
 include .env
 export
 
-
 ping-servers: .env
 	ansible all -i ansible/inventory/hosts.yaml -m ping
 	@echo "Checking network connectivity between all nodes..."
-	export $(grep -v '^#' .env | xargs);\
-	ansible-playbook -i ansible/inventory/hosts.yaml ansible/playbooks/check-network-connectivity.yaml
-
-check-connectivity: .env
-	@echo "Checking network connectivity between all nodes..."
-	export $(grep -v '^#' .env | xargs);\
 	ansible-playbook -i ansible/inventory/hosts.yaml ansible/playbooks/check-network-connectivity.yaml
 
 setup: .env
-	export $(grep -v '^#' .env | xargs);\
 	ansible-playbook -i ansible/inventory/hosts.yaml ansible/playbooks/setup-cluster.yaml
+
 sync: .env
-	export $(grep -v '^#' .env | xargs);\
 	ansible-playbook -i ansible/inventory/hosts.yaml ansible/playbooks/sync-resources.yaml
+
 rotate-master-nodes: .env
-	export $(grep -v '^#' .env | xargs);\
 	ansible-playbook -i ansible/inventory/hosts.yaml ansible/playbooks/rotate-master-nodes.yaml
 
 label-taint-nodes: .env
-	export $(grep -v '^#' .env | xargs);\
 	ansible-playbook -i ansible/inventory/hosts.yaml ansible/playbooks/setup-cluster.yaml --tags label_nodes
-rotate-certs: .env
-	echo "Rotating certificates for GlueKube..."
-upgrade-cluster: .env
-	echo "Upgrading the GlueKube cluster..."
-	ansible-playbook -i ansible/inventory/hosts.yaml ansible/playbooks/upgrade-cluster.yaml
 
-patch-os: .env
-	echo "Patching the operating system for GlueKube nodes..."
+upgrade-cluster: .env
+	ansible-playbook -i ansible/inventory/hosts.yaml ansible/playbooks/upgrade-cluster.yaml
