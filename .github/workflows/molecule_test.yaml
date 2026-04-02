@@ -75,6 +75,11 @@ jobs:
           echo "AUTOGLUE_CLUSTER_ID=${AUTOGLUE_CLUSTER_ID}" >> $GITHUB_ENV
           echo "HCLOUD_TOKEN=${HCLOUD_TOKEN}" >> $GITHUB_ENV
 
+      - name: Create /opt/gluekube directory and download Kubernetes release key
+        run: |
+          sudo mkdir -p /opt/gluekube
+          K8S_MINOR=$(echo $kubernetes_version | cut -d. -f1,2)
+          sudo curl -fsSL "https://pkgs.k8s.io/core:/stable:/${K8S_MINOR}/deb/Release.key" -o /opt/gluekube/kubernetes-release.key
 
       
 
