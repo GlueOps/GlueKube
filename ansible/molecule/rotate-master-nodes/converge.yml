@@ -2,6 +2,7 @@
 
 - name: Download Kubernetes GPG key
   hosts: all
+  become: true
   gather_facts: false
   tasks:
     - name: Create /opt/gluekube directory
