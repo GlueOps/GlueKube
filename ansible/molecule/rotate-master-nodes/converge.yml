@@ -1,7 +1,9 @@
 ---
 
 - name: Download Kubernetes GPG key
-  hosts: all
+  hosts: 
+    - masters
+    - workers
   become: true
   gather_facts: false
   tasks:
