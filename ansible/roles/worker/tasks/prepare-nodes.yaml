@@ -127,6 +127,12 @@
     enabled: true
     state: restarted
 
+- name: Copy Kubernetes GPG key
+  ansible.builtin.copy:
+    src: /opt/gluekube/kubernetes-release.key
+    dest: /tmp/kubernetes-release.key
+    mode: '0644'
+  tags: kubernetes_component
 
 - name: Convert Kubernetes GPG key to keyring format
   ansible.builtin.shell: |

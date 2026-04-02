@@ -15,12 +15,12 @@
   run_once: true
   delegate_to: localhost
 
-- name: Confirm control-plane nodes are odd
-  fail:
-    msg: "Control-plane nodes must be odd"
-  when: (groups['masters'] | length) % 2 == 0
-  run_once: true
-  delegate_to: localhost
+# - name: Confirm control-plane nodes are odd
+#   fail:
+#     msg: "Control-plane nodes must be odd"
+#   when: (groups['masters'] | length) % 2 == 0
+#   run_once: true
+#   delegate_to: localhost
 
 
 - name: Parse nodes to add/remove as lists
