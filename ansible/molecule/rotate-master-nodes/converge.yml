@@ -1,3 +1,20 @@
 ---
+
+- name: Download Kubernetes GPG key
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Create /opt/gluekube directory
+      ansible.builtin.file:
+        path: /opt/gluekube
+        state: directory
+        mode: '0755'
+
+    - name: Download Kubernetes release key
+      ansible.builtin.get_url:
+        url: "https://pkgs.k8s.io/core:/stable:/{{ kubernetes_version | regex_replace('^(v?\\d+\\.\\d+).*', '\\1') }}/deb/Release.key"
+        dest: /opt/gluekube/kubernetes-release.key
+        mode: '0644'
+
 - name: Include setup-cluster playbook
   ansible.builtin.import_playbook: ../../playbooks/setup-cluster.yaml
