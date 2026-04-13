@@ -42,32 +42,17 @@
 
 
 - name: Wait for Calico operator deployment to be ready
-  kubernetes.core.k8s_info:
-    kind: Deployment
-    name: tigera-operator
-    namespace: tigera-operator
-    kubeconfig: /etc/kubernetes/admin.conf
-    wait: true
-    wait_condition:
-      type: Available
-      status: "True"
-    wait_timeout: 300
+  ansible.builtin.shell: |
+    export KUBECONFIG=/etc/kubernetes/admin.conf
+    kubectl wait --for=condition=Available --timeout=300s deployment/tigera-operator -n tigera-operator
   tags: install_calico
 
 
 - name: Wait for Calico API server to be ready
-  kubernetes.core.k8s_info:
-    kind: Deployment
-    name: calico-apiserver
-    namespace: calico-apiserver
-    kubeconfig: /etc/kubernetes/admin.conf
-    wait: true
-    wait_condition:
-      type: Available
-      status: "True"
-    wait_timeout: 300
+  ansible.builtin.shell: |
+    export KUBECONFIG=/etc/kubernetes/admin.conf
+    kubectl wait --for=condition=Available --timeout=300s deployment/calico-apiserver -n calico-apiserver 2>/dev/null || true
   tags: install_calico
-  ignore_errors: true  # API server might not be deployed in all configurations
 
 
 - name: Wait for Calico CRDs to be available
