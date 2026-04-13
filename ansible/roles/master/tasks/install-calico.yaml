@@ -41,37 +41,9 @@
   tags: install_calico
 
 
-- name: Wait for Calico operator deployment to be ready
-  ansible.builtin.shell: |
-    export KUBECONFIG=/etc/kubernetes/admin.conf
-    kubectl wait --for=condition=Available --timeout=300s deployment/tigera-operator -n tigera-operator
-  tags: install_calico
-
-
-- name: Wait for Calico CRDs to exist
-  ansible.builtin.shell: |
-    export KUBECONFIG=/etc/kubernetes/admin.conf
-    kubectl get crd globalnetworkpolicies.crd.projectcalico.org
-  register: crd_check
-  until: crd_check.rc == 0
-  retries: 60
-  delay: 5
-  tags: install_calico
-
-
-- name: Wait for Calico CRDs to be established
-  ansible.builtin.shell: |
-    export KUBECONFIG=/etc/kubernetes/admin.conf
-    kubectl wait --for=condition=established --timeout=300s crd/globalnetworkpolicies.crd.projectcalico.org
-    kubectl wait --for=condition=established --timeout=300s crd/felixconfigurations.crd.projectcalico.org
-    kubectl wait --for=condition=established --timeout=300s crd/hostendpoints.crd.projectcalico.org
-  tags: install_calico
-
-
 - name: Wait for Calico API server to be ready
-  ansible.builtin.shell: |
-    export KUBECONFIG=/etc/kubernetes/admin.conf
-    kubectl wait --for=condition=Available --timeout=300s deployment/calico-apiserver -n calico-apiserver 2>/dev/null || true
+  ansible.builtin.pause:
+    seconds: 60
   tags: install_calico
 
 
@@ -80,6 +52,10 @@
     export KUBECONFIG=/etc/kubernetes/admin.conf 
     kubectl apply -f /opt/kubernetes/calico-global-network-policy.yaml
     kubectl apply -f /opt/kubernetes/calico-felix.yaml
+  register: apply_calico_configs
+  until: apply_calico_configs.rc == 0
+  retries: 30
+  delay: 10
   tags: install_calico
 
 
