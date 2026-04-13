@@ -59,14 +59,14 @@
 #   tags: install_calico
 
 
-- name: Apply Calico HostEndpoint manifest for each node
-  ansible.builtin.shell: |
-    export KUBECONFIG=/etc/kubernetes/admin.conf
-    iface=$(ip -o link show | awk -F': ' '/altname public/ {print $2}')
-    sed "s/node_name/{{ item }}/g; s/public/$iface/g" /opt/kubernetes/calico-hostendpoint.yaml | kubectl apply -f -
-  vars:
-    calico_hostendpoint_nodes: "{{ (groups.get('masters', []) + groups.get('workers', [])) | unique }}"
-  loop: "{{ calico_hostendpoint_nodes }}"
-  tags: install_calico
+# - name: Apply Calico HostEndpoint manifest for each node
+#   ansible.builtin.shell: |
+#     export KUBECONFIG=/etc/kubernetes/admin.conf
+#     iface=$(ip -o link show | awk -F': ' '/altname public/ {print $2}')
+#     sed "s/node_name/{{ item }}/g; s/public/$iface/g" /opt/kubernetes/calico-hostendpoint.yaml | kubectl apply -f -
+#   vars:
+#     calico_hostendpoint_nodes: "{{ (groups.get('masters', []) + groups.get('workers', [])) | unique }}"
+#   loop: "{{ calico_hostendpoint_nodes }}"
+#   tags: install_calico
 
 
