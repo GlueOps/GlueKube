@@ -3,12 +3,8 @@ random_token: "{{ lookup('env', 'RANDOM_TOKEN') }}"
 
 
 kubeadm_config_file: "/etc/kubernetes/kubeadm-config.yaml" 
-cni_type: calico # calico, cilium
+cni_type: calico 
 service_subnet: "192.168.0.0/16" # if you change this, you need to change the calico.yaml file
-
-# cilium
-cilium_node_to_node_encryption: "true"
-cilium_hubble_enabled: "false"
 
 # calico
 calico_node_to_node_encryption: "false"

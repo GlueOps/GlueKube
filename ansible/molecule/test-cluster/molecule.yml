@@ -22,8 +22,6 @@ scenario:
     - converge
     - side_effect side_effect/rotate_certs.yaml
     - verify tests/test_rotate_certs.yaml
-    # - side_effect side_effect/patch_os_security.yaml
-    # - verify tests/test_patch_os_security.yaml
     - destroy
 
 verifier:
