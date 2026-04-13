@@ -47,16 +47,16 @@
   tags: install_calico
 
 
-- name: Apply Calico Configs(Felix and Global Network Policy)
-  ansible.builtin.shell: |
-    export KUBECONFIG=/etc/kubernetes/admin.conf 
-    kubectl apply -f /opt/kubernetes/calico-global-network-policy.yaml
-    kubectl apply -f /opt/kubernetes/calico-felix.yaml
-  register: apply_calico_configs
-  until: apply_calico_configs.rc == 0
-  retries: 30
-  delay: 10
-  tags: install_calico
+# - name: Apply Calico Configs(Felix and Global Network Policy)
+#   ansible.builtin.shell: |
+#     export KUBECONFIG=/etc/kubernetes/admin.conf 
+#     kubectl apply -f /opt/kubernetes/calico-global-network-policy.yaml
+#     kubectl apply -f /opt/kubernetes/calico-felix.yaml
+#   register: apply_calico_configs
+#   until: apply_calico_configs.rc == 0
+#   retries: 30
+#   delay: 10
+#   tags: install_calico
 
 
 - name: Apply Calico HostEndpoint manifest for each node
