@@ -63,7 +63,7 @@
 
 - name: Save Kubeconfig to AutoGlue
   ansible.builtin.uri:
-    url: "{{ autoglue_base_url }}/api/v1/clusters/{{clusterID}}/kubeconfig"
+    url: "{{ autoglue_base_url }}/api/v1/clusters/{{ autoglue_cluster_id }}/kubeconfig"
     method: POST
     body: {"kubeconfig": "{{ kubeconfig_content.content | b64encode }}"}
     status_code: 200
