@@ -6,7 +6,7 @@ installation:
   calicoNetwork:
     bgp: Disabled
     ipPools:
-    - cidr: 172.16.0.0/16 # this should be in podSubnet range
+    - cidr: {{ calico_network_calico_cidr }} # this should be in podSubnet range
       encapsulation: VXLAN
 
 apiServer:
