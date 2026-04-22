@@ -40,8 +40,8 @@ dns:
   imageRepository: k8s.repo.gpkg.io/coredns
 networking:
   dnsDomain: cluster.local
-  serviceSubnet: 192.168.0.0/16
-  podSubnet: "172.16.0.0/16"
+  serviceSubnet: " {{ service_subnet }}"
+  podSubnet: "{{ calico_network_calico_cidr }}"
 etcd:
   local:
     serverCertSANs: 
