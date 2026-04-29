@@ -79,8 +79,8 @@ with open(env_output_path, 'w') as f:
     cert_key = platform_data.get("certificate_key")
     token = platform_data.get("random_token")
     loadbalancer_apiserver = platform_data.get('control_plane_fqdn')
-    calico_network_calico_cidr = platform_data.get('calico_network_calico_cidr')
-    network_service_cidr = platform_data.get('network_service_cidr')
+    calico_network_calico_cidr = platform_data['metadata'].get('calico_network_calico_cidr')
+    network_service_cidr = platform_data['metadata'].get('network_service_cidr')
     
     # Write explicitly (Option A)
     f.write(f"CERTIFICATE_KEY={cert_key}\n")
