@@ -8,10 +8,10 @@ installation:
     ipPools:
     - cidr: {{ calico_network_calico_cidr }} # this should be in podSubnet range
       encapsulation: VXLAN
-  nodeAddressAutodetectionV4:
-      firstFound: false
-      cidrs:
-        - "{{ calico_node_address_autodetection_v4 }}"
+    nodeAddressAutodetectionV4:
+        firstFound: false
+        cidrs:
+          - "{{ calico_node_address_autodetection_v4 }}"
 
 apiServer:
   enabled: true
