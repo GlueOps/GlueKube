@@ -81,6 +81,7 @@ with open(env_output_path, 'w') as f:
     loadbalancer_apiserver = platform_data.get('control_plane_fqdn')
     calico_network_calico_cidr = platform_data['metadata'].get('calico_network_calico_cidr')
     network_service_cidr = platform_data['metadata'].get('network_service_cidr')
+    calico_node_address_autodetection_v4 = platform_data['metadata'].get('calico_nodeAddressAutodetectionV4', None)
     
     # Write explicitly (Option A)
     f.write(f"CERTIFICATE_KEY={cert_key}\n")
@@ -88,6 +89,8 @@ with open(env_output_path, 'w') as f:
     f.write(f"loadbalancer_apiserver={loadbalancer_apiserver}\n")
     f.write(f"network_service_cidr={network_service_cidr}\n")
     f.write(f"calico_network_calico_cidr={calico_network_calico_cidr}\n")
+    if calico_node_address_autodetection_v4:
+        f.write(f"calico_nodeAddressAutodetectionV4={calico_node_address_autodetection_v4}\n")
     
     f.write(f"AUTOGLUE_ORG_KEY={platform_data.get('org_key')}\n")
     f.write(f"AUTOGLUE_ORG_SECRET={platform_data.get('org_secret')}\n")

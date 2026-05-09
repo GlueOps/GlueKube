@@ -10,6 +10,7 @@ calico_node_to_node_encryption: false
 calico_chart_version: "{{ lookup('env', 'calico_chart_version') }}" #"v3.29.3"
 calico_tigera_operator_version:  "{{ lookup('env', 'calico_tigera_operator_version') }}" #"v1.36.7"
 calico_network_calico_cidr: "{{ lookup('env', 'calico_network_calico_cidr') }}"
+calico_node_address_autodetection_v4: "{{ lookup('env', 'calico_nodeAddressAutodetectionV4') }}"
 
 nodes: |
   {% for host in groups['masters'] %}

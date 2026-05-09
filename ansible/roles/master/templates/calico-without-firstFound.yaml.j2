@@ -1,0 +1,55 @@
+installation:
+  enabled: true
+  typhaMetricsPort: 9093
+  cni:
+    type: Calico
+  calicoNetwork:
+    bgp: Disabled
+    ipPools:
+    - cidr: {{ calico_network_calico_cidr }} # this should be in podSubnet range
+      encapsulation: VXLAN
+  nodeAddressAutodetectionV4:
+      firstFound: false
+      cidrs:
+        - "{{ calico_node_address_autodetection_v4 }}"
+
+apiServer:
+  enabled: true
+
+# Resource requests and limits for the tigera/operator pod.
+resources: {}
+
+# Tolerations for the tigera/operator pod.
+tolerations:
+- effect: NoExecute
+  operator: Exists
+- effect: NoSchedule
+  operator: Exists
+- key: "glueops.dev/role"
+  operator: "Equal"
+  value: "glueops-platform"
+  effect: "NoSchedule" 
+
+# NodeSelector for the tigera/operator pod.
+nodeSelector:
+  kubernetes.io/os: linux
+
+# Custom annotations for the tigera/operator pod.
+podAnnotations: {}
+
+# Custom labels for the tigera/operator pod.
+podLabels: {}
+
+# Image and registry configuration for the tigera/operator pod.
+tigeraOperator:
+  image: tigera/operator
+  version: "{{ calico_tigera_operator_version }}"
+  registry: quay.repo.gpkg.io
+calicoctl:
+  image: dockerhub.repo.gpkg.io/calico/ctl
+  tag: "{{ calico_chart_version }}"
+
+defaultFelixConfiguration:
+  enabled: {{ calico_node_to_node_encryption | bool }}
+  wireguardEnabled: {{ calico_node_to_node_encryption | bool }}
+  logSeverityScreen: Info

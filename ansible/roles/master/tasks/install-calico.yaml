@@ -1,8 +1,16 @@
-- name: Create calico.yaml file
+- name: Create calico.yaml file (default)
   ansible.builtin.template:
     src: calico.yaml.j2
     dest: /opt/kubernetes/calico.yaml
     mode: "0644"
+  tags: install_calico
+
+- name: Create calico.yaml file (with nodeAddressAutodetectionV4)
+  ansible.builtin.template:
+    src: calico-without-firstFound.yaml.j2
+    dest: /opt/kubernetes/calico.yaml
+    mode: "0644"
+  when: calico_node_address_autodetection_v4 is defined and calico_node_address_autodetection_v4 | length > 0
   tags: install_calico
 
 
