@@ -28,12 +28,6 @@
     mode: "0755"
   tags: install_calico
 
-- name: Copy calico global-network-policy config
-  ansible.builtin.copy:
-    src: "addons/calico-hostendpoint.yaml"
-    dest: /opt/kubernetes/calico-hostendpoint.yaml
-    mode: "0755"
-  tags: install_calico
 
 - name: Deploy calico with Helm
   kubernetes.core.helm:
@@ -81,6 +75,13 @@
   delay: 10
   tags: install_calico
 
+
+- name: Copy calico hostendpoint config
+  ansible.builtin.copy:
+    src: "addons/calico-hostendpoint.yaml"
+    dest: /opt/kubernetes/calico-hostendpoint.yaml
+    mode: "0755"
+  tags: install_calico
 
 - name: Apply Calico HostEndpoint manifest for each node
   ansible.builtin.shell: |
