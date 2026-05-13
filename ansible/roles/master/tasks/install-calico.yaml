@@ -56,7 +56,11 @@
 - name: Wait for all Calico CRDs to be ready
   ansible.builtin.shell: |
     export KUBECONFIG=/etc/kubernetes/admin.conf
-    kubectl wait --for=condition=Established crds --all --timeout=30s
+    kubectl wait --for=condition=Established \
+      crd/globalnetworkpolicies.crd.projectcalico.org \
+      crd/felixconfigurations.crd.projectcalico.org \
+      crd/hostendpoints.crd.projectcalico.org \
+      --timeout=30s
   register: calico_crds_ready
   until: calico_crds_ready.rc == 0
   retries: 20

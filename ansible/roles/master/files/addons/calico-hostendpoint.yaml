@@ -1,4 +1,4 @@
-apiVersion: projectcalico.org/v1
+apiVersion: projectcalico.org/v3
 kind: HostEndpoint
 metadata:
   name: node_name
