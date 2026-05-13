@@ -1,7 +1,7 @@
 apiVersion: projectcalico.org/v3
 kind: GlobalNetworkPolicy
 metadata:
-  name: block-port-80-on-lb-nodes
+  name: allow-port-web-on-lb-nodes
 spec:
   preDNAT: true
   applyOnForward: true
@@ -16,3 +16,15 @@ spec:
           - 443
     - action: Deny
  
+---
+
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: allow-all-egress-lb-nodes
+spec:
+  selector: all()
+  types:
+    - Egress
+  egress:
+    - action: Allow

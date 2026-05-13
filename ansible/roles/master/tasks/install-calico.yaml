@@ -49,32 +49,47 @@
   tags: install_calico
 
 
-- name: Wait for Calico API server to be ready
-  ansible.builtin.pause:
-    seconds: 60
+- name: Wait for tigera-operator pod to be ready
+  ansible.builtin.shell: |
+    export KUBECONFIG=/etc/kubernetes/admin.conf
+    kubectl -n tigera-operator wait --for=condition=Ready pods --all --timeout=30s
+  register: tigera_operator_ready
+  until: tigera_operator_ready.rc == 0
+  retries: 20
+  delay: 30
+  tags: install_calico
+
+- name: Wait for all Calico CRDs to be ready
+  ansible.builtin.shell: |
+    export KUBECONFIG=/etc/kubernetes/admin.conf
+    kubectl wait --for=condition=Established crds --all --timeout=30s
+  register: calico_crds_ready
+  until: calico_crds_ready.rc == 0
+  retries: 20
+  delay: 30
   tags: install_calico
 
 
-# - name: Apply Calico Configs(Felix and Global Network Policy)
-#   ansible.builtin.shell: |
-#     export KUBECONFIG=/etc/kubernetes/admin.conf 
-#     kubectl apply -f /opt/kubernetes/calico-global-network-policy.yaml
-#     kubectl apply -f /opt/kubernetes/calico-felix.yaml
-#   register: apply_calico_configs
-#   until: apply_calico_configs.rc == 0
-#   retries: 30
-#   delay: 10
-#   tags: install_calico
+- name: Apply Calico Configs(Felix and Global Network Policy)
+  ansible.builtin.shell: |
+    export KUBECONFIG=/etc/kubernetes/admin.conf 
+    kubectl apply -f /opt/kubernetes/calico-global-network-policy.yaml
+    kubectl apply -f /opt/kubernetes/calico-felix.yaml
+  register: apply_calico_configs
+  until: apply_calico_configs.rc == 0
+  retries: 30
+  delay: 10
+  tags: install_calico
 
 
-# - name: Apply Calico HostEndpoint manifest for each node
-#   ansible.builtin.shell: |
-#     export KUBECONFIG=/etc/kubernetes/admin.conf
-#     iface=$(ip -o link show | awk -F': ' '/altname public/ {print $2}')
-#     sed "s/node_name/{{ item }}/g; s/public/$iface/g" /opt/kubernetes/calico-hostendpoint.yaml | kubectl apply -f -
-#   vars:
-#     calico_hostendpoint_nodes: "{{ (groups.get('masters', []) + groups.get('workers', [])) | unique }}"
-#   loop: "{{ calico_hostendpoint_nodes }}"
-#   tags: install_calico
+- name: Apply Calico HostEndpoint manifest for each node
+  ansible.builtin.shell: |
+    export KUBECONFIG=/etc/kubernetes/admin.conf
+    iface=$(ip -o link show | awk -F': ' '/altname public/ {print $2}')
+    sed "s/node_name/{{ item }}/g; s/public/$iface/g" /opt/kubernetes/calico-hostendpoint.yaml | kubectl apply -f -
+  vars:
+    calico_hostendpoint_nodes: "{{ groups.keys() | select('match', '.*loadbalancer.*') | map('extract', groups) | flatten | unique }}"
+  loop: "{{ calico_hostendpoint_nodes }}"
+  tags: install_calico
 
 
