@@ -89,7 +89,7 @@ jobs:
         run: |
           mkdir -p molecule/scale-cluster/keys/
           ssh-keygen -t rsa -b 4096 -f molecule/scale-cluster/keys/vm_node -N "" -C "molecule-test-key"
-          molecule test --debug -s scale-cluster
+          molecule test -s scale-cluster
       
       - name: Run Molecule Test - rotate-master-nodes
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.scenario == 'all' || github.event.inputs.scenario == 'rotate-master-nodes'
@@ -97,7 +97,7 @@ jobs:
         run: |
           mkdir -p molecule/rotate-master-nodes/keys/
           ssh-keygen -t rsa -b 4096 -f molecule/rotate-master-nodes/keys/vm_node -N "" -C "molecule-test-key"
-          molecule test --debug -s rotate-master-nodes
+          molecule test -s rotate-master-nodes
 
       - name: Upload test results
         if: always()
