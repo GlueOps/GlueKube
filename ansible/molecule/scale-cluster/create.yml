@@ -123,14 +123,6 @@
                         taints:
                           - node-role.kubernetes.io/control-plane:NoSchedule-
                   {% endfor +%}
-                  {{ loadbalancer_worker_nodes.hcloud_server.name }}:
-                    ansible_host: {{ loadbalancer_worker_nodes.hcloud_server.ipv4_address }}
-                    ip: {{ loadbalancer_worker_nodes.hcloud_server.private_networks_info[0].ip }}
-                    ansible_user: cluster
-                    ansible_ssh_private_key_file: keys/vm_node
-                    extra:
-                      taints:
-                        - node-role.kubernetes.io/control-plane:NoSchedule-
         dest: "./inventory/hosts.yaml"
         mode: "0644"
     
@@ -163,14 +155,7 @@
                         taints:
                           - node-role.kubernetes.io/control-plane:NoSchedule-
                   {% endfor +%}
-                  {{ loadbalancer_worker_nodes.hcloud_server.name }}:
-                    ansible_host: {{ loadbalancer_worker_nodes.hcloud_server.ipv4_address }}
-                    ip: {{ loadbalancer_worker_nodes.hcloud_server.private_networks_info[0].ip }}
-                    ansible_user: cluster
-                    ansible_ssh_private_key_file: keys/vm_node
-                    extra:
-                      taints:
-                        - node-role.kubernetes.io/control-plane:NoSchedule-
+                  
         dest: "./inventory/scale-up-ctrp.yaml"
         mode: "0644"
     - name: Store inventory(for scale up worker node)
@@ -202,14 +187,7 @@
                         taints:
                           - node-role.kubernetes.io/control-plane:NoSchedule-
                   {% endfor +%}
-                  {{ loadbalancer_worker_nodes.hcloud_server.name }}:
-                    ansible_host: {{ loadbalancer_worker_nodes.hcloud_server.ipv4_address }}
-                    ip: {{ loadbalancer_worker_nodes.hcloud_server.private_networks_info[0].ip }}
-                    ansible_user: cluster
-                    ansible_ssh_private_key_file: keys/vm_node
-                    extra:
-                      taints:
-                        - node-role.kubernetes.io/control-plane:NoSchedule-
+                  
         dest: "./inventory/scale-up-worker.yaml"
         mode: "0644"
 
@@ -242,14 +220,7 @@
                         taints:
                           - node-role.kubernetes.io/control-plane:NoSchedule-
                   {% endfor +%}
-                  {{ loadbalancer_worker_nodes.hcloud_server.name }}:
-                    ansible_host: {{ loadbalancer_worker_nodes.hcloud_server.ipv4_address }}
-                    ip: {{ loadbalancer_worker_nodes.hcloud_server.private_networks_info[0].ip }}
-                    ansible_user: cluster
-                    ansible_ssh_private_key_file: keys/vm_node
-                    extra:
-                      taints:
-                        - node-role.kubernetes.io/control-plane:NoSchedule-
+                  
         dest: "./inventory/scale-down-worker.yaml"
         mode: "0644"
       

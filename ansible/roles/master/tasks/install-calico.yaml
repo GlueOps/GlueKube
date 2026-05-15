@@ -59,10 +59,10 @@
     var: debug_tigera_status.stdout_lines
   tags: install_calico
 
-- name: DEBUG - Check calico-apiserver namespace pods
+- name: DEBUG - Check calico-system namespace pods
   ansible.builtin.shell: |
     export KUBECONFIG=/etc/kubernetes/admin.conf
-    kubectl get pods -n calico-apiserver -o wide
+    kubectl get pods -n calico-system -o wide
   register: debug_apiserver_pods
   ignore_errors: true
   tags: install_calico
@@ -72,10 +72,10 @@
     var: debug_apiserver_pods.stdout_lines
   tags: install_calico
 
-- name: DEBUG - Fetch recent events from calico-apiserver namespace
+- name: DEBUG - Fetch recent events from calico-system namespace
   ansible.builtin.shell: |
     export KUBECONFIG=/etc/kubernetes/admin.conf
-    kubectl get events -n calico-apiserver --sort-by='.metadata.creationTimestamp' | tail -n 20
+    kubectl get events -n calico-system --sort-by='.metadata.creationTimestamp' | tail -n 20
   register: debug_apiserver_events
   ignore_errors: true
   tags: install_calico
@@ -85,10 +85,10 @@
     var: debug_apiserver_events.stdout_lines
   tags: install_calico
 
-- name: DEBUG - Fetch logs from the calico-apiserver pods
+- name: DEBUG - Fetch logs from the calico-system pods
   ansible.builtin.shell: |
     export KUBECONFIG=/etc/kubernetes/admin.conf
-    kubectl logs -n calico-apiserver -l k8s-app=calico-apiserver --tail=50
+    kubectl logs -n calico-system -l k8s-app=calico-apiserver --tail=50
   register: debug_apiserver_logs
   ignore_errors: true
   tags: install_calico
