@@ -19,13 +19,3 @@
     mode: "0755"
   when: inventory_hostname in groups['workers']
   tags: create_join_command
-
-- name: Apply Calico Configs(Global Network Policy)
-  ansible.builtin.shell: |
-    export KUBECONFIG=/etc/kubernetes/admin.conf 
-    kubectl apply -f /opt/kubernetes/calico-global-network-policy.yaml
-  register: apply_calico_configs
-  when: inventory_hostname == groups['masters'][0]
-  tags: install_calico
-
-
