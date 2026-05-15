@@ -66,8 +66,8 @@
         kubectl get apiservice v3.projectcalico.org -o jsonpath='{.status.conditions[?(@.type=="Available")].status}'
       register: calico_api_status
       until: calico_api_status.stdout == "True"
-      retries: 24  # 24 * 10s = 4 minutes max wait time for Molecule CI
-      delay: 10
+      retries: 24  # 24 * 60s = 24 minutes max wait time for Molecule CI
+      delay: 60
       tags: install_calico
       changed_when: false
 
