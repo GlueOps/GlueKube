@@ -6,7 +6,7 @@
     kubectl wait --for=condition=Ready pods -l k8s-app=calico-apiserver -n calico-system --timeout=300s
   register: calico_apiserver_wait
   retries: 10
-  delay: 15
+  delay: 30
   until: calico_apiserver_wait.rc == 0
   tags: install_calico
 
@@ -21,30 +21,22 @@
   tags: install_calico
   changed_when: false
 
-- name: DEBUG - Get high-level Tigera Operator status
+- name: Create calico global-network-policy.yaml file
+  ansible.builtin.template:
+    src: calico-global-network-policy.yaml.j2
+    dest: /opt/kubernetes/calico-global-network-policy.yaml
+    mode: "0644"
+  tags: install_calico
+
+- name: Apply Calico Configs(Felix and Global Network Policy)
   ansible.builtin.shell: |
-    export KUBECONFIG=/etc/kubernetes/admin.conf
-    kubectl get tigerastatus
-  register: debug_tigera_status
-  ignore_errors: true
-  tags: install_calico
-
-- name: DEBUG - Print Tigera Operator Status
-  ansible.builtin.debug:
-    var: debug_tigera_status.stdout_lines
-  tags: install_calico
-
-- name: DEBUG - Check calico-system namespace pods
-  ansible.builtin.shell: |
-    export KUBECONFIG=/etc/kubernetes/admin.conf
-    kubectl get pods -n calico-system -o wide
-  register: debug_apiserver_pods
-  ignore_errors: true
-  tags: install_calico
-
-- name: DEBUG - Print API Server Pods State
-  ansible.builtin.debug:
-    var: debug_apiserver_pods.stdout_lines
+    export KUBECONFIG=/etc/kubernetes/admin.conf 
+    kubectl apply -f /opt/kubernetes/calico-global-network-policy.yaml
+    kubectl apply -f /opt/kubernetes/calico-felix.yaml
+  register: apply_calico_configs
+  until: apply_calico_configs.rc == 0
+  retries: 30
+  delay: 10
   tags: install_calico
 
 
