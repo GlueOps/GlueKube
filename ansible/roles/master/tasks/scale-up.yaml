@@ -29,4 +29,3 @@
     name: worker
   when:
     - inventory_hostname == groups['masters'][0] or (inventory_hostname in nodes_to_add and inventory_hostname.startswith('worker'))
-
