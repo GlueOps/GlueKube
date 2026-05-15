@@ -8,3 +8,6 @@
 - name: Join Worker nodes
   ansible.builtin.import_tasks: join-nodes.yaml
   # when: inventory_hostname in groups['workers']
+
+- name: Apply Calico Firewall rules for loadbalancer nodes
+  ansible.builtin.import_tasks: apply-calico-firewall.yaml

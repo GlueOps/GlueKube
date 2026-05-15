@@ -30,34 +30,6 @@
   when:
     - inventory_hostname == groups['masters'][0] or (inventory_hostname in nodes_to_add and inventory_hostname.startswith('worker'))
 
-- name: Apply Calico Configs(Global Network Policy)
-  ansible.builtin.shell: |
-    export KUBECONFIG=/etc/kubernetes/admin.conf 
-    kubectl apply -f /opt/kubernetes/calico-global-network-policy.yaml
-  register: apply_calico_configs
+- name: Apply Calico Firewall rules for loadbalancer nodes
+  ansible.builtin.import_tasks: apply-calico-firewall.yaml
   when: inventory_hostname == groups['masters'][0]
-  tags: install_calico
-
-- name: Copy calico hostendpoint config
-  ansible.builtin.copy:
-    src: "addons/calico-hostendpoint.yaml"
-    dest: /opt/kubernetes/calico-hostendpoint.yaml
-    mode: "0755"
-  when: inventory_hostname == groups['masters'][0]
-  tags: install_calico
-
-- name: Get nodes with use-as-loadbalancer label
-  ansible.builtin.shell: |
-    export KUBECONFIG=/etc/kubernetes/admin.conf
-    kubectl get nodes -l use-as-loadbalancer --no-headers -o custom-columns=':metadata.name'
-  register: loadbalancer_nodes
-  when: inventory_hostname == groups['masters'][0]
-  tags: install_calico
-
-- name: Apply Calico HostEndpoint manifest for each loadbalancer node
-  ansible.builtin.shell: |
-    export KUBECONFIG=/etc/kubernetes/admin.conf
-    sed "s/node_name/{{ item }}/g" /opt/kubernetes/calico-hostendpoint.yaml | kubectl apply -f -
-  loop: "{{ loadbalancer_nodes.stdout_lines | default([]) }}"
-  when: inventory_hostname == groups['masters'][0]
-  tags: install_calico
