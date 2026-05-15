@@ -10,4 +10,11 @@
         name: master
         tasks_from: sync.yaml
 
-
+- name: Apply Calico Firewall rules for loadbalancer nodes
+  hosts: masters[0]
+  become: true
+  tasks:
+    - name: Apply Calico Firewall rules
+      ansible.builtin.include_role:
+        name: master
+        tasks_from: apply-calico-firewall.yaml

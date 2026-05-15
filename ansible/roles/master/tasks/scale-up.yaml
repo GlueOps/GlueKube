@@ -30,6 +30,3 @@
   when:
     - inventory_hostname == groups['masters'][0] or (inventory_hostname in nodes_to_add and inventory_hostname.startswith('worker'))
 
-- name: Apply Calico Firewall rules for loadbalancer nodes
-  ansible.builtin.import_tasks: apply-calico-firewall.yaml
-  when: inventory_hostname == groups['masters'][0]
