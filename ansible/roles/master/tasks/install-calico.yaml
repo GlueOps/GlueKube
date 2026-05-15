@@ -21,13 +21,6 @@
     mode: "0644"
   tags: install_calico
 
-- name: Copy calico felix config
-  ansible.builtin.copy:
-    src: "addons/felix.yaml"
-    dest: /opt/kubernetes/calico-felix.yaml
-    mode: "0755"
-  tags: install_calico
-
 
 - name: Deploy calico with Helm
   kubernetes.core.helm:
@@ -53,26 +46,89 @@
   delay: 30
   tags: install_calico
 
-- name: Wait for all Calico CRDs to be ready
+- name: Wait for Calico v3 API Service to be available
   ansible.builtin.shell: |
     export KUBECONFIG=/etc/kubernetes/admin.conf
-    kubectl wait --for=condition=Established \
-      crd/globalnetworkpolicies.crd.projectcalico.org \
-      crd/felixconfigurations.crd.projectcalico.org \
-      crd/hostendpoints.crd.projectcalico.org \
-      --timeout=30s
-  register: calico_crds_ready
-  until: calico_crds_ready.rc == 0
-  retries: 20
-  delay: 30
+    kubectl get apiservice v3.projectcalico.org -o jsonpath='{.status.conditions[?(@.type=="Available")].status}'
+  register: calico_api_status
+  until: calico_api_status.stdout == "True"
+  retries: 30
+  delay: 15
   tags: install_calico
+  changed_when: false
 
 
-- name: Apply Calico Configs(Felix and Global Network Policy)
+- name: Verify and Wait for Calico API Availability
+  block:
+    - name: Wait for Calico v3 API Service to be available
+      ansible.builtin.shell: |
+        export KUBECONFIG=/etc/kubernetes/admin.conf
+        kubectl get apiservice v3.projectcalico.org -o jsonpath='{.status.conditions[?(@.type=="Available")].status}'
+      register: calico_api_status
+      until: calico_api_status.stdout == "True"
+      retries: 24  # 24 * 10s = 4 minutes max wait time for Molecule CI
+      delay: 10
+      tags: install_calico
+      changed_when: false
+
+  rescue:
+    - name: DEBUG - Get high-level Tigera Operator status
+      ansible.builtin.shell: |
+        export KUBECONFIG=/etc/kubernetes/admin.conf
+        kubectl get tigerastatus
+      register: debug_tigera_status
+      ignore_errors: true
+      tags: install_calico
+
+    - name: DEBUG - Print Tigera Operator Status
+      ansible.builtin.debug:
+        var: debug_tigera_status.stdout_lines
+      tags: install_calico
+
+    - name: DEBUG - Check calico-apiserver namespace pods
+      ansible.builtin.shell: |
+        export KUBECONFIG=/etc/kubernetes/admin.conf
+        kubectl get pods -n calico-apiserver -o wide
+      register: debug_apiserver_pods
+      ignore_errors: true
+      tags: install_calico
+
+    - name: DEBUG - Print API Server Pods State
+      ansible.builtin.debug:
+        var: debug_apiserver_pods.stdout_lines
+      tags: install_calico
+
+    - name: DEBUG - Fetch recent events from calico-apiserver namespace
+      ansible.builtin.shell: |
+        export KUBECONFIG=/etc/kubernetes/admin.conf
+        kubectl get events -n calico-apiserver --sort-by='.metadata.creationTimestamp' | tail -n 20
+      register: debug_apiserver_events
+      ignore_errors: true
+      tags: install_calico
+
+    - name: DEBUG - Print Namespace Events (Look for ImagePullBackOff / Cert errors)
+      ansible.builtin.debug:
+        var: debug_apiserver_events.stdout_lines
+      tags: install_calico
+
+    - name: DEBUG - Fetch logs from the calico-apiserver pods
+      ansible.builtin.shell: |
+        export KUBECONFIG=/etc/kubernetes/admin.conf
+        kubectl logs -n calico-apiserver -l k8s-app=calico-apiserver --tail=50
+      register: debug_apiserver_logs
+      ignore_errors: true
+      tags: install_calico
+
+    - name: DEBUG - Print Calico API Server Controller Logs
+      ansible.builtin.debug:
+        var: debug_apiserver_logs.stdout_lines
+      tags: install_calico
+
+
+- name: Apply Calico Configs(Global Network Policy)
   ansible.builtin.shell: |
     export KUBECONFIG=/etc/kubernetes/admin.conf 
     kubectl apply -f /opt/kubernetes/calico-global-network-policy.yaml
-    kubectl apply -f /opt/kubernetes/calico-felix.yaml
   register: apply_calico_configs
   until: apply_calico_configs.rc == 0
   retries: 30

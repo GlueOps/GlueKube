@@ -4,6 +4,7 @@ driver:
 
 provisioner:
   name: ansible
+  log: true
   inventory:
     links:
       hosts: inventory/hosts.yaml
