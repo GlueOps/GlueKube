@@ -1,3 +1,53 @@
+
+# Wait for Calico API server and pods to be available
+- name: Wait for Calico API Server pods to be ready
+  ansible.builtin.shell: |
+    export KUBECONFIG=/etc/kubernetes/admin.conf
+    kubectl wait --for=condition=Ready pods -l k8s-app=calico-apiserver -n calico-system --timeout=300s
+  register: calico_apiserver_wait
+  retries: 10
+  delay: 15
+  until: calico_apiserver_wait.rc == 0
+  tags: install_calico
+
+- name: Wait for Calico v3 API Service to be available
+  ansible.builtin.shell: |
+    export KUBECONFIG=/etc/kubernetes/admin.conf
+    kubectl get apiservice v3.projectcalico.org -o jsonpath='{.status.conditions[?(@.type=="Available")].status}'
+  register: calico_api_status
+  until: calico_api_status.stdout == "True"
+  retries: 30
+  delay: 15
+  tags: install_calico
+  changed_when: false
+
+- name: DEBUG - Get high-level Tigera Operator status
+  ansible.builtin.shell: |
+    export KUBECONFIG=/etc/kubernetes/admin.conf
+    kubectl get tigerastatus
+  register: debug_tigera_status
+  ignore_errors: true
+  tags: install_calico
+
+- name: DEBUG - Print Tigera Operator Status
+  ansible.builtin.debug:
+    var: debug_tigera_status.stdout_lines
+  tags: install_calico
+
+- name: DEBUG - Check calico-system namespace pods
+  ansible.builtin.shell: |
+    export KUBECONFIG=/etc/kubernetes/admin.conf
+    kubectl get pods -n calico-system -o wide
+  register: debug_apiserver_pods
+  ignore_errors: true
+  tags: install_calico
+
+- name: DEBUG - Print API Server Pods State
+  ansible.builtin.debug:
+    var: debug_apiserver_pods.stdout_lines
+  tags: install_calico
+
+
 - name: Copy calico hostendpoint config
   ansible.builtin.copy:
     src: "addons/calico-hostendpoint.yaml"
