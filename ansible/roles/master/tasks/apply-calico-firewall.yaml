@@ -45,6 +45,7 @@
 - name: Read persisted public interface from each loadbalancer node
   ansible.builtin.shell: cat /etc/glueops/public-interface
   delegate_to: "{{ item }}"
+  become: false
   loop: "{{ loadbalancer_nodes.stdout_lines | default([]) }}"
   register: loadbalancer_public_interfaces
   changed_when: false
