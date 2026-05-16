@@ -18,3 +18,4 @@
       ansible.builtin.include_role:
         name: master
         tasks_from: apply-calico-firewall.yaml
+      tags: install_calico

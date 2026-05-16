@@ -1,0 +1,7 @@
+apiVersion: projectcalico.org/v3
+kind: HostEndpoint
+metadata:
+  name: {{ hostendpoint_node_name }}
+spec:
+  node: {{ hostendpoint_node_name }}
+  interfaceName: "{{ hostendpoint_interface_name }}"
