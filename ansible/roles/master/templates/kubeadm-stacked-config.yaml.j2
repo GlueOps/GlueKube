@@ -14,7 +14,7 @@ certificateKey: {{ certificate_key }}
 nodeRegistration:
   criSocket: unix:///var/run/containerd/containerd.sock
   kubeletExtraArgs:
-    - name: node-ip
+    - name: "node-ip"
       value: "{{ hostvars[inventory_hostname].ip }}"
   imagePullPolicy: IfNotPresent
   taints:
@@ -32,6 +32,7 @@ apiServer:
   {% for ip in etcd_initial_cluster %}
   - "{{ ip }}"
   {% endfor %}
+
 imageRepository: k8s.repo.gpkg.io
 kubernetesVersion: "{{ kubernetes_version }}"
 controlPlaneEndpoint: "{{ loadbalancer_apiserver }}:6443"

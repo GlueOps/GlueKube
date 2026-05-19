@@ -3,7 +3,7 @@ kind: JoinConfiguration
 nodeRegistration:
   criSocket: unix:///var/run/containerd/containerd.sock
   kubeletExtraArgs:
-    - name: node-ip
+    - name: "node-ip"
       value: "{{ hostvars[node_to_add | default(inventory_hostname)].ip }}"
   imagePullPolicy: IfNotPresent
   taints:
