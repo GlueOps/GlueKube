@@ -78,21 +78,6 @@
       loop: "{{ range(0, num_worker_nodes) | list }}"
       register: worker_nodes
 
-    - name: Create LoadBalancer Worker Nodes
-      hetzner.hcloud.server:
-        name: "worker-node-loadbalancer"
-        server_type: ccx13
-        image: ubuntu-24.04
-        location: "{{ lookup('env', 'HCLOUD_LOCATION') | default('hel1') }}"
-        enable_ipv4: true
-        enable_ipv6: false
-        firewalls:
-          - my-firewall
-        user_data: "{{ lookup('template', 'cloudinit/cloud-init.yaml.j2')}}"
-        api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
-        private_networks:
-          - test-molecule-network
-      register: loadbalancer_worker_nodes
 
     - name: Store default inventory
       ansible.builtin.copy:
