@@ -14,6 +14,9 @@ certificateKey: {{ certificate_key }}
 nodeRegistration:
   criSocket: unix:///var/run/containerd/containerd.sock
   imagePullPolicy: IfNotPresent
+  kubeletExtraArgs:
+    - name: "node-ip"
+      value: "{{ hostvars[inventory_hostname].ip }}"
   taints:
   - key: "node-role.kubernetes.io/control-plane"
     value: "false"
