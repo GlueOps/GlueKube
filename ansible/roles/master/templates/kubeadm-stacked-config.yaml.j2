@@ -13,9 +13,6 @@ localAPIEndpoint:
 certificateKey: {{ certificate_key }} 
 nodeRegistration:
   criSocket: unix:///var/run/containerd/containerd.sock
-  kubeletExtraArgs:
-    - name: "node-ip"
-      value: "{{ hostvars[inventory_hostname].ip }}"
   imagePullPolicy: IfNotPresent
   taints:
   - key: "node-role.kubernetes.io/control-plane"
@@ -58,20 +55,4 @@ etcd:
 apiVersion: kubelet.config.k8s.io/v1beta1
 kind: KubeletConfiguration
 address: "{{ hostvars[inventory_hostname].ip }}"
-healthzBindAddress: "{{ hostvars[inventory_hostname].ip }}"
-cgroupDriver: systemd
-enforceNodeAllocatable:
-  - pods
-  - system-reserved
-  - kube-reserved
-kubeReserved:
-  cpu: "150m"
-  memory: "500Mi"
-systemReserved:
-  cpu: "150m"
-  memory: "500Mi"
-evictionHard:
-  memory.available: "300Mi"
-  nodefs.available: "10%"
-  nodefs.inodesFree: "5%"
-  imagefs.available: "15%"
+
