@@ -14,7 +14,7 @@ provisioner:
     
 
 scenario:
-  name: scale-cluster
+  name: test-cluster
   test_sequence:
     - create
     - side_effect tests/test_nodes_pingable.yaml
