@@ -13,17 +13,8 @@
   tags: join_nodes
 
 
-- name: Copy Kubelet configuration
-  ansible.builtin.copy:
-    src: "kubeletConfiguration.yaml"
-    dest: "/etc/kubernetes/kubeletConfiguration.yaml"
-    mode: "0644"
-  when: 
-    - inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[groups['masters'][0]]['current_cluster_nodes'].stdout_lines
-
-
 - name: Join the control-node to the Kubernetes cluster
-  ansible.builtin.command: kubeadm join --config /opt/kubeadm_join.yaml --patches=/etc/kubernetes/kubeletConfiguration.yaml
+  ansible.builtin.command: kubeadm join --config /opt/kubeadm_join.yaml 
   args:
     creates: /opt/kubernetes/join_command.sh
   tags: join_worker

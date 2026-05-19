@@ -15,15 +15,9 @@
   tags: init_kubeadm
 
 
-- name: Copy Kubelet configuration
-  ansible.builtin.copy:
-    src: "kubeletConfiguration.yaml"
-    dest: "/etc/kubernetes/kubeletConfiguration.yaml"
-    mode: "0644"
-
 # run kubernetes init command on master node #1
 - name: Initialize Kubernetes cluster
-  ansible.builtin.command: "kubeadm init --config {{ kubeadm_config_file }} --upload-certs --patches=/etc/kubernetes/kubeletConfiguration.yaml"
+  ansible.builtin.command: "kubeadm init --config {{ kubeadm_config_file }} --upload-certs "
   args:
     creates: /opt/kubernetes/init_command
   when: kube_apiserver_manifest.stat.exists == false

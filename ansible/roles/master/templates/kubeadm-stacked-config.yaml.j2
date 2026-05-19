@@ -64,15 +64,13 @@ enforceNodeAllocatable:
   - system-reserved
   - kube-reserved
 kubeReserved:
-  cpu: "200m"
-  memory: "1Gi"
-  pid: "1000"
+  cpu: "150m"
+  memory: "500Mi"
 systemReserved:
-  cpu: "200m"
-  memory: "1Gi"
-  pid: "1000"
+  cpu: "150m"
+  memory: "500Mi"
 evictionHard:
-  memory.available: "500Mi"
+  memory.available: "300Mi"
   nodefs.available: "10%"
   nodefs.inodesFree: "5%"
   imagefs.available: "15%"
