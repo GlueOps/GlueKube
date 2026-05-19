@@ -1,4 +1,4 @@
-apiVersion: kubeadm.k8s.io/v1beta3
+apiVersion: kubeadm.k8s.io/v1beta4
 kind: InitConfiguration
 bootstrapTokens:
   - groups:
@@ -31,7 +31,6 @@ apiServer:
   {% for ip in etcd_initial_cluster %}
   - "{{ ip }}"
   {% endfor %}
-clusterName: kubernetes
 controllerManager: {}
 imageRepository: k8s.repo.gpkg.io
 kubernetesVersion: "{{ kubernetes_version }}"
@@ -53,9 +52,8 @@ etcd:
     {% for ip in etcd_initial_cluster %}
       - {{ ip }}
     {% endfor %}
-scheduler: {}
----
 
+---
 apiVersion: kubelet.config.k8s.io/v1beta1
 kind: KubeletConfiguration
 cgroupDriver: systemd
