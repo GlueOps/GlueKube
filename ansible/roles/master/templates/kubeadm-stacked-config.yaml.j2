@@ -54,22 +54,3 @@ etcd:
       - {{ ip }}
     {% endfor %}
 
----
-apiVersion: kubelet.config.k8s.io/v1beta1
-kind: KubeletConfiguration
-cgroupDriver: systemd
-enforceNodeAllocatable:
-  - pods
-  - system-reserved
-  - kube-reserved
-kubeReserved:
-  cpu: "150m"
-  memory: "500Mi"
-systemReserved:
-  cpu: "150m"
-  memory: "500Mi"
-evictionHard:
-  memory.available: "300Mi"
-  nodefs.available: "10%"
-  nodefs.inodesFree: "5%"
-  imagefs.available: "15%"
