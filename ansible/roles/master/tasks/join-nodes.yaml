@@ -12,12 +12,23 @@
   when: inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[groups['masters'][0]]['current_cluster_nodes'].stdout_lines
   tags: join_nodes
 
+
+- name: Copy Kubelet configuration
+  ansible.builtin.copy:
+    src: "kubeletConfiguration.yaml"
+    dest: "/opt/kubernetes/kubeletConfiguration.yaml"
+    mode: "0644"
+  when: 
+    - inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[groups['masters'][0]]['current_cluster_nodes'].stdout_lines
+
+
 - name: Join the control-node to the Kubernetes cluster
-  ansible.builtin.command: kubeadm join --config /opt/kubeadm_join.yaml
+  ansible.builtin.command: kubeadm join --config /opt/kubeadm_join.yaml --patches=/opt/kubernetes/kubeletConfiguration.yaml
   args:
     creates: /opt/kubernetes/join_command.sh
   tags: join_worker
   when: inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[groups['masters'][0]]['current_cluster_nodes'].stdout_lines
+
 
 # create a directory for the kubeconfig file
 - name: Generate Kubeadm configuration

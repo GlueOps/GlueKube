@@ -54,7 +54,7 @@
         enable_ipv6: false
         firewalls:
           - my-firewall
-        user_data: "{{ lookup('template', 'cloudinit/cloud-init-master.yaml.j2')}}"
+        user_data: "{{ lookup('template', 'cloudinit/cloud-init.yaml.j2')}}"
         api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
         private_networks:
           - test-molecule-network
@@ -71,7 +71,7 @@
         enable_ipv6: false
         firewalls:
           - my-firewall
-        user_data: "{{ lookup('template', 'cloudinit/cloud-init-worker.yaml.j2')}}"
+        user_data: "{{ lookup('template', 'cloudinit/cloud-init.yaml.j2')}}"
         api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
         private_networks:
           - test-molecule-network

@@ -1,0 +1,9 @@
+# /etc/kubernetes/patches/kubeletconfiguration.yaml
+kubeReserved:
+  cpu: "150m"
+  memory: "500Mi"
+systemReserved:
+  cpu: "150m"
+  memory: "500Mi"
+evictionHard:
+  memory.available: "300Mi"
