@@ -1,27 +1,25 @@
 ---
-platforms: 
-  - name: instance-2
 driver:
   name: default
 
 provisioner:
   name: ansible
+  log: true
   inventory:
     links:
       hosts: inventory/hosts.yaml
       group_vars: inventory/group_vars
   playbooks:
     side_effect: side_effect/default.yaml
-
     
 
 scenario:
-  name: test-cluster
+  name: scale-cluster
   test_sequence:
     - create
+    - side_effect tests/test_nodes_pingable.yaml
     - converge
-    - side_effect side_effect/rotate_certs.yaml
-    - verify tests/test_rotate_certs.yaml
+    - side_effect tests/test_cluster_healthy.yaml
     - destroy
 
 verifier:

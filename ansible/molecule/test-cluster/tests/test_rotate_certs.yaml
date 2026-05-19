@@ -1,5 +1,0 @@
-
-- name: Verify new certificate expiration dates
-  ansible.builtin.command: "kubeadm certs check-expiration --output json"
-  register: new_cert_expiry
-  changed_when: false
