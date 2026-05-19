@@ -14,14 +14,15 @@ certificateKey: {{ certificate_key }}
 nodeRegistration:
   criSocket: unix:///var/run/containerd/containerd.sock
   kubeletExtraArgs:
-    node-ip: "{{ hostvars[inventory_hostname].ip }}"
+    - name: node-ip
+      value: "{{ hostvars[inventory_hostname].ip }}"
   imagePullPolicy: IfNotPresent
   taints:
   - key: "node-role.kubernetes.io/control-plane"
     value: "false"
     effect: "NoSchedule"
 ---
-apiVersion: kubeadm.k8s.io/v1beta3
+apiVersion: kubeadm.k8s.io/v1beta4
 kind: ClusterConfiguration
 apiServer:
   certSANs:
@@ -31,7 +32,6 @@ apiServer:
   {% for ip in etcd_initial_cluster %}
   - "{{ ip }}"
   {% endfor %}
-controllerManager: {}
 imageRepository: k8s.repo.gpkg.io
 kubernetesVersion: "{{ kubernetes_version }}"
 controlPlaneEndpoint: "{{ loadbalancer_apiserver }}:6443"
