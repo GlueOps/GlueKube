@@ -7,10 +7,6 @@ nodeRegistration:
       value: "{{ hostvars[node_to_add | default(inventory_hostname)].ip }}"
     - name: "address"
       value: "{{ hostvars[node_to_add | default(inventory_hostname)].ip }}"
-    - name: "serialize-image-pulls"
-      value: "false"                       # Parallel image pulls
-    - name: "image-pull-progress-deadline"
-      value: "5m"
     - name: "max-pods"
       value: "250"
     - name: "kube-api-qps"
