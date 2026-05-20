@@ -22,10 +22,10 @@ nodeRegistration:
     - name: "max-pods"
       value: "250"
     - name: "kube-api-qps"
-      value: "50"                          # Higher API throughput
+      value: "50"                          
     - name: "kube-api-burst"
       value: "100"
-    - name: "cgroupDriver"
+    - name: "cgroup-driver"
       value: "systemd"
     - name: "system-reserved"
       value: "cpu=100m,memory=256Mi,ephemeral-storage=1Gi"
