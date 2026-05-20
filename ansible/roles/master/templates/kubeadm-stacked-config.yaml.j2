@@ -19,6 +19,20 @@ nodeRegistration:
       value: "{{ hostvars[inventory_hostname].ip }}"
     - name: "address"
       value: "{{ hostvars[inventory_hostname].ip }}"
+    - name: "max-pods"
+      value: "250"                         # Depends on cluster size
+    - name: "serialize-image-pulls"
+      value: "false"                       # Parallel image pulls
+    - name: "image-pull-progress-deadline"
+      value: "5m"
+    - name: "kube-api-qps"
+      value: "50"                          # Higher API throughput
+    - name: "kube-api-burst"
+      value: "100"
+    - name: "system-reserved"
+      value: "cpu=100m,memory=256Mi,ephemeral-storage=1Gi"
+    - name: "kube-reserved"
+      value: "cpu=100m,memory=512Mi,ephemeral-storage=2Gi"
   taints:
   - key: "node-role.kubernetes.io/control-plane"
     value: "false"
@@ -29,9 +43,15 @@ kind: ClusterConfiguration
 controllerManager:
   extraArgs:
     - name: "concurrent-deployment-syncs"
-      value: "10"
+      value: "20"          # Increased from default 5
     - name: "concurrent-endpoint-syncs"
       value: "10"
+    - name: "concurrent-replicaset-syncs"
+      value: "5"
+    - name: "concurrent-service-syncs"
+      value: "3"
+    - name: "concurrent-gc-syncs"
+      value: "30"
 apiServer:
   extraArgs:
     - name: "max-requests-inflight"
@@ -46,6 +66,12 @@ apiServer:
       value: "10"
     - name: "audit-log-maxsize"
       value: "100"
+    - name: "request-timeout"
+      value: "300s"          # Prevent premature disconnects in virtualized environments
+    - name: "shutdown-delay-duration"
+      value: "15s"           # Graceful shutdown for in-flight requests
+    - name: "tls-min-version"
+      value: "VersionTLS12"  # Enforce minimum TLS 1.2
   extraVolumes:
     - name: audit-logs
       hostPath: /var/log/kubernetes
@@ -78,6 +104,12 @@ etcd:
         value: "250"        # Allow 250ms for virtualized disk/network delays
       - name: "election-timeout"
         value: "1250"       # Corresponds to 5x the heartbeat interval
+      - name: "snapshot-count"
+        value: "20000"      # Reduce compaction frequency for Proxmox disk latency
+      - name: "max-request-bytes"
+        value: "33554432"   # 32MB to allow larger object sizes
+      - name: "auto-compaction-retention"
+        value: "1h"         # Prevent database bloat
     serverCertSANs: 
     {% for ip in etcd_initial_cluster %}
       - {{ ip }}
