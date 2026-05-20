@@ -19,6 +19,10 @@ nodeRegistration:
       value: "{{ hostvars[inventory_hostname].ip }}"
     - name: "address"
       value: "{{ hostvars[inventory_hostname].ip }}"
+    - name: "serialize-image-pulls"
+      value: "false"                       # Parallel image pulls
+    - name: "image-pull-progress-deadline"
+      value: "5m"
     - name: "max-pods"
       value: "250"
     - name: "kube-api-qps"
@@ -56,25 +60,12 @@ apiServer:
       value: "400" # Up from default 200 read requests
     - name: "max-mutating-requests-inflight"
       value: "200" # Up from default 100 write requests
-    - name: "audit-log-path"
-      value: "/var/log/kubernetes/audit.log"
-    - name: "audit-log-maxage"
-      value: "30"
-    - name: "audit-log-maxbackup"
-      value: "10"
-    - name: "audit-log-maxsize"
-      value: "100"
     - name: "request-timeout"
       value: "300s"          # Prevent premature disconnects in virtualized environments
     - name: "shutdown-delay-duration"
       value: "15s"           # Graceful shutdown for in-flight requests
     - name: "tls-min-version"
       value: "VersionTLS12"  # Enforce minimum TLS 1.2
-  extraVolumes:
-    - name: audit-logs
-      hostPath: /var/log/kubernetes
-      mountPath: /var/log/kubernetes
-      readOnly: false
       
   certSANs:
     - "{{ loadbalancer_apiserver }}"
