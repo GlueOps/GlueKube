@@ -26,7 +26,32 @@ nodeRegistration:
 ---
 apiVersion: kubeadm.k8s.io/v1beta4
 kind: ClusterConfiguration
+controllerManager:
+  extraArgs:
+    - name: "concurrent-deployment-syncs"
+      value: "10"
+    - name: "concurrent-endpoint-syncs"
+      value: "10"
 apiServer:
+  extraArgs:
+    - name: "max-requests-inflight"
+      value: "400" # Up from default 200 read requests
+    - name: "max-mutating-requests-inflight"
+      value: "200" # Up from default 100 write requests
+    - name: "audit-log-path"
+      value: "/var/log/kubernetes/audit.log"
+    - name: "audit-log-maxage"
+      value: "30"
+    - name: "audit-log-maxbackup"
+      value: "10"
+    - name: "audit-log-maxsize"
+      value: "100"
+  extraVolumes:
+    - name: audit-logs
+      hostPath: /var/log/kubernetes
+      mountPath: /var/log/kubernetes
+      readOnly: false
+      
   certSANs:
     - "{{ loadbalancer_apiserver }}"
     - "127.0.0.1"
@@ -46,6 +71,13 @@ networking:
   podSubnet: "{{ calico_network_calico_cidr }}"
 etcd:
   local:
+    extraArgs:
+      - name: "quota-backend-bytes"
+        value: "8589934592" # Increase DB size from 2GB to 8GB
+      - name: "heartbeat-interval"
+        value: "250"        # Allow 250ms for virtualized disk/network delays
+      - name: "election-timeout"
+        value: "1250"       # Corresponds to 5x the heartbeat interval
     serverCertSANs: 
     {% for ip in etcd_initial_cluster %}
       - {{ ip }}
@@ -57,23 +89,8 @@ etcd:
     {% endfor %}
 
 ---
-
-apiVersion: kubelet.config.k8s.io/v1beta1
-kind: KubeletConfiguration
-address: "{{ hostvars[inventory_hostname].ip }}"
-healthzBindAddress: "{{ hostvars[inventory_hostname].ip }}"
-enforceNodeAllocatable:
-  - pods
-  - system-reserved
-  - kube-reserved
-kubeReserved:
-  cpu: "150m"
-  memory: "500Mi"
-systemReserved:
-  cpu: "150m"
-  memory: "500Mi"
-evictionHard:
-  memory.available: "300Mi"
-  nodefs.available: "10%"
-  nodefs.inodesFree: "5%"
-  imagefs.available: "15%"
+apiVersion: kubeproxy.config.k8s.io/v1alpha1
+kind: KubeProxyConfiguration
+mode: "ipvs"
+ipvs:
+  scheduler: "rr" # Round Robin
