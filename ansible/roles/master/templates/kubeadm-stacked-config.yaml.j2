@@ -27,10 +27,6 @@ nodeRegistration:
       value: "100"
     - name: "cgroup-driver"
       value: "systemd"
-    - name: "system-reserved"
-      value: "cpu=100m,memory=256Mi,ephemeral-storage=1Gi"
-    - name: "kube-reserved"
-      value: "cpu=100m,memory=512Mi,ephemeral-storage=2Gi"
   taints:
   - key: "node-role.kubernetes.io/control-plane"
     value: "false"
