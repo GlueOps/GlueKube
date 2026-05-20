@@ -17,6 +17,8 @@ nodeRegistration:
   kubeletExtraArgs:
     - name: "node-ip"
       value: "{{ hostvars[inventory_hostname].ip }}"
+    - name: "address"
+      value: "{{ hostvars[inventory_hostname].ip }}"
   taints:
   - key: "node-role.kubernetes.io/control-plane"
     value: "false"
@@ -53,3 +55,23 @@ etcd:
     {% for ip in etcd_initial_cluster %}
       - {{ ip }}
     {% endfor %}
+
+---
+
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+enforceNodeAllocatable:
+  - pods
+  - system-reserved
+  - kube-reserved
+kubeReserved:
+  cpu: "150m"
+  memory: "500Mi"
+systemReserved:
+  cpu: "150m"
+  memory: "500Mi"
+evictionHard:
+  memory.available: "300Mi"
+  nodefs.available: "10%"
+  nodefs.inodesFree: "5%"
+  imagefs.available: "15%"
