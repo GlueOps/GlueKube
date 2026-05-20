@@ -20,15 +20,17 @@ nodeRegistration:
     - name: "address"
       value: "{{ hostvars[inventory_hostname].ip }}"
     - name: "max-pods"
-      value: "250"                         # Depends on cluster size
-    - name: "serialize-image-pulls"
-      value: "false"                       # Parallel image pulls
-    - name: "image-pull-progress-deadline"
-      value: "5m"
+      value: "250"
     - name: "kube-api-qps"
       value: "50"                          # Higher API throughput
     - name: "kube-api-burst"
       value: "100"
+    - name: "cgroupDriver"
+      value: "systemd"
+    - name: "system-reserved"
+      value: "cpu=100m,memory=256Mi,ephemeral-storage=1Gi"
+    - name: "kube-reserved"
+      value: "cpu=100m,memory=512Mi,ephemeral-storage=2Gi"
   taints:
   - key: "node-role.kubernetes.io/control-plane"
     value: "false"
