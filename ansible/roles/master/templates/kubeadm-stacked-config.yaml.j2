@@ -11,26 +11,6 @@ bootstrapTokens:
 localAPIEndpoint:
   advertiseAddress: "{{ hostvars[inventory_hostname].ip }}"
 certificateKey: {{ certificate_key }} 
-nodeRegistration:
-  criSocket: unix:///var/run/containerd/containerd.sock
-  imagePullPolicy: IfNotPresent
-  kubeletExtraArgs:
-    - name: "node-ip"
-      value: "{{ hostvars[inventory_hostname].ip }}"
-    - name: "address"
-      value: "{{ hostvars[inventory_hostname].ip }}"
-    - name: "max-pods"
-      value: "110"
-    - name: "kube-api-qps"
-      value: "50"                          
-    - name: "kube-api-burst"
-      value: "100"
-    - name: "cgroup-driver"
-      value: "systemd"
-  taints:
-  - key: "node-role.kubernetes.io/control-plane"
-    value: "false"
-    effect: "NoSchedule"
 ---
 apiVersion: kubeadm.k8s.io/v1beta4
 kind: ClusterConfiguration
@@ -100,3 +80,33 @@ etcd:
     {% for ip in etcd_initial_cluster %}
       - {{ ip }}
     {% endfor %}
+---
+
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+cgroupDriver: systemd
+containerRuntimeEndpoint: "unix:///var/run/containerd/containerd.sock"
+systemReserved:                             # Reserved resources for host OS processes
+  cpu: "1000m"
+  memory: "1024Mi"
+  ephemeral-storage: "1Gi"
+systemReservedCgroup: "/system.slice"       # cgroup parent process for OS processes (systemd-cgtop --recursive=true)
+#kubeReserved:                               # Reserved resources for K8s system components
+#  cpu: "500m"
+#  memory: "512Mi"
+#  ephemeral-storage: "1Gi"
+#kubeReservedCgroup: "/kubepods.slice"       # cgroup parent for K8s component processes (systemd-cgtop --recursive=true)
+enforceNodeAllocatable:                     # Ensure node allocatable are enforced
+  - "system-reserved"
+#  - "kube-reserved"
+  - "pods"
+evictionPressureTransitionPeriod: "120s"    # Wait X time before transitioning out of presssure state
+evictionSoft:                               # Try to evict pods once meet combined with grace period
+  memory.available: "768Mi"                 # If <X memory, start the grace period clock to evict
+  nodefs.available: "8%"                    # If <X storage (/var/lib/kubelet/), start the grace period clock to evict
+evictionSoftGracePeriod:                    # Period to wait to evict
+  memory.available: "60s"
+  nodefs.available: "60s"
+evictionHard:                               # Immediately evict pods
+  memory.available: "500Mi"                 # Evict pods when available memory drops below 200 MiB
+  nodefs.available: "5%"                    # Evict pods when node disk space drops below 5%
