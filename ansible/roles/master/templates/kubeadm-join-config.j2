@@ -15,6 +15,8 @@ nodeRegistration:
       value: "100"
     - name: "cgroup-driver"
       value: "systemd"
+    - name: "system-reserved"
+      value: "cpu=1000m,memory=3Gi,ephemeral-storage=1Gi"
   imagePullPolicy: IfNotPresent
   taints:
     - key: "node-role.kubernetes.io/control-plane"
