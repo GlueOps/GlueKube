@@ -16,7 +16,8 @@ nodeRegistration:
       - name: "cgroup-driver"
         value: "systemd"
       - name: "system-reserved"
-      value: "cpu=1000m,memory=3Gi,ephemeral-storage=1Gi"
+        value: "cpu=2,memory=3Gi,ephemeral-storage=5Gi"
+
     imagePullPolicy: IfNotPresent
 
 discovery:

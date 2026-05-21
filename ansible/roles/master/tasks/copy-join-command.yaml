@@ -28,13 +28,3 @@
     mode: "0755"
   when: inventory_hostname != groups['masters'][0]
   tags: create_join_command
-
-
-# copy the join command to the worker node
-# - name: Copy the join command to the control node
-#   ansible.builtin.copy:
-#     dest: /opt/token.sh
-#     content: "{{ hostvars[groups['masters'][0]]['join_command'].stdout }}  --control-plane --certificate-key {{ certificate_key }} --apiserver-advertise-address {{ hostvars[inventory_hostname].ip }}"
-#     mode: "0755"
-#   when: inventory_hostname != groups['masters'][0]
-#   tags: create_join_command
