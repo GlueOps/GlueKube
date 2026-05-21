@@ -80,8 +80,8 @@ etcd:
     {% for ip in etcd_initial_cluster %}
       - {{ ip }}
     {% endfor %}
----
 
+---
 apiVersion: kubelet.config.k8s.io/v1beta1
 kind: KubeletConfiguration
 cgroupDriver: systemd
@@ -91,14 +91,9 @@ systemReserved:                             # Reserved resources for host OS pro
   memory: "1024Mi"
   ephemeral-storage: "1Gi"
 systemReservedCgroup: "/system.slice"       # cgroup parent process for OS processes (systemd-cgtop --recursive=true)
-#kubeReserved:                               # Reserved resources for K8s system components
-#  cpu: "500m"
-#  memory: "512Mi"
-#  ephemeral-storage: "1Gi"
-#kubeReservedCgroup: "/kubepods.slice"       # cgroup parent for K8s component processes (systemd-cgtop --recursive=true)
 enforceNodeAllocatable:                     # Ensure node allocatable are enforced
   - "system-reserved"
-#  - "kube-reserved"
+  - "kube-reserved"
   - "pods"
 evictionPressureTransitionPeriod: "120s"    # Wait X time before transitioning out of presssure state
 evictionSoft:                               # Try to evict pods once meet combined with grace period
