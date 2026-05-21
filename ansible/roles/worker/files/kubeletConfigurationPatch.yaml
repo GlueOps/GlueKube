@@ -1,0 +1,8 @@
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+kubeReserved:
+  cpu: "200m"
+  memory: "512Mi"
+systemReserved:
+  cpu: "200m"
+  memory: "512Mi"

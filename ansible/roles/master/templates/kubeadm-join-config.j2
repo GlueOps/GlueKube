@@ -1,26 +1,5 @@
 apiVersion: kubeadm.k8s.io/v1beta4
 kind: JoinConfiguration
-nodeRegistration:
-  criSocket: unix:///var/run/containerd/containerd.sock
-  kubeletExtraArgs:
-    - name: "node-ip"
-      value: "{{ hostvars[node_to_add | default(inventory_hostname)].ip }}"
-    - name: "address"
-      value: "{{ hostvars[node_to_add | default(inventory_hostname)].ip }}"
-    - name: "max-pods"
-      value: "250"
-    - name: "kube-api-qps"
-      value: "50"                          
-    - name: "kube-api-burst"
-      value: "100"
-    - name: "cgroup-driver"
-      value: "systemd"
-
-  imagePullPolicy: IfNotPresent
-  taints:
-    - key: "node-role.kubernetes.io/control-plane"
-      value: "false"
-      effect: "NoSchedule"
 
 discovery:
   bootstrapToken:
@@ -34,4 +13,3 @@ controlPlane:
     advertiseAddress: "{{ hostvars[node_to_add | default(inventory_hostname)].ip }}"
     bindPort: 6443
   certificateKey: "{{ certificate_key }}"
-  
