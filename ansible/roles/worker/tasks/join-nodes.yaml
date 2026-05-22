@@ -30,9 +30,9 @@
   tags: join_worker
   when: inventory_hostname in groups['workers'] and inventory_hostname not in hostvars[groups['masters'][0]]['current_cluster_nodes'].stdout
 
-- name: Copy Kubelet configuration patch
-  ansible.builtin.copy:
-    src: "kubeletConfigurationPatch.yaml"
+- name: Render Kubelet configuration patch
+  ansible.builtin.template:
+    src: "kubeletConfigurationPatch.yaml.j2"
     dest: "/etc/kubernetes/patches/kubeletconfiguration+merge.yaml"
     mode: "0644"
   tags: join_worker

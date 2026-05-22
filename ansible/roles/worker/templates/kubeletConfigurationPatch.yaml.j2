@@ -1,0 +1,8 @@
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+kubeReserved:
+  cpu: "{{ '512m' if (ansible_processor_vcpus | int) >= 4 else '200m' }}"
+  memory: "{{ '2560Mi' if (ansible_memtotal_mb | int) >= 16384 else '512Mi' }}"
+systemReserved:
+  cpu: "{{ '512m' if (ansible_processor_vcpus | int) >= 4 else '200m' }}"
+  memory: "{{ '2560Mi' if (ansible_memtotal_mb | int) >= 16384 else '1024Mi' }}"

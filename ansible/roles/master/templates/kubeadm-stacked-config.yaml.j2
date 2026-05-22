@@ -86,22 +86,22 @@ apiVersion: kubelet.config.k8s.io/v1beta1
 kind: KubeletConfiguration
 cgroupDriver: systemd
 containerRuntimeEndpoint: "unix:///var/run/containerd/containerd.sock"
-kubeReserved:                               
-  cpu: "200m"
-  memory: "512Mi"
-systemReserved:                             
-  cpu: "200m"
-  memory: "512Mi"
+kubeReserved:
+  cpu: "{{ '512m' if (ansible_processor_vcpus | int) >= 4 else '200m' }}"
+  memory: "{{ '2560Mi' if (ansible_memtotal_mb | int) >= 16384 else '512Mi' }}"
+systemReserved:
+  cpu: "{{ '512m' if (ansible_processor_vcpus | int) >= 4 else '200m' }}"
+  memory: "{{ '2560Mi' if (ansible_memtotal_mb | int) >= 16384 else '512Mi' }}"
 systemReservedCgroup: "/system.slice"       # cgroup parent process for OS processes (systemd-cgtop --recursive=true)
 enforceNodeAllocatable:                     # Ensure node allocatable are enforced
   - "pods"
 evictionPressureTransitionPeriod: "120s"    # Wait X time before transitioning out of presssure state
 evictionSoft:                               # Try to evict pods once meet combined with grace period
-  memory.available: "768Mi"                 # If <X memory, start the grace period clock to evict
-  nodefs.available: "8%"                    # If <X storage (/var/lib/kubelet/), start the grace period clock to evict
+  memory.available: "1024Mi"                 # If <X memory, start the grace period clock to evict
+  nodefs.available: "15%"                    # If <X storage (/var/lib/kubelet/), start the grace period clock to evict
 evictionSoftGracePeriod:                    # Period to wait to evict
   memory.available: "60s"
   nodefs.available: "60s"
 evictionHard:                               # Immediately evict pods
   memory.available: "500Mi"                 # Evict pods when available memory drops below 200 MiB
-  nodefs.available: "5%"                    # Evict pods when node disk space drops below 5%
+  nodefs.available: "10%"                    # Evict pods when node disk space drops below 5%
