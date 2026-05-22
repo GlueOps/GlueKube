@@ -86,14 +86,14 @@ apiVersion: kubelet.config.k8s.io/v1beta1
 kind: KubeletConfiguration
 cgroupDriver: systemd
 containerRuntimeEndpoint: "unix:///var/run/containerd/containerd.sock"
-systemReserved:                             # Reserved resources for host OS processes
-  cpu: "1000m"
-  memory: "1024Mi"
-  ephemeral-storage: "1Gi"
+kubeReserved:                               
+  cpu: "200m"
+  memory: "512Mi"
+systemReserved:                             
+  cpu: "200m"
+  memory: "512Mi"
 systemReservedCgroup: "/system.slice"       # cgroup parent process for OS processes (systemd-cgtop --recursive=true)
 enforceNodeAllocatable:                     # Ensure node allocatable are enforced
-  - "system-reserved"
-  - "kube-reserved"
   - "pods"
 evictionPressureTransitionPeriod: "120s"    # Wait X time before transitioning out of presssure state
 evictionSoft:                               # Try to evict pods once meet combined with grace period
