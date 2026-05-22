@@ -27,12 +27,16 @@
     path: "/etc/kubernetes/patches"
     state: directory
     mode: "0755"
+  tags: join_worker
+  when: inventory_hostname in groups['workers'] and inventory_hostname not in hostvars[groups['masters'][0]]['current_cluster_nodes'].stdout
 
 - name: Copy Kubelet configuration patch
   ansible.builtin.copy:
     src: "kubeletConfigurationPatch.yaml"
-    dest: "/etc/kubernetes/patches/kubeletconfiguration.yaml"
+    dest: "/etc/kubernetes/patches/kubeletconfiguration+merge.yaml"
     mode: "0644"
+  tags: join_worker
+  when: inventory_hostname in groups['workers'] and inventory_hostname not in hostvars[groups['masters'][0]]['current_cluster_nodes'].stdout
 
 - name: Join the worker node to the Kubernetes cluster
   ansible.builtin.command: kubeadm join --config /opt/kubeadm_join.yaml
