@@ -46,6 +46,7 @@ apiServer:
   {% for san in (apiserver_extra_sans | default('') | split(',') | map('trim') | reject('equalto', '') | list) %}
   - "{{ san }}"
   {% endfor %}
+  
   {% for ip in etcd_initial_cluster %}
   - "{{ ip }}"
   {% endfor %}
