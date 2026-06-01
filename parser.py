@@ -79,6 +79,7 @@ with open(env_output_path, 'w') as f:
     cert_key = platform_data.get("certificate_key")
     token = platform_data.get("random_token")
     loadbalancer_apiserver = platform_data.get('control_plane_fqdn')
+    apiserver_extra_sans = platform_data.get('control_plane_fqdn').replace('ctrp', 'kube-api')  # Example of deriving extra SANs from the control plane FQDN
     calico_network_calico_cidr = platform_data['metadata'].get('calico_network_calico_cidr')
     network_service_cidr = platform_data['metadata'].get('network_service_cidr')
     calico_node_address_autodetection_v4 = platform_data['metadata'].get('calico_node_address_autodetection_v4', None)
@@ -89,6 +90,7 @@ with open(env_output_path, 'w') as f:
     f.write(f"loadbalancer_apiserver={loadbalancer_apiserver}\n")
     f.write(f"network_service_cidr={network_service_cidr}\n")
     f.write(f"calico_network_calico_cidr={calico_network_calico_cidr}\n")
+    f.write(f"apiserver_extra_sans={apiserver_extra_sans}\n")
     if calico_node_address_autodetection_v4:
         f.write(f"calico_nodeAddressAutodetectionV4={calico_node_address_autodetection_v4}\n")
     
