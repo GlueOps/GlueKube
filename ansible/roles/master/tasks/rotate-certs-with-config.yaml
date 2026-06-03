@@ -1,0 +1,64 @@
+- name: Generate Kubeadm configuration
+  ansible.builtin.template:
+    src: "kubeadm-stacked-config.yaml.j2"
+    dest: "{{ kubeadm_config_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+  tags: rotate-certs-with-config
+
+- name: Generate Authentication Configuration
+  ansible.builtin.template:
+    src: "authentication-configuration.yaml.j2"
+    dest: "/etc/kubernetes/pki/authentication-config.yaml"
+    owner: root
+    group: root
+    mode: "0644"
+  tags: rotate-certs-with-config
+
+- name: Renew API server and etcd certificates using kubeadm config
+  ansible.builtin.command: "{{ item }}"
+  loop:
+    - "kubeadm certs renew apiserver --config {{ kubeadm_config_file }}"
+    - "kubeadm certs renew apiserver-kubelet-client --config {{ kubeadm_config_file }}"
+    - "kubeadm certs renew etcd-server --config {{ kubeadm_config_file }}"
+    - "kubeadm certs renew etcd-peer --config {{ kubeadm_config_file }}"
+    - "kubeadm certs renew etcd-healthcheck-client --config {{ kubeadm_config_file }}"
+  tags: rotate-certs-with-config
+
+- name: Re-upload control-plane certificates for future joins
+  ansible.builtin.command: "kubeadm init phase upload-certs --upload-certs --config {{ kubeadm_config_file }}"
+  when: inventory_hostname == groups['masters'][0]
+  tags: rotate-certs-with-config
+
+- name: Regenerate API server static pod manifest from kubeadm config
+  ansible.builtin.command: "kubeadm init phase control-plane apiserver --config {{ kubeadm_config_file }}"
+  tags: rotate-certs-with-config
+
+- name: Regenerate controller manager static pod manifest
+  ansible.builtin.command: "kubeadm init phase control-plane controller-manager --config {{ kubeadm_config_file }}"
+  tags: rotate-certs-with-config
+
+- name: Regenerate scheduler static pod manifest
+  ansible.builtin.command: "kubeadm init phase control-plane scheduler --config {{ kubeadm_config_file }}"
+  tags: rotate-certs-with-config
+
+- name: Regenerate local etcd static pod manifest
+  ansible.builtin.command: "kubeadm init phase etcd local --config {{ kubeadm_config_file }}"
+  tags: rotate-certs-with-config
+
+- name: Upload renewed control-plane certificates
+  ansible.builtin.command: "kubeadm init phase upload-certs --upload-certs --config={{ kubeadm_config_file }}"
+  when: inventory_hostname == groups['masters'][0]
+  tags: rotate-certs-with-config
+
+- name: Wait for API server to become ready
+  ansible.builtin.shell: |
+    export KUBECONFIG=/etc/kubernetes/admin.conf
+    kubectl get --raw='/readyz'
+  register: apiserver_ready
+  retries: 18
+  delay: 10
+  until: apiserver_ready.rc == 0 and ('ok' in apiserver_ready.stdout)
+  changed_when: false
+  tags: rotate-certs-with-config

@@ -1,0 +1,14 @@
+apiVersion: apiserver.config.k8s.io/v1beta1
+kind: AuthenticationConfiguration
+jwt:
+  - issuer:
+      url: https://dex.{{ domain_name }}
+      audiences:
+        - kubectl
+    claimMappings:
+      username:
+        claim: email
+        prefix: "oidc:"
+      groups:
+        claim: groups
+        prefix: "oidc:"

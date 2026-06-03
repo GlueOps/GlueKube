@@ -7,6 +7,15 @@
     mode: "0644"
   tags: init_kubeadm
 
+- name: Generate Authentication Configuration
+  ansible.builtin.template:
+    src: "authentication-configuration.yaml.j2"
+    dest: "/etc/kubernetes/pki/authentication-config.yaml"
+    owner: root
+    group: root
+    mode: "0644"
+  tags: init_kubeadm
+
 # check if kubernetes manifest exists
 - name: Check if kubernetes manifest exists
   ansible.builtin.stat:
