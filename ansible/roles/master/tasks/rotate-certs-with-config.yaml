@@ -16,18 +16,35 @@
     mode: "0644"
   tags: rotate-certs-with-config
 
-- name: Renew API server and etcd certificates using kubeadm config
+- name: Renew etcd certificates using kubeadm config
   ansible.builtin.command: "{{ item }}"
   loop:
-    - "kubeadm certs renew apiserver --config {{ kubeadm_config_file }}"
-    - "kubeadm certs renew apiserver-kubelet-client --config {{ kubeadm_config_file }}"
     - "kubeadm certs renew etcd-server --config {{ kubeadm_config_file }}"
     - "kubeadm certs renew etcd-peer --config {{ kubeadm_config_file }}"
     - "kubeadm certs renew etcd-healthcheck-client --config {{ kubeadm_config_file }}"
   tags: rotate-certs-with-config
 
-- name: Re-upload control-plane certificates for future joins
-  ansible.builtin.command: "kubeadm init phase upload-certs --upload-certs --config {{ kubeadm_config_file }}"
+- name: Remove existing API server cert files to force regeneration from config
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/kubernetes/pki/apiserver.crt
+    - /etc/kubernetes/pki/apiserver.key
+    - /etc/kubernetes/pki/apiserver-kubelet-client.crt
+    - /etc/kubernetes/pki/apiserver-kubelet-client.key
+  tags: rotate-certs-with-config
+
+- name: Regenerate API server certificate from kubeadm config
+  ansible.builtin.command: "kubeadm init phase certs apiserver --config {{ kubeadm_config_file }}"
+  tags: rotate-certs-with-config
+
+- name: Regenerate API server kubelet client certificate from kubeadm config
+  ansible.builtin.command: "kubeadm init phase certs apiserver-kubelet-client --config {{ kubeadm_config_file }}"
+  tags: rotate-certs-with-config
+
+- name: Upload kubeadm ClusterConfiguration to kubeadm-config ConfigMap
+  ansible.builtin.command: "kubeadm init phase upload-config kubeadm --config {{ kubeadm_config_file }}"
   when: inventory_hostname == groups['masters'][0]
   tags: rotate-certs-with-config
 
