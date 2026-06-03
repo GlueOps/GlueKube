@@ -80,7 +80,6 @@ with open(env_output_path, 'w') as f:
     token = platform_data.get("random_token")
     loadbalancer_apiserver = platform_data.get('control_plane_fqdn')
     domain_name = platform_data['captain_domain']['domain_name']
-    apiserver_extra_sans = f'kube-api.{domain_name}'
     calico_network_calico_cidr = platform_data['metadata'].get('calico_network_calico_cidr')
     network_service_cidr = platform_data['metadata'].get('network_service_cidr')
     calico_node_address_autodetection_v4 = platform_data['metadata'].get('calico_node_address_autodetection_v4', None)
