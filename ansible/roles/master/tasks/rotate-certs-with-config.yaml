@@ -16,14 +16,6 @@
     mode: "0644"
   tags: rotate-certs-with-config
 
-- name: Renew etcd certificates using kubeadm config
-  ansible.builtin.command: "{{ item }}"
-  loop:
-    - "kubeadm certs renew etcd-server --config {{ kubeadm_config_file }}"
-    - "kubeadm certs renew etcd-peer --config {{ kubeadm_config_file }}"
-    - "kubeadm certs renew etcd-healthcheck-client --config {{ kubeadm_config_file }}"
-  tags: rotate-certs-with-config
-
 - name: Remove existing API server cert files to force regeneration from config
   ansible.builtin.file:
     path: "{{ item }}"
@@ -31,16 +23,10 @@
   loop:
     - /etc/kubernetes/pki/apiserver.crt
     - /etc/kubernetes/pki/apiserver.key
-    - /etc/kubernetes/pki/apiserver-kubelet-client.crt
-    - /etc/kubernetes/pki/apiserver-kubelet-client.key
   tags: rotate-certs-with-config
 
 - name: Regenerate API server certificate from kubeadm config
   ansible.builtin.command: "kubeadm init phase certs apiserver --config {{ kubeadm_config_file }}"
-  tags: rotate-certs-with-config
-
-- name: Regenerate API server kubelet client certificate from kubeadm config
-  ansible.builtin.command: "kubeadm init phase certs apiserver-kubelet-client --config {{ kubeadm_config_file }}"
   tags: rotate-certs-with-config
 
 - name: Upload kubeadm ClusterConfiguration to kubeadm-config ConfigMap
@@ -52,21 +38,37 @@
   ansible.builtin.command: "kubeadm init phase control-plane apiserver --config {{ kubeadm_config_file }}"
   tags: rotate-certs-with-config
 
-- name: Regenerate controller manager static pod manifest
-  ansible.builtin.command: "kubeadm init phase control-plane controller-manager --config {{ kubeadm_config_file }}"
+- name: Ensure temporary manifest directory exists
+  ansible.builtin.file:
+    path: /opt/kubernetes/manifests
+    state: directory
+    mode: "0755"
   tags: rotate-certs-with-config
 
-- name: Regenerate scheduler static pod manifest
-  ansible.builtin.command: "kubeadm init phase control-plane scheduler --config {{ kubeadm_config_file }}"
+- name: Force restart of kube-apiserver static pod
+  ansible.builtin.command: "mv /etc/kubernetes/manifests/kube-apiserver.yaml /opt/kubernetes/manifests/kube-apiserver.yaml"
   tags: rotate-certs-with-config
 
-- name: Regenerate local etcd static pod manifest
-  ansible.builtin.command: "kubeadm init phase etcd local --config {{ kubeadm_config_file }}"
+- name: Wait until old kube-apiserver container is removed
+  ansible.builtin.shell: "ctr -n k8s.io containers list | grep kube-apiserver || true"
+  register: old_apiserver_container
+  retries: 18
+  delay: 5
+  until: old_apiserver_container.stdout == ""
+  changed_when: false
   tags: rotate-certs-with-config
 
-- name: Upload renewed control-plane certificates
-  ansible.builtin.command: "kubeadm init phase upload-certs --upload-certs --config={{ kubeadm_config_file }}"
-  when: inventory_hostname == groups['masters'][0]
+- name: Restore kube-apiserver manifest to recreate static pod
+  ansible.builtin.command: "mv /opt/kubernetes/manifests/kube-apiserver.yaml /etc/kubernetes/manifests/kube-apiserver.yaml"
+  tags: rotate-certs-with-config
+
+- name: Verify kube-apiserver static pod container is recreated
+  ansible.builtin.shell: "ctr -n k8s.io containers list | grep kube-apiserver || true"
+  register: new_apiserver_container
+  retries: 18
+  delay: 5
+  until: new_apiserver_container.stdout != ""
+  changed_when: false
   tags: rotate-certs-with-config
 
 - name: Wait for API server to become ready

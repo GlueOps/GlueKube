@@ -46,9 +46,9 @@ apiServer:
     - "127.0.0.1"
     - "0.0.0.0"
     - "kube-api.{{ domain_name }}"
-  {% for ip in etcd_initial_cluster %}
-  - "{{ ip }}"
-  {% endfor %}
+{% for ip in etcd_initial_cluster %}
+    - "{{ ip }}"
+{% endfor %}
 
 imageRepository: k8s.repo.gpkg.io
 kubernetesVersion: "{{ kubernetes_version }}"
