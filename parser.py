@@ -91,7 +91,6 @@ with open(env_output_path, 'w') as f:
     f.write(f"domain_name={domain_name}\n")
     f.write(f"network_service_cidr={network_service_cidr}\n")
     f.write(f"calico_network_calico_cidr={calico_network_calico_cidr}\n")
-    f.write(f"apiserver_extra_sans={apiserver_extra_sans}\n")
     if calico_node_address_autodetection_v4:
         f.write(f"calico_nodeAddressAutodetectionV4={calico_node_address_autodetection_v4}\n")
     
