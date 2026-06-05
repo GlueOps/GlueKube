@@ -12,6 +12,23 @@
   when: inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[groups['masters'][0]]['current_cluster_nodes'].stdout_lines
   tags: join_nodes
 
+- name: Create PKI directory
+  ansible.builtin.file:
+    path: /etc/kubernetes/pki/
+    state: directory
+    mode: '0755'
+  when: inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[groups['masters'][0]]['current_cluster_nodes'].stdout_lines
+
+- name: Generate Authentication Configuration
+  ansible.builtin.template:
+    src: "authentication-configuration.yaml.j2"
+    dest: "/etc/kubernetes/pki/authentication-config.yaml"
+    owner: root
+    group: root
+    mode: "0644"
+  tags: init_kubeadm
+  when: inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[groups['masters'][0]]['current_cluster_nodes'].stdout_lines
+
 
 - name: Join the control-node to the Kubernetes cluster
   ansible.builtin.command: kubeadm join --config /opt/kubeadm_join.yaml 
