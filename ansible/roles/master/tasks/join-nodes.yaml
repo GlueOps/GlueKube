@@ -26,7 +26,7 @@
     owner: root
     group: root
     mode: "0644"
-  tags: init_kubeadm
+  tags: join_nodes
   when: inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[groups['masters'][0]]['current_cluster_nodes'].stdout_lines
 
 

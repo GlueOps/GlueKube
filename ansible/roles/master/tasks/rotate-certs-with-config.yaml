@@ -60,6 +60,8 @@
 
 - name: Restore kube-apiserver manifest to recreate static pod
   ansible.builtin.command: "mv /opt/kubernetes/manifests/kube-apiserver.yaml /etc/kubernetes/manifests/kube-apiserver.yaml"
+  args:
+    removes: /opt/kubernetes/manifests/kube-apiserver.yaml
   tags: rotate-certs-with-config
 
 - name: Verify kube-apiserver static pod container is recreated
