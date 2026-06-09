@@ -1,0 +1,11 @@
+---
+- name: Rotate certs and refresh static pod manifests from kubeadm config
+  hosts: masters
+  become: true
+  serial: 1
+  tasks:
+    - name: Rotate certs with kubeadm config and refresh control plane
+      ansible.builtin.include_role:
+        name: master
+        tasks_from: rotate-certs-with-config.yaml
+      tags: rotate-certs-with-config

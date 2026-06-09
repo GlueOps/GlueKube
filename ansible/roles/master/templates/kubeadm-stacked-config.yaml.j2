@@ -38,14 +38,17 @@ apiServer:
       value: "15s"           # Graceful shutdown for in-flight requests
     - name: "tls-min-version"
       value: "VersionTLS12"  # Enforce minimum TLS 1.2
+    - name: "authentication-config"
+      value: "/etc/kubernetes/pki/authentication-config.yaml"
       
   certSANs:
     - "{{ loadbalancer_apiserver }}"
     - "127.0.0.1"
     - "0.0.0.0"
-  {% for ip in etcd_initial_cluster %}
-  - "{{ ip }}"
-  {% endfor %}
+    - "kube-api.{{ domain_name }}"
+{% for ip in etcd_initial_cluster %}
+    - "{{ ip }}"
+{% endfor %}
 
 imageRepository: k8s.repo.gpkg.io
 kubernetesVersion: "{{ kubernetes_version }}"

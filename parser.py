@@ -79,6 +79,7 @@ with open(env_output_path, 'w') as f:
     cert_key = platform_data.get("certificate_key")
     token = platform_data.get("random_token")
     loadbalancer_apiserver = platform_data.get('control_plane_fqdn')
+    domain_name = platform_data['captain_domain']['domain_name']
     calico_network_calico_cidr = platform_data['metadata'].get('calico_network_calico_cidr')
     network_service_cidr = platform_data['metadata'].get('network_service_cidr')
     calico_node_address_autodetection_v4 = platform_data['metadata'].get('calico_node_address_autodetection_v4', None)
@@ -87,6 +88,7 @@ with open(env_output_path, 'w') as f:
     f.write(f"CERTIFICATE_KEY={cert_key}\n")
     f.write(f"RANDOM_TOKEN={token}\n")
     f.write(f"loadbalancer_apiserver={loadbalancer_apiserver}\n")
+    f.write(f"domain_name={domain_name}\n")
     f.write(f"network_service_cidr={network_service_cidr}\n")
     f.write(f"calico_network_calico_cidr={calico_network_calico_cidr}\n")
     if calico_node_address_autodetection_v4:
