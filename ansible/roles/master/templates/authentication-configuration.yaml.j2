@@ -12,3 +12,6 @@ jwt:
       groups:
         claim: groups
         prefix: "oidc:"
+    claimValidationRules:
+    - expression: "has(claims.email_verified) && claims.email_verified == true"
+      message: "Access denied: Your email address must be verified in Dex."
