@@ -1,13 +1,15 @@
 apiVersion: kubeadm.k8s.io/v1beta4
 kind: JoinConfiguration
-
 discovery:
   bootstrapToken:
     token: "{{ hostvars[groups['masters'][0]]['join_token'].stdout }}"
     apiServerEndpoint: "{{ loadbalancer_apiserver }}:6443"
     caCertHashes:
       - "sha256:{{ hostvars[groups['masters'][0]]['join_hash'].stdout }}"
-
+nodeRegistration:
+  kubeletExtraArgs:
+    - name: "node-ip"
+      value: "{{ hostvars[node_to_add | default(inventory_hostname)].ip }}"
 controlPlane:
   localAPIEndpoint:
     advertiseAddress: "{{ hostvars[node_to_add | default(inventory_hostname)].ip }}"

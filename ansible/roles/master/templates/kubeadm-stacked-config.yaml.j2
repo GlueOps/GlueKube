@@ -10,7 +10,11 @@ bootstrapTokens:
     - authentication
 localAPIEndpoint:
   advertiseAddress: "{{ hostvars[inventory_hostname].ip }}"
-certificateKey: {{ certificate_key }} 
+certificateKey: {{ certificate_key }}
+nodeRegistration:
+  kubeletExtraArgs:
+    - name: "node-ip"
+      value: "{{ hostvars[inventory_hostname].ip }}"
 ---
 apiVersion: kubeadm.k8s.io/v1beta4
 kind: ClusterConfiguration
