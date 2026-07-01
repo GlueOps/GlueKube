@@ -3,7 +3,9 @@ kind: JoinConfiguration
 nodeRegistration:
     criSocket: unix:///var/run/containerd/containerd.sock
     imagePullPolicy: IfNotPresent
-
+    kubeletExtraArgs:
+      - name: "node-ip"
+        value: "{{ hostvars[inventory_hostname].ip }}"
 discovery:
   bootstrapToken:
     token: "{{ hostvars[groups['masters'][0]]['join_token'].stdout }}"
