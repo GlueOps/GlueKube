@@ -55,23 +55,23 @@
 - name: Build loadbalancer node to interface mapping
   ansible.builtin.set_fact:
     loadbalancer_interface_map: "{{ loadbalancer_interface_map | default({}) | combine({ item.item: (item.stdout | trim) }) }}"
-  loop: "{{ loadbalancer_public_interfaces.results | default([]) }}"
+  loop: "{{ loadbalancer_public_interfaces.results | default([]) | selectattr('rc', 'equalto', 0) | rejectattr('stdout', 'equalto', '') | list }}"
   tags: install_calico
 
 - name: Create Calico HostEndpoint manifest for each loadbalancer node
   ansible.builtin.template:
     src: calico-hostendpoint.yaml.j2
-    dest: "/opt/kubernetes/calico-hostendpoint-{{ item }}.yaml"
+    dest: "/opt/kubernetes/calico-hostendpoint-{{ item.key }}.yaml"
     mode: "0644"
   vars:
-    hostendpoint_node_name: "{{ item }}"
-    hostendpoint_interface_name: "{{ loadbalancer_interface_map[item]}}"
-  loop: "{{ loadbalancer_nodes.stdout_lines | default([]) }}"
+    hostendpoint_node_name: "{{ item.key }}"
+    hostendpoint_interface_name: "{{ item.value }}"
+  loop: "{{ loadbalancer_interface_map | default({}) | dict2items }}"
   tags: install_calico
 
 - name: Apply Calico HostEndpoint manifest for each loadbalancer node
   ansible.builtin.shell: |
     export KUBECONFIG=/etc/kubernetes/admin.conf
-    kubectl apply -f /opt/kubernetes/calico-hostendpoint-{{ item }}.yaml
-  loop: "{{ loadbalancer_nodes.stdout_lines | default([]) }}"
+    kubectl apply -f /opt/kubernetes/calico-hostendpoint-{{ item.key }}.yaml
+  loop: "{{ loadbalancer_interface_map | default({}) | dict2items }}"
   tags: install_calico
