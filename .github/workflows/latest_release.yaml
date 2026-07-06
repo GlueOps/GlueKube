@@ -1,0 +1,57 @@
+name: Update "latest" release
+
+on:
+  release:
+    types: [published, released]
+
+permissions:
+  contents: write
+
+jobs:
+  mirror_to_latest:
+    # Skip the event we generate ourselves when (re)creating the "latest" release,
+    # otherwise this workflow would trigger itself in a loop.
+    if: github.event.release.tag_name != 'latest'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mirror release into "latest"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SRC_TAG: ${{ github.event.release.tag_name }}
+          TARGET_SHA: ${{ github.sha }}
+          IS_PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          set -euo pipefail
+
+          # Grab the notes from the release that triggered us.
+          NOTES=$(gh release view "$SRC_TAG" --repo "$REPO" --json body --jq .body)
+
+          # Copy over any attached assets.
+          mkdir -p assets
+          gh release download "$SRC_TAG" --repo "$REPO" --dir assets --skip-existing || true
+
+          # Remove the previous "latest" release and its tag so we can re-point it
+          # at the newest commit. Ignore failure on the very first run.
+          gh release delete latest --repo "$REPO" --yes --cleanup-tag || true
+
+          # Recreate "latest" pointing at the same commit as the source release.
+          # Keep --latest=false so the real, versioned release retains GitHub's
+          # "Latest" badge.
+          PRERELEASE_FLAG=""
+          if [ "$IS_PRERELEASE" = "true" ]; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
+
+          gh release create latest \
+            --repo "$REPO" \
+            --target "$TARGET_SHA" \
+            --title "Latest ($SRC_TAG)" \
+            --notes "$NOTES" \
+            --latest=false \
+            $PRERELEASE_FLAG
+
+          # Upload assets (if the source release had any).
+          if [ -n "$(ls -A assets)" ]; then
+            gh release upload latest --repo "$REPO" assets/* --clobber
+          fi
