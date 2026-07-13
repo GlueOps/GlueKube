@@ -1,0 +1,5 @@
+---
+kubernetes_version: "{{ lookup('env', 'kubernetes_version') }}"
+kubernetes_package_version: "{{ lookup('env', 'kubernetes_package_version') }}" #"1.32.6-1.1" 
+loadbalancer_apiserver: "{{ lookup('env', 'loadbalancer_apiserver') }}"
+

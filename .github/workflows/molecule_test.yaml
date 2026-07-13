@@ -10,6 +10,7 @@ on:
         options:
           - 'all'
           - 'test-cluster'
+          - 'test-cluster-aws'
           - 'rotate-master-nodes'
           - 'scale-cluster'
         default: 'all'
@@ -37,11 +38,13 @@ jobs:
           pip install molecule molecule-plugins[docker] ansible-core ansible-lint yamllint
           pip install docker
           pip install jmespath python-dateutil
+          pip install boto3 botocore
 
       - name: Install Ansible collections
         run: |
           ansible-galaxy collection install community.docker hetzner.hcloud kubernetes.core
           ansible-galaxy collection install ansible.posix community.general
+          ansible-galaxy collection install amazon.aws
 
       - name: Set up environment variables
         env:
@@ -59,6 +62,11 @@ jobs:
           AUTOGLUE_RECORD_ID: ${{ secrets.AUTOGLUE_RECORD_ID || '' }}
           AUTOGLUE_CLUSTER_ID: 'empty'
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN || '' }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID || '' }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY || '' }}
+          AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+          AWS_AVAILABILITY_ZONE: ${{ vars.AWS_AVAILABILITY_ZONE || '' }}
+          AWS_INSTANCE_TYPE: ${{ vars.AWS_INSTANCE_TYPE || 't3.large' }}
         run: |
           echo "kubernetes_version=${KUBERNETES_VERSION}" >> $GITHUB_ENV
           echo "kubernetes_package_version=${KUBERNETES_PACKAGE_VERSION}" >> $GITHUB_ENV
@@ -74,6 +82,11 @@ jobs:
           echo "AUTOGLUE_RECORD_ID=${AUTOGLUE_RECORD_ID}" >> $GITHUB_ENV
           echo "AUTOGLUE_CLUSTER_ID=${AUTOGLUE_CLUSTER_ID}" >> $GITHUB_ENV
           echo "HCLOUD_TOKEN=${HCLOUD_TOKEN}" >> $GITHUB_ENV
+          echo "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}" >> $GITHUB_ENV
+          echo "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}" >> $GITHUB_ENV
+          echo "AWS_REGION=${AWS_REGION}" >> $GITHUB_ENV
+          echo "AWS_AVAILABILITY_ZONE=${AWS_AVAILABILITY_ZONE}" >> $GITHUB_ENV
+          echo "AWS_INSTANCE_TYPE=${AWS_INSTANCE_TYPE}" >> $GITHUB_ENV
 
       - name: Create /opt/gluekube directory and download Kubernetes release key
         run: |
@@ -109,6 +122,15 @@ jobs:
           ssh-keygen -t rsa -b 4096 -f molecule/test-cluster/keys/vm_node -N "" -C "molecule-test-key"
           chmod 600 molecule/test-cluster/keys/vm_node
           molecule test -s test-cluster
+
+      - name: Run Molecule Test - test-cluster-aws
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.scenario == 'all' || github.event.inputs.scenario == 'test-cluster-aws'
+        working-directory: ansible
+        run: |
+          mkdir -p molecule/test-cluster-aws/keys/
+          ssh-keygen -t rsa -b 4096 -f molecule/test-cluster-aws/keys/vm_node -N "" -C "molecule-test-key"
+          chmod 600 molecule/test-cluster-aws/keys/vm_node
+          molecule test -s test-cluster-aws
 
       - name: Upload test results
         if: always()
