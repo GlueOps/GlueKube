@@ -28,7 +28,7 @@
       --cacert=/etc/kubernetes/pki/etcd/ca.crt \
       --cert=/etc/kubernetes/pki/etcd/server.crt \
       --key=/etc/kubernetes/pki/etcd/server.key \
-      member list | grep {{ node_to_remove }} | awk '{print $1}' | tr -d ','
+      member list | grep -P '(?<![\w-]){{ node_to_remove }}(?![\w-])'  | awk '{print $1}' | tr -d ','
   delegate_to: "{{ execution_host }}"
   register: etcd_member_id
   failed_when: false
