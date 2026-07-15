@@ -5,7 +5,7 @@
   vars:
     num_master_nodes: 3
     num_worker_nodes: 3
-    aws_region: "{{ lookup('env', 'AWS_REGION') | default('us-east-1', true) }}"
+    aws_region: "{{ lookup('env', 'AWS_REGION') | default('us-west-2', true) }}"
     vpc_cidr: "10.1.0.0/16"
     subnet_cidr: "10.1.0.0/24"
 
