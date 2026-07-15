@@ -115,6 +115,8 @@
         ubuntu_ami_id: "{{ (ami_info.images | sort(attribute='creation_date') | last).image_id }}"
 
     - name: Create Master Nodes
+      vars:
+        node_hostname: "master-node-{{ item + 1 }}"
       amazon.aws.ec2_instance:
         name: "master-node-{{ item + 1 }}"
         region: "{{ aws_region }}"
@@ -135,6 +137,8 @@
       register: master_nodes
 
     - name: Create Worker Nodes
+      vars:
+        node_hostname: "worker-node-{{ item + 1 }}"
       amazon.aws.ec2_instance:
         name: "worker-node-{{ item + 1 }}"
         region: "{{ aws_region }}"

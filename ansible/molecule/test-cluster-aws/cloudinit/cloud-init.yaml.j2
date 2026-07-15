@@ -5,7 +5,8 @@ package_upgrade: true
 packages:
   - curl
   - qemu-guest-agent
-hostname: ${hostname}
+hostname: {{ node_hostname }}
+preserve_hostname: false
 ssh_pwauth: true
 chpasswd:
   expire: false
