@@ -64,6 +64,7 @@ jobs:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN || '' }}
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID || '' }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY || '' }}
+          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN || '' }}
           AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
           AWS_AVAILABILITY_ZONE: ${{ vars.AWS_AVAILABILITY_ZONE || '' }}
           AWS_INSTANCE_TYPE: ${{ vars.AWS_INSTANCE_TYPE || 't3.large' }}
@@ -84,6 +85,8 @@ jobs:
           echo "HCLOUD_TOKEN=${HCLOUD_TOKEN}" >> $GITHUB_ENV
           echo "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}" >> $GITHUB_ENV
           echo "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}" >> $GITHUB_ENV
+          echo "AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN}" >> $GITHUB_ENV
+
           echo "AWS_REGION=${AWS_REGION}" >> $GITHUB_ENV
           echo "AWS_AVAILABILITY_ZONE=${AWS_AVAILABILITY_ZONE}" >> $GITHUB_ENV
           echo "AWS_INSTANCE_TYPE=${AWS_INSTANCE_TYPE}" >> $GITHUB_ENV

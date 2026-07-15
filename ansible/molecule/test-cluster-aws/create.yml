@@ -6,7 +6,7 @@
     num_master_nodes: 3
     num_worker_nodes: 3
     public_key: "{{ lookup('file', 'keys/vm_node.pub') }}"
-    aws_region: "{{ lookup('env', 'AWS_REGION') | default('us-east-1', true) }}"
+    aws_region: "{{ lookup('env', 'AWS_REGION') | default('us-west-2', true) }}"
     aws_availability_zone: "{{ lookup('env', 'AWS_AVAILABILITY_ZONE') | default(aws_region ~ 'a', true) }}"
     aws_instance_type: "{{ lookup('env', 'AWS_INSTANCE_TYPE') | default('t3.large', true) }}"
     vpc_cidr: "10.1.0.0/16"
