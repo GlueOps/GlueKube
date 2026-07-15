@@ -5,6 +5,7 @@ package_upgrade: true
 packages:
   - curl
   - qemu-guest-agent
+hostname: ${hostname}
 ssh_pwauth: true
 chpasswd:
   expire: false
@@ -12,7 +13,7 @@ users:
   - name: cluster
     groups: sudo
     ssh_authorized_keys:
-      - "{{ public_key }}"
+      - ${public_key}
     sudo: ALL=(ALL) NOPASSWD:ALL
     shell: /bin/bash
 write_files:
@@ -21,7 +22,9 @@ write_files:
       net.bridge.bridge-nf-call-ip6tables  = 1
       net.ipv4.ip_forward                  = 1
     path: /etc/sysctl.d/k8s.conf
+mounts:
+  - [ swap, null ]
 runcmd:
   - sudo sysctl --system
   - sudo systemctl enable --now qemu-guest-agent
-  - sudo systemctl disable --now unattended-upgrades.service apt-daily.timer apt-daily-upgrade.timer apt-daily.service apt      
+  - sudo systemctl disable --now unattended-upgrades.service apt-daily.timer apt-daily-upgrade.timer apt-daily.service apt
