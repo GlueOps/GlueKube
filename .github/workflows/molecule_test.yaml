@@ -50,7 +50,7 @@ jobs:
         env:
           KUBERNETES_VERSION: 'v1.34.5'
           KUBERNETES_PACKAGE_VERSION: '1.34.5-1.1'
-          domain_name: 'gluekube.qa-glueops.com'
+          DOMAIN_NAME: 'gluekube.qa-glueops.com'
           LOADBALANCER_APISERVER: 'ctrp.gluekube.qa-glueops.com'
           CALICO_CHART_VERSION: 'v3.31.4'
           CALICO_TIGERA_OPERATOR_VERSION: 'v1.40.7'
@@ -72,6 +72,7 @@ jobs:
         run: |
           echo "kubernetes_version=${KUBERNETES_VERSION}" >> $GITHUB_ENV
           echo "kubernetes_package_version=${KUBERNETES_PACKAGE_VERSION}" >> $GITHUB_ENV
+          echo "domain_name=${DOMAIN_NAME}" >> $GITHUB_ENV
           echo "loadbalancer_apiserver=${LOADBALANCER_APISERVER}" >> $GITHUB_ENV
           echo "calico_chart_version=${CALICO_CHART_VERSION}" >> $GITHUB_ENV
           echo "calico_tigera_operator_version=${CALICO_TIGERA_OPERATOR_VERSION}" >> $GITHUB_ENV
