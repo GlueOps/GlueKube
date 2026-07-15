@@ -11,6 +11,7 @@
     aws_instance_type: "{{ lookup('env', 'AWS_INSTANCE_TYPE') | default('t3.large', true) }}"
     vpc_cidr: "10.1.0.0/16"
     subnet_cidr: "10.1.0.0/24"
+    domain_name: gluekube.qa-glueops.com
 
   tasks:
     - name: Create VPC
