@@ -9,26 +9,69 @@ installation:
     - cidr: {{ calico_network_calico_cidr }} # this should be in podSubnet range
       encapsulation: VXLAN
 
+  # Prefer the platform node for calico-kube-controllers, but stay schedulable anywhere.
+  # Scoped to this deployment rather than controlPlaneTolerations, which would also cover
+  # typha and calico-apiserver.
+  # calico-node is deliberately untouched -- it is a DaemonSet and must cover every node.
+  calicoKubeControllersDeployment:
+    spec:
+      template:
+        spec:
+          # Affinity must be "preferred": taint-nodes.yaml runs after this role, so
+          # glueops.dev/role exists on no node yet at install time. A hard nodeSelector
+          # or requiredDuringScheduling would deadlock the bootstrap.
+          affinity:
+            nodeAffinity:
+              preferredDuringSchedulingIgnoredDuringExecution:
+              - weight: 100
+                preference:
+                  matchExpressions:
+                  - key: glueops.dev/role
+                    operator: In
+                    values:
+                    - glueops-platform
+          # Replaces the operator's defaults for this deployment, so the control-plane
+          # entries must be restated -- dropping them strands the pod at bootstrap, when
+          # masters[0] is the only node. The glueops entry is permission to land on the
+          # platform node; the affinity above is what biases it there.
+          tolerations:
+          - key: node-role.kubernetes.io/master
+            effect: NoSchedule
+          - key: node-role.kubernetes.io/control-plane
+            effect: NoSchedule
+          - key: glueops.dev/role
+            operator: Equal
+            value: glueops-platform
+            effect: NoSchedule
+
 apiServer:
   enabled: true
 
 # Resource requests and limits for the tigera/operator pod.
 resources: {}
 
+affinity:
+  nodeAffinity:
+    # "preferred" means: Try your best to put it here, but don't fail if you can't.
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 100 # A higher weight (1-100) tells the scheduler to prioritize this rule
+      preference:
+        matchExpressions:
+        - key: "glueops.dev/role"
+          operator: In
+          values:
+          - "glueops-platform"
+
 # Tolerations for the tigera/operator pod.
+# Calico is installed before nodes are tainted/labelled and before workers join, so at
+# install time the only node is masters[0] with node-role.kubernetes.io/control-plane:NoSchedule
+# (and not-ready:NoSchedule, since the CNI isn't up yet). These must stay permissive; the
+# nodeAffinity above expresses the glueops-platform preference.
 tolerations:
 - effect: NoExecute
   operator: Exists
 - effect: NoSchedule
   operator: Exists
-- key: "glueops.dev/role"
-  operator: "Equal"
-  value: "glueops-platform"
-  effect: "NoSchedule" 
-
-# NodeSelector for the tigera/operator pod.
-nodeSelector:
-  kubernetes.io/os: linux
 
 # Custom annotations for the tigera/operator pod.
 podAnnotations: {}
