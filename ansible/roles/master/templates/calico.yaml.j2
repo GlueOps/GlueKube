@@ -15,18 +15,27 @@ apiServer:
 # Resource requests and limits for the tigera/operator pod.
 resources: {}
 
-# Tolerations for the tigera/operator pod.
+affinity:
+  nodeAffinity:
+    # "preferred" means: Try your best to put it here, but don't fail if you can't.
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 100 # A higher weight (1-100) tells the scheduler to prioritize this rule
+      preference:
+        matchExpressions:
+        - key: "glueops.dev/role"
+          operator: In
+          values:
+          - "glueops-platform"
+
 tolerations:
-- effect: NoExecute
-  operator: Exists
+# We must keep this so the pod is allowed to land on the GlueOps node if it's available
 - key: "glueops.dev/role"
   operator: "Equal"
   value: "glueops-platform"
-  effect: "NoSchedule" 
-
-# NodeSelector for the tigera/operator pod.
-nodeSelector:
-  glueops.dev/role: glueops-platform
+  effect: "NoSchedule"
+# Optional: Keep your NoExecute eviction protection if desired
+- effect: NoExecute
+  operator: Exists
 
 # Custom annotations for the tigera/operator pod.
 podAnnotations: {}
