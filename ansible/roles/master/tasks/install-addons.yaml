@@ -9,10 +9,24 @@
   tags: install_local-path-provisioner
 
 # install metrics server
-- name: Install metrics server
-  ansible.builtin.shell: |
-    export KUBECONFIG=/etc/kubernetes/admin.conf
-    kubectl apply -f https://raw.githubusercontent.com/techiescamp/kubeadm-scripts/main/manifests/metrics-server.yaml
-  args:
-    creates: /opt/kubernetes/calico_installed
+
+- name: Create metrics-server file
+  ansible.builtin.template:
+    src: metrics-server-values.yaml.j2
+    dest: /opt/kubernetes/metrics-server-values.yaml
+    mode: "0644"
+  tags: install_metrics-server
+
+
+- name: Deploy metrics-server with Helm
+  kubernetes.core.helm:
+    name: metrics-server
+    chart_ref: metrics-server
+    chart_version: 3.13.1
+    chart_repo_url: https://kubernetes-sigs.github.io/metrics-server
+    release_namespace: kube-system
+    create_namespace: false
+    values_files:
+      - /opt/kubernetes/metrics-server-values.yaml
+    kubeconfig: /etc/kubernetes/admin.conf
   tags: install_metrics-server

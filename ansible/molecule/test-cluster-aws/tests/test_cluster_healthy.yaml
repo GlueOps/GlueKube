@@ -1,0 +1,55 @@
+---
+- name: Verify Kubernetes Nodes Status
+  hosts: masters[0]
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Get Kubernetes Nodes Status
+      ansible.builtin.shell: |
+        export KUBECONFIG=/etc/kubernetes/admin.conf
+        kubectl get nodes --no-headers
+      register: kube_nodes
+      changed_when: false
+
+    - name: Debug Node Status Output
+      ansible.builtin.debug:
+        msg: "{{ kube_nodes.stdout_lines }}"
+
+    - name: Show Nodes Events
+      ansible.builtin.shell: |
+        export KUBECONFIG=/etc/kubernetes/admin.conf
+        kubectl get events --all-namespaces --sort-by='.metadata.creationTimestamp' | tail -n 20
+      register: kube_events
+      ignore_errors: true
+
+    - name: Debug Nodes Events
+      ansible.builtin.debug:
+        msg: "{{ kube_events.stdout_lines }}"
+        
+
+    - name: Fail if any node is not Ready
+      ansible.builtin.fail:
+        msg: "One or more Kubernetes nodes are NOT in Ready state!"
+      when: "' Ready ' not in item"
+      loop: "{{ kube_nodes.stdout_lines }}"
+
+    - name: Wait for all pods to reach Running or Completed
+      ansible.builtin.shell: |
+        export KUBECONFIG=/etc/kubernetes/admin.conf
+        kubectl get pods -A --no-headers
+      register: kube_pods
+      changed_when: false
+      retries: 30
+      delay: 10
+      until: kube_pods.stdout_lines | reject('search', ' (Running|Completed) ') | list | length == 0
+      ignore_errors: true
+
+    - name: Debug Pod Status Output
+      ansible.builtin.debug:
+        msg: "{{ kube_pods.stdout_lines }}"
+
+    - name: Fail if any pod is not Running or Completed
+      ansible.builtin.fail:
+        msg: "Pod is not healthy: {{ item }}"
+      when: item is not search(' (Running|Completed) ')
+      loop: "{{ kube_pods.stdout_lines }}"

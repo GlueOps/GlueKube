@@ -19,8 +19,6 @@ resources: {}
 tolerations:
 - effect: NoExecute
   operator: Exists
-- effect: NoSchedule
-  operator: Exists
 - key: "glueops.dev/role"
   operator: "Equal"
   value: "glueops-platform"
@@ -28,7 +26,7 @@ tolerations:
 
 # NodeSelector for the tigera/operator pod.
 nodeSelector:
-  kubernetes.io/os: linux
+  glueops.dev/role: glueops-platform
 
 # Custom annotations for the tigera/operator pod.
 podAnnotations: {}

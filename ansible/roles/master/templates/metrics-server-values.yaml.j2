@@ -1,0 +1,7 @@
+nodeSelector:
+  glueops.dev/role: glueops-platform
+tolerations:
+  - effect: NoSchedule
+    key: glueops.dev/role
+    operator: Equal
+    value: glueops-platform
