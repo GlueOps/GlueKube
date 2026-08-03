@@ -8,12 +8,21 @@
   ansible.builtin.import_tasks: compare-node.yaml
   when: inventory_hostname == orchestrator_node
 
-- name: Check if resources are in sync
-  fail:
+- name: Determine if resources are in sync
+  set_fact:
+    resources_in_sync: "{{ hostvars[orchestrator_node]['nodes_to_add'].stdout == '[]' and hostvars[orchestrator_node]['nodes_to_remove'].stdout == '[]' }}"
+  run_once: true
+
+- name: Report that resources are in sync
+  ansible.builtin.debug:
     msg: "All resources are synced"
-  when: hostvars[orchestrator_node]['nodes_to_add'].stdout == "[]" and hostvars[orchestrator_node]['nodes_to_remove'].stdout == "[]"
+  when: resources_in_sync | bool
   run_once: true
   delegate_to: localhost
+
+- name: End play successfully when all resources are synced
+  ansible.builtin.meta: end_play
+  when: resources_in_sync | bool
 
 
 - name: Parse nodes to add/remove as lists
