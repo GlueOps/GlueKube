@@ -6,14 +6,21 @@
   run_once: true
   delegate_to: "{{ groups['masters'][0] }}"
 
-- name: Check if resources are in sync
-  fail:
+- name: Determine if resources are in sync
+  set_fact:
+    resources_in_sync: "{{ hostvars[groups['masters'][0]]['nodes_to_add'].stdout == '[]' and hostvars[groups['masters'][0]]['nodes_to_remove'].stdout == '[]' }}"
+  run_once: true
+
+- name: Report that resources are in sync
+  ansible.builtin.debug:
     msg: "All resources are synced - nothing to do"
-  when: 
-    - hostvars[groups['masters'][0]]['nodes_to_add'].stdout == "[]"
-    - hostvars[groups['masters'][0]]['nodes_to_remove'].stdout == "[]"
+  when: resources_in_sync | bool
   run_once: true
   delegate_to: localhost
+
+- name: End play successfully when all resources are synced
+  ansible.builtin.meta: end_play
+  when: resources_in_sync | bool
 
 - name: Confirm we have enough masters for rotation
   fail:
