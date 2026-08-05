@@ -223,23 +223,7 @@ Now to run the syncing process, use the following command:
 
 `ansible-playbook  -i inventory/hosts.yaml playbooks/sync-resources.yaml`
 
-you will prompted with following message:
-
-```txt
-ok: [master-node-1] => {
-    "msg": [
-        "Nodes to remove: '[]'.",
-        "Nodes to add '['worker-node-3']'."
-    ]
-}
-
-TASK [master : pause] ****************************************************************************************************************************************************************************************************************************************
-[master : pause]
-Do you want to apply the above changes? (Y/n):
-
-```
-
-after you accept changes the kubernetes cluster will scale up/down depends on your desired state, also it will **update the loadbalancer haproxyconfig** file to the desired workloads
+The cluster will scale up/down depends on your desired state, also it will **update the loadbalancer haproxyconfig** file to the desired workloads
 
 to verify, run :
 

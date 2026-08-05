@@ -24,9 +24,20 @@
   with_items: "{{ groups['workers'] + groups['masters'] }}"
 
 - name: Write current nodes list
-  ansible.builtin.shell: |
-    export KUBECONFIG=/etc/kubernetes/admin.conf
-    kubectl get nodes -o json | jq -r '.items[] | select(.metadata.labels["kubernetes.io/hostname"]) | .metadata.name' | sort > /opt/kubernetes/current_nodes_list
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      export KUBECONFIG=/etc/kubernetes/admin.conf
+      kubectl get nodes -o json | jq -r '.items[].metadata.name' | sort \
+        > /opt/kubernetes/current_nodes_list
+    executable: /bin/bash
+  changed_when: false
+
+- name: Refuse to diff against an empty cluster
+  ansible.builtin.assert:
+    that: lookup('file', '/opt/kubernetes/current_nodes_list') | trim | length > 0
+    fail_msg: >-
+      kubectl returned no nodes - refusing to compute a node diff.
 
 - name: Copy Compare python script
   ansible.builtin.copy:

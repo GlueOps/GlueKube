@@ -29,10 +29,6 @@ rotate-master-nodes: .env
 label-taint-nodes: .env
 	export $(grep -v '^#' .env | xargs);\
 	ansible-playbook -i ansible/inventory/hosts.yaml ansible/playbooks/setup-cluster.yaml --tags label_nodes
-rotate-certs: .env
-	echo "Rotating certificates for GlueKube..."
-	export $(grep -v '^#' .env | xargs);\
-	ansible-playbook -i ansible/inventory/hosts.yaml ansible/playbooks/rotate-certs.yaml
 rotate-certs-with-config: .env
 	echo "Rotating certs with kubeadm config refresh..."
 	export $(grep -v '^#' .env | xargs);\

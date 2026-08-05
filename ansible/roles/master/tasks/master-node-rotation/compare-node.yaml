@@ -28,27 +28,20 @@
     export KUBECONFIG=/etc/kubernetes/admin.conf
     kubectl get nodes -o json | jq -r '.items[] | select(.metadata.labels["kubernetes.io/hostname"]) | .metadata.name' | sort > /opt/kubernetes/current_nodes_list
 
-- name: Copy Compare python script
+- name: Copy Compare-to-Add python script
   ansible.builtin.copy:
     src: "compare-to-add.py"
     dest: "/opt/kubernetes/compare-to-add.py"
     mode: "0644"
 
-
-- name: Copy Compare python script
-  ansible.builtin.copy:
-    src: "compare-to-remove.py"
-    dest: "/opt/kubernetes/compare-to-remove.py"
-    mode: "0644"
-
-- name: Register worker nodes to remove
+- name: Register current master nodes for removal(filter for master nodes will applied alter)
   ansible.builtin.shell: |
     export KUBECONFIG=/etc/kubernetes/admin.conf
     kubectl get nodes -o json | jq -c '[.items[] | select(.metadata.labels["kubernetes.io/hostname"]) | .metadata.name] | sort'
   register: nodes_to_remove
 
 
-- name: Register worker nodes to add
+- name: Register master nodes to replace with above master nodes
   ansible.builtin.command: python3 /opt/kubernetes/compare-to-add.py
   register: nodes_to_add
 

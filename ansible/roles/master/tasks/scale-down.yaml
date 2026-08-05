@@ -29,7 +29,7 @@
       --cacert=/etc/kubernetes/pki/etcd/ca.crt \
       --cert=/etc/kubernetes/pki/etcd/server.crt \
       --key=/etc/kubernetes/pki/etcd/server.key \
-      member list | grep {{ item }} | awk '{print $1}' | tr -d ',' )
+      member list | grep -P '(?<![\w-]){{ item }}(?![\w-])' | awk '{print $1}' | tr -d ',' )
     
     etcdctl  \
       --cacert=/etc/kubernetes/pki/etcd/ca.crt \
@@ -41,3 +41,20 @@
   when: 
     - inventory_hostname == groups['masters'][0] and nodes_to_remove | length > 0
     - item is search("master-node-*")
+  
+
+- name: Reset the removed node
+  ansible.builtin.command: kubeadm reset -f --cleanup-tmp-dir
+  delegate_to: "{{ item }}"
+  loop: "{{ nodes_to_remove }}"
+  failed_when: false      # host may already be destroyed
+  changed_when: true
+
+- name: Stop and disable kubelet on the removed node
+  ansible.builtin.systemd_service:
+    name: kubelet
+    state: stopped
+    enabled: false
+  delegate_to: "{{ item }}"
+  loop: "{{ nodes_to_remove }}"
+  failed_when: false

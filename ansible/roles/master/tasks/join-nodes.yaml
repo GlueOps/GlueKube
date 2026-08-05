@@ -9,7 +9,7 @@
 - name: List of nodes will join the cluster
   ansible.builtin.debug:
     var: inventory_hostname
-  when: inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[groups['masters'][0]]['current_cluster_nodes'].stdout_lines
+  when: inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[groups['masters'][0]]['current_cluster_nodes'].stdout_lines_lines
   tags: join_nodes
 
 - name: Create PKI directory
@@ -17,7 +17,7 @@
     path: /etc/kubernetes/pki/
     state: directory
     mode: '0755'
-  when: inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[groups['masters'][0]]['current_cluster_nodes'].stdout_lines
+  when: inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[groups['masters'][0]]['current_cluster_nodes'].stdout_lines_lines
 
 - name: Generate Authentication Configuration
   ansible.builtin.template:
@@ -27,7 +27,7 @@
     group: root
     mode: "0644"
   tags: join_nodes
-  when: inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[groups['masters'][0]]['current_cluster_nodes'].stdout_lines
+  when: inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[groups['masters'][0]]['current_cluster_nodes'].stdout_lines_lines
 
 
 - name: Join the control-node to the Kubernetes cluster
@@ -35,7 +35,7 @@
   args:
     creates: /opt/kubernetes/join_command.sh
   tags: join_worker
-  when: inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[groups['masters'][0]]['current_cluster_nodes'].stdout_lines
+  when: inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[groups['masters'][0]]['current_cluster_nodes'].stdout_lines_lines
 
 
 # create a directory for the kubeconfig file
@@ -48,4 +48,4 @@
     mode: "0644"
   tags: kubeconfig_setup
   when: 
-    - inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[groups['masters'][0]]['current_cluster_nodes'].stdout_lines
+    - inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[groups['masters'][0]]['current_cluster_nodes'].stdout_lines_lines
