@@ -50,22 +50,15 @@
     mode: "0755"
 
 - name: Add Docker's official GPG key
-  ansible.builtin.apt_key:
+  ansible.builtin.get_url:
     url: https://download.docker.com/linux/ubuntu/gpg
-    keyring: /etc/apt/keyrings/docker.gpg
-    state: present
+    dest: /tmp/docker.asc
+    mode: '0644'
 
-- name: Print architecture variables
-  ansible.builtin.debug:
-    msg: "Architecture: {{ ansible_architecture }}, Codename: {{ ansible_lsb.codename }}"
-
-- name: Add Docker repository
-  ansible.builtin.apt_repository:
-    repo: >-
-      deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg]
-      https://download.docker.com/linux/ubuntu {{ ansible_lsb.codename }} stable
-    filename: docker
-    state: present
+- name: Convert Docker GPG key to keyring format
+  ansible.builtin.shell:
+    cmd: gpg --dearmor -o /etc/apt/keyrings/docker.gpg < /tmp/docker.asc && chmod a+r /etc/apt/keyrings/docker.gpg
+    creates: /etc/apt/keyrings/docker.gpg
 
 - name: Install containerd
   ansible.builtin.apt:
@@ -107,19 +100,15 @@
 - name: Generate containerd default configuration
   ansible.builtin.command: containerd config default
   register: containerd_config
+  changed_when: false          # reading defaults changes nothing
 
-- name: Save containerd config
+
+- name: Write containerd config with SystemdCgroup enabled
   ansible.builtin.copy:
-    content: "{{ containerd_config.stdout }}"
+    content: "{{ containerd_config.stdout | regex_replace('SystemdCgroup = false', 'SystemdCgroup = true') }}"
     dest: /etc/containerd/config.toml
-    mode: "0755"
-
-- name: Enable SystemdCgroup in containerd configuration
-  ansible.builtin.lineinfile:
-    path: /etc/containerd/config.toml
-    regexp: '^(\s*)SystemdCgroup\s*=\s*false'
-    line: '\1SystemdCgroup = true'
-    backrefs: true
+    mode: "0644"
+  notify: Restart containerd
 
 - name: Reload systemd and enable containerd
   ansible.builtin.systemd:

@@ -40,8 +40,35 @@
   ansible.builtin.shell: |
     export KUBECONFIG=/etc/kubernetes/admin.conf
     kubectl -n tigera-operator wait --for=condition=Ready pods --all --timeout=30s
+
   register: tigera_operator_ready
   until: tigera_operator_ready.rc == 0
   retries: 20
   delay: 30
+  tags: install_calico
+
+
+# the operator being up only means it can start reconciling, the CNI is not usable before
+# calico-node runs on every node, so wait for the daemonset the operator creates
+- name: Wait for the tigera operator to create the calico-node daemonset
+  ansible.builtin.shell: |
+    export KUBECONFIG=/etc/kubernetes/admin.conf
+    kubectl -n calico-system get daemonset calico-node
+  register: calico_node_daemonset
+  until: calico_node_daemonset.rc == 0
+  retries: 30
+  delay: 10
+  changed_when: false
+  tags: install_calico
+
+
+- name: Wait for calico-node to be ready on all nodes
+  ansible.builtin.shell: |
+    export KUBECONFIG=/etc/kubernetes/admin.conf
+    kubectl -n calico-system rollout status daemonset/calico-node --timeout=180s
+  register: calico_node_ready
+  until: calico_node_ready.rc == 0
+  retries: 5
+  delay: 10
+  changed_when: false
   tags: install_calico

@@ -120,7 +120,7 @@ create a file `.env` and add  the following secrets:
 
 `RANDOM_TOKEN`: the format of token must be like the following: abcdef.abcdef0123456789
 
-`CERTIFICATE_KEY`: The certificate key is a hex encoded string that is an AES key of size 32 bytes. you can use [https://www.electricneutron.com/encryption-key-generator/] and choose AES 256 bit(HEX).
+`CERTIFICATE_KEY`: The certificate key is a hex encoded string that is an AES key of size 32 bytes(AES 256 bit(HEX).
 
 then to allow ansible noticing the .env file, we need to export it like the following: `export $(grep -v '^#' .env | xargs)`
 
@@ -252,3 +252,16 @@ first you need to change the `kubernetes_version` and `kubernetes_package_versio
 
 to patch os with the security patches run :
 `ansible-playbook  -i inventory/hosts.yaml playbooks/os-patch.yaml`
+
+
+## Migrate local-path-provisioner to Helm
+
+local-path-provisioner is now installed with its Helm chart. clusters that were provisioned before
+that change still carry the resources created with `kubectl apply`, and Helm refuses to take them
+over, so run once per cluster:
+
+`ansible-playbook  -i inventory/hosts.yaml playbooks/migrate-local-path-provisioner.yaml`
+
+the playbook keeps the `local-path` storage class in place and recreates the provisioner itself with
+Helm. existing volumes and their data are not touched, only the provisioning of new volumes pauses
+for a few seconds. it is safe to re-run and it does nothing on clusters that are already migrated.

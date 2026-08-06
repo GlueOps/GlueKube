@@ -1,0 +1,19 @@
+- name: Create local-path-provisioner values file
+  ansible.builtin.template:
+    src: local-path-provisioner-values.yaml.j2
+    dest: /opt/kubernetes/local-path-provisioner-values.yaml
+    mode: "0644"
+  tags: install_local-path-provisioner
+
+- name: Deploy local-path-provisioner with Helm
+  kubernetes.core.helm:
+    name: local-path-provisioner
+    chart_ref: local-path-provisioner
+    chart_version: 0.0.30
+    chart_repo_url: https://charts.containeroo.ch
+    release_namespace: local-path-storage
+    create_namespace: true
+    values_files:
+      - /opt/kubernetes/local-path-provisioner-values.yaml
+    kubeconfig: /etc/kubernetes/admin.conf
+  tags: install_local-path-provisioner

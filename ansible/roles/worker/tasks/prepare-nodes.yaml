@@ -107,19 +107,14 @@
 - name: Generate containerd default configuration
   ansible.builtin.command: containerd config default
   register: containerd_config
+  changed_when: false          # reading defaults changes nothing
 
-- name: Save the join command to a file
+- name: Write containerd config with SystemdCgroup enabled
   ansible.builtin.copy:
-    content: "{{ containerd_config.stdout }}"
+    content: "{{ containerd_config.stdout | regex_replace('SystemdCgroup = false', 'SystemdCgroup = true') }}"
     dest: /etc/containerd/config.toml
-    mode: "0755"
-
-- name: Enable SystemdCgroup in containerd configuration
-  ansible.builtin.lineinfile:
-    path: /etc/containerd/config.toml
-    regexp: '^(\s*)SystemdCgroup\s*=\s*false'
-    line: '\1SystemdCgroup = true'
-    backrefs: true
+    mode: "0644"
+  notify: Restart containerd
 
 - name: Reload systemd and enable containerd
   ansible.builtin.systemd:

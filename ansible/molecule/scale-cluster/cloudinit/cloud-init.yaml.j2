@@ -5,9 +5,7 @@ package_upgrade: true
 packages:
   - curl
   - qemu-guest-agent
-ssh_pwauth: true
-chpasswd:
-  expire: false
+ssh_pwauth: false
 users:
   - name: cluster
     groups: sudo

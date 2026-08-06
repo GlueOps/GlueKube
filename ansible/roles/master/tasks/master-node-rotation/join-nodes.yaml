@@ -25,8 +25,6 @@
 
 - name: Join the control-node to the Kubernetes cluster
   ansible.builtin.command: kubeadm join --config /opt/kubeadm_join.yaml
-  args:
-    creates: /opt/kubernetes/join_command.sh
   tags: join_nodes
 
 - name: Generate Kubeadm configuration

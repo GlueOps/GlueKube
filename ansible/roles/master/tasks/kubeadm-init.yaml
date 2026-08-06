@@ -33,8 +33,6 @@
 # run kubernetes init command on master node #1
 - name: Initialize Kubernetes cluster
   ansible.builtin.command: "kubeadm init --config {{ kubeadm_config_file }} --upload-certs "
-  args:
-    creates: /opt/kubernetes/init_command
   when: kube_apiserver_manifest.stat.exists == false
   tags: init_kubeadm
 

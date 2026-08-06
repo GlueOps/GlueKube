@@ -32,8 +32,6 @@
 
 - name: Join the control-node to the Kubernetes cluster
   ansible.builtin.command: kubeadm join --config /opt/kubeadm_join.yaml 
-  args:
-    creates: /opt/kubernetes/join_command.sh
   tags: join_worker
   when: inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[groups['masters'][0]]['current_cluster_nodes'].stdout_lines_lines
 

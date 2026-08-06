@@ -1,0 +1,22 @@
+nodeSelector:
+  glueops.dev/role: glueops-platform
+tolerations:
+  - effect: NoSchedule
+    key: glueops.dev/role
+    operator: Equal
+    value: glueops-platform
+
+image:
+  repository: dockerhub.repo.gpkg.io/rancher/local-path-provisioner
+  tag: v0.0.30
+
+helperImage:
+  repository: dockerhub.repo.gpkg.io/busybox
+  tag: latest
+
+storageClass:
+  create: true
+  defaultClass: true
+  name: local-path
+  # keep the provisioner name used by the previous manifest based install
+  provisionerName: rancher.io/local-path

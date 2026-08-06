@@ -1,0 +1,88 @@
+---
+# One-off migration for clusters where local-path-provisioner was installed with
+# `kubectl apply -f .../deploy/local-path-storage.yaml` instead of the Helm chart.
+# Safe to re-run: it detects what is already in place and skips what is done.
+- name: Migrate local-path-provisioner to the Helm chart
+  hosts: masters[0]
+  become: true
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  tasks:
+    - name: Look up the current local-path-provisioner deployment
+      ansible.builtin.command:
+        cmd: >-
+          kubectl -n local-path-storage get deployment local-path-provisioner
+          -o jsonpath={.metadata.annotations.meta\.helm\.sh/release-name}
+      register: lpp_deployment
+      changed_when: false
+      failed_when: false
+
+    - name: Determine if a manifest based install is present
+      ansible.builtin.set_fact:
+        lpp_legacy_install: "{{ lpp_deployment.rc == 0 and lpp_deployment.stdout | trim == '' }}"
+
+    - name: Report the detected state
+      ansible.builtin.debug:
+        msg: >-
+          {{
+            'Manifest based install found, migrating it to Helm'
+            if lpp_legacy_install | bool
+            else (
+              'No local-path-provisioner deployment found, installing the Helm release'
+              if lpp_deployment.rc != 0
+              else 'Deployment is already managed by Helm, nothing to migrate'
+            )
+          }}
+
+    # the Helm release schedules the provisioner on the platform nodepool, so bail out early
+    # instead of deleting a working deployment that nothing can replace
+    - name: Get the nodes of the platform nodepool
+      ansible.builtin.command:
+        cmd: kubectl get nodes -l glueops.dev/role=glueops-platform -o name
+      register: lpp_platform_nodes
+      changed_when: false
+      when: lpp_legacy_install | bool
+
+    - name: Fail when no node belongs to the platform nodepool
+      ansible.builtin.fail:
+        msg: >-
+          No node carries the label glueops.dev/role=glueops-platform. Label the platform nodes
+          first (roles/master/tasks/taint-nodes.yaml), otherwise the local-path-provisioner pod
+          stays pending and no new volume can be provisioned.
+      when: lpp_legacy_install | bool and lpp_platform_nodes.stdout | trim == ''
+
+    # the storage class is adopted instead of recreated: its immutable fields already match the
+    # chart, and deleting it would leave the cluster without a default storage class
+    - name: Hand the local-path storage class over to Helm
+      ansible.builtin.shell: |
+        set -e
+        if kubectl get storageclass local-path >/dev/null 2>&1; then
+          kubectl annotate --overwrite storageclass/local-path \
+            meta.helm.sh/release-name=local-path-provisioner \
+            meta.helm.sh/release-namespace=local-path-storage
+          kubectl label --overwrite storageclass/local-path \
+            app.kubernetes.io/managed-by=Helm
+        fi
+      when: lpp_legacy_install | bool
+
+    # the deployment cannot be adopted: spec.selector is immutable and the chart uses different
+    # labels, so Helm has to create it from scratch. the rest is recreated by the chart under
+    # its own names.
+    - name: Remove the manifest based resources
+      ansible.builtin.shell: |
+        set -e
+        kubectl -n local-path-storage delete --ignore-not-found \
+          deployment/local-path-provisioner \
+          configmap/local-path-config \
+          serviceaccount/local-path-provisioner-service-account \
+          role/local-path-provisioner-role \
+          rolebinding/local-path-provisioner-bind
+        kubectl delete --ignore-not-found \
+          clusterrole/local-path-provisioner-role \
+          clusterrolebinding/local-path-provisioner-bind
+      when: lpp_legacy_install | bool
+
+    - name: Install local-path-provisioner with Helm
+      ansible.builtin.include_role:
+        name: master
+        tasks_from: install-local-path-provisioner.yaml
