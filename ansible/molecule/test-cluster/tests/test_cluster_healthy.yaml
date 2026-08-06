@@ -32,3 +32,28 @@
         msg: "One or more Kubernetes nodes are NOT in Ready state!"
       when: "' Ready ' not in item"
       loop: "{{ kube_nodes.stdout_lines }}"
+
+
+    - name: Get node names
+      ansible.builtin.shell: |
+        export KUBECONFIG=/etc/kubernetes/admin.conf
+        kubectl get nodes --no-headers -o custom-columns=':metadata.name'
+      register: nodes
+      changed_when: false
+
+    - name: Every inventory node is present and Ready
+      ansible.builtin.assert:
+        that:
+          - nodes.stdout_lines | sort == (groups['masters'] + groups['workers']) | sort
+        fail_msg: >-
+          Expected {{ (groups['masters'] + groups['workers']) | sort }},
+          got {{ nodes.stdout_lines | sort }}
+
+    - name: etcd membership matches the control-plane count
+      ansible.builtin.shell: |
+        ETCDCTL_API=3 etcdctl member list --cacert=... --cert=... --key=... -w json | jq '.members | length'
+      register: etcd_members
+      changed_when: false
+
+    - ansible.builtin.assert:
+        that: etcd_members.stdout | int == groups['masters'] | length
