@@ -11,7 +11,12 @@ for system level, you need to do:
 
 - install ansible
 - pip install jmespath
-- install the below ansible collections
+- install the ansible collections, pinned in `ansible/requirements.yml` (CI installs from the
+  same file, so keep the two in step):
+
+```bash
+ansible-galaxy collection install -r ansible/requirements.yml
+```
 
 ansible.netcommon                        7.1.0
 ansible.posix                            2.0.0
@@ -121,6 +126,38 @@ create a file `.env` and add  the following secrets:
 `RANDOM_TOKEN`: the format of token must be like the following: abcdef.abcdef0123456789
 
 `CERTIFICATE_KEY`: The certificate key is a hex encoded string that is an AES key of size 32 bytes(AES 256 bit(HEX).
+
+generate both locally — never with an online generator. the certificate key decrypts the
+`kubeadm-certs` Secret, which holds the cluster CA private key, so anything that sees it owns the
+cluster:
+
+```bash
+    kubeadm token generate                 # RANDOM_TOKEN
+    kubeadm certs certificate-key          # CERTIFICATE_KEY
+```
+
+if you do not have `kubeadm` on your workstation, `openssl rand -hex 32` produces an equivalent
+certificate key.
+
+the `.env` also has to supply every variable `inventory/group_vars/` reads from the environment.
+these have no default and no other producer — an unset one becomes an empty string and surfaces
+much later as a broken cluster rather than an error:
+
+```bash
+export kubernetes_version=v1.34.5
+export kubernetes_package_version=1.34.5-1.1
+export loadbalancer_apiserver=ctrp.example.com   # the apiserver DNS record
+export domain_name=example.com                   # kube-api.$domain_name goes in the certSANs,
+                                                 # and the dex issuer is built from it
+export network_service_cidr=192.168.0.0/16       # service_subnet
+export calico_network_calico_cidr=172.16.0.0/16  # calico pod CIDR
+export calico_nodeAddressAutodetectionV4=        # e.g. cidrs=10.0.0.0/8; leave empty for
+                                                 # calico's firstFound, which picks the public
+                                                 # interface on most cloud images
+
+export AUTOGLUE_BASE_URL= AUTOGLUE_ORG_KEY= AUTOGLUE_ORG_SECRET=
+export AUTOGLUE_ORG_ID= AUTOGLUE_RECORD_ID= AUTOGLUE_CLUSTER_ID=empty
+```
 
 then to allow ansible noticing the .env file, we need to export it like the following: `export $(grep -v '^#' .env | xargs)`
 
@@ -236,7 +273,7 @@ to verify, run :
 
 ## Rotate Certs
 
-`ansible-playbook  -i inventory/hosts.yaml playbooks/rotate-certs.yaml`
+`ansible-playbook  -i inventory/hosts.yaml playbooks/rotate-certs-with-config.yaml`
 
 
 ## Upgrade Version
@@ -247,12 +284,24 @@ first you need to change the `kubernetes_version` and `kubernetes_package_versio
 
 `ansible-playbook  -i inventory/hosts.yaml playbooks/upgrade-cluster.yaml`
 
+## Etcd metrics
 
-## OS Security Patch
+etcd exposes a metrics/health-only listener on **port 2381** over plain HTTP. it serves `/metrics`
+and `/health` and nothing else — no key data and no write path — so Prometheus can scrape it without
+holding an etcd client certificate.
 
-to patch os with the security patches run :
-`ansible-playbook  -i inventory/hosts.yaml playbooks/os-patch.yaml`
+that port is **unauthenticated**, so it must not be reachable from outside the cluster. it binds to
+`0.0.0.0` because kubeadm's `ClusterConfiguration` is replayed verbatim on every control-plane node
+and cannot carry a per-node bind address. if your control-plane nodes have public IPs, block 2381
+at the cloud firewall or host firewall. the molecule scenarios already do this in their `create.yml`.
 
+existing clusters pick the listener up the next time the etcd static pod manifest is regenerated,
+i.e. on the next `upgrade-cluster.yaml` run.
+
+until the kube-prometheus-stack serviceMonitor in glueops-core is repointed from
+`https://<node>:2379` to `http://<node>:2381`, the cluster still publishes an `etcd-client-certs`
+secret into the monitoring namespace. see the header of
+`ansible/roles/master/tasks/create-etcd-secret.yaml` for the removal steps.
 
 ## Migrate local-path-provisioner to Helm
 

@@ -12,6 +12,7 @@
       --write-out=json
   delegate_to: "{{ execution_host }}"
   register: etcd_health
+  changed_when: false
   retries: 5
   delay: 10
   until: >

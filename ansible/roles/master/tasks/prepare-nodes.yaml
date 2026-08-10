@@ -1,32 +1,60 @@
 ---
 - name: Disable swap immediately
-  command: swapoff -a
+  ansible.builtin.command: swapoff -a
+  changed_when: false
+  when: ansible_swaptotal_mb | int > 0
 
-  
-- name: Load required kernel modules
+# swapoff only lasts until the next boot. kubelet has failSwapOn true by default and
+# kubeadm-stacked-config.yaml.j2 does not override it, so a node that reboots with swap back
+# on from fstab comes up NotReady and stays there until someone re-runs the playbook.
+- name: Disable swap permanently in fstab
+  ansible.builtin.replace:
+    path: /etc/fstab
+    regexp: '^(\s*[^#\s]\S*\s+\S+\s+swap\s+.*)$'
+    replace: '# \1'
+
+# persistent: present writes /etc/modules-load.d/ so the modules survive a reboot. This has
+# to stay ahead of the sysctl task below: with br_netfilter unloaded the net.bridge.* keys do
+# not exist, and systemd-sysctl fails to apply them at boot in a way that looks like a CNI bug.
+- name: Load required kernel modules persistently
   community.general.modprobe:
-    name: overlay
+    name: "{{ item }}"
     state: present
+    persistent: present
+  loop:
+    - overlay
+    - br_netfilter
 
-- name: Load required kernel modules
-  community.general.modprobe:
-    name: br_netfilter
-    state: present
-
-- name: Apply sysctl settings
+- name: Apply Kubernetes sysctl settings
   ansible.posix.sysctl:
-    name: net.bridge.bridge-nf-call-iptables
-    value: 1
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/99-kubernetes.conf
+    sysctl_set: true
+    reload: true
+  loop:
+    - { name: net.bridge.bridge-nf-call-iptables, value: "1" }
+    - { name: net.bridge.bridge-nf-call-ip6tables, value: "1" }
+    # only ends up set today as a side effect of installing docker-ce
+    - { name: net.ipv4.ip_forward, value: "1" }
+    - { name: vm.swappiness, value: "0" }
 
-- name: Disable swap
+# these used to be written to /etc/sysctl.conf. drop them there so the values are not defined
+# in two files with no ordering guarantee between them.
+- name: Remove the superseded sysctl entries from /etc/sysctl.conf
   ansible.posix.sysctl:
-    name: vm.swappiness
-    value: 0
+    name: "{{ item }}"
+    sysctl_file: /etc/sysctl.conf
+    state: absent
+    reload: false
+  loop:
+    - net.bridge.bridge-nf-call-iptables
+    - vm.swappiness
 
 - name: Update apt package cache
   ansible.builtin.apt:
-    update_cache: yes
-    cache_valid_time: 0 # Update cache if older than 1 hour (in seconds)
+    update_cache: true
+    cache_valid_time: 3600 # skip the update if the cache is younger than 1 hour
 
 - name: Upgrade all installed packages
   ansible.builtin.apt:
@@ -59,6 +87,14 @@
   ansible.builtin.shell:
     cmd: gpg --dearmor -o /etc/apt/keyrings/docker.gpg < /tmp/docker.asc && chmod a+r /etc/apt/keyrings/docker.gpg
     creates: /etc/apt/keyrings/docker.gpg
+
+- name: Add Docker repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg]
+      https://download.docker.com/linux/ubuntu {{ ansible_lsb.codename }} stable
+    filename: docker
+    state: present
 
 - name: Install containerd
   ansible.builtin.apt:
@@ -114,7 +150,12 @@
   ansible.builtin.systemd:
     name: containerd
     enabled: true
-    state: restarted
+    state: started
+
+# handlers run at the end of the play, but kubeadm init/join happen earlier in this
+# same play and need the SystemdCgroup config already live, so flush here
+- name: Apply the pending containerd restart before kubeadm runs
+  ansible.builtin.meta: flush_handlers
 
 - name: Copy Kubernetes GPG key
   ansible.builtin.copy:
@@ -125,9 +166,11 @@
 
 - name: Convert Kubernetes GPG key to keyring format
   ansible.builtin.shell: |
-    cat /tmp/kubernetes-release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+    set -euo pipefail
+    gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg < /tmp/kubernetes-release.key
     chmod a+r /etc/apt/keyrings/kubernetes-apt-keyring.gpg
   args:
+    executable: /bin/bash
     creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
   tags: kubernetes_component
   
@@ -150,9 +193,11 @@
 
 - name: Convert Helm GPG key to keyring format
   ansible.builtin.shell: |
-    cat /tmp/helm-gpg.key | gpg --dearmor -o /etc/apt/keyrings/helm-apt-keyring.gpg
+    set -euo pipefail
+    gpg --dearmor -o /etc/apt/keyrings/helm-apt-keyring.gpg < /tmp/helm-gpg.key
     chmod a+r /etc/apt/keyrings/helm-apt-keyring.gpg
   args:
+    executable: /bin/bash
     creates: /etc/apt/keyrings/helm-apt-keyring.gpg
 
 - name: Add Helm repository via Nexus
@@ -173,6 +218,18 @@
     allow_downgrade: true
   tags: kubernetes_component_kubeadm
 
+# Held immediately after the pinned install, not only in the upgrade path. Without this,
+# the dist-upgrade above bumps kubelet to the newest version in the repo and the pinned
+# install downgrades it back -- two package swaps per run on a live node -- and
+# unattended-upgrades can move kubelet underneath the cluster between runs. apt honours
+# dpkg holds, so the hold is what actually stops both. The installs above set
+# allow_change_held_packages, so a deliberate version change still applies.
+- name: Hold kubeadm at the pinned version
+  ansible.builtin.dpkg_selections:
+    name: kubeadm
+    selection: hold
+  tags: kubernetes_component_kubeadm
+
 - name: Update package list and install kube components
   ansible.builtin.apt:
     name:
@@ -182,22 +239,23 @@
     allow_unauthenticated: true
     allow_change_held_packages: true
     allow_downgrade: true
+  notify: Restart kubelet
   tags: kubernetes_component_kubelet
 
+- name: Hold kubelet and kubectl at the pinned version
+  ansible.builtin.dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop:
+    - kubelet
+    - kubectl
+  tags: kubernetes_component_kubelet
 
 - name: Enable kubelet
   ansible.builtin.systemd_service:
     name: kubelet
     enabled: true
     state: started
-    daemon_reload: true
-  tags: kubernetes_component_kubelet
-
-- name: Restart kubelet
-  ansible.builtin.systemd_service:
-    name: kubelet
-    enabled: true
-    state: restarted
     daemon_reload: true
   tags: kubernetes_component_kubelet
 
@@ -213,18 +271,17 @@
   ansible.builtin.unarchive:
     src: /tmp/helm-v3.18.6-linux-amd64.tar.gz
     dest: /tmp/
-    remote_src: yes
+    remote_src: true
 
-- name: Move Helm binary to /usr/local/bin
-  ansible.builtin.command:
-    cmd: mv /tmp/linux-amd64/helm /usr/bin/helm
-  args:
-    creates: /usr/local/bin/helm
-
-- name: Ensure Helm binary is executable
-  ansible.builtin.file:
-    path: /usr/bin/helm
-    mode: '0755'
+# This used to be `mv` guarded by `creates: /usr/local/bin/helm`, a path nothing ever writes --
+# the binary goes to /usr/bin/helm -- so the guard never fired and the task ran on every pass.
+# copy compares checksums, so a converged node reports no change and no sentinel is needed.
+- name: Install the Helm binary
+  ansible.builtin.copy:
+    src: /tmp/linux-amd64/helm
+    dest: /usr/bin/helm
+    remote_src: true
+    mode: "0755"
 
 - name: Verify Helm installation
   ansible.builtin.command: helm version
@@ -242,6 +299,7 @@
   ansible.builtin.get_url:
     url: https://github.com/derailed/k9s/releases/download/v0.32.7/k9s_linux_amd64.deb
     dest: /tmp/k9s.deb
+    mode: "0644"
   tags: install_k9s
 
 - name: Install k9s
@@ -257,3 +315,9 @@
     name: etcd-client
     state: present
   tags: install_etcd
+
+# A kubelet restart notified by the package install above would otherwise sit until the end of
+# the play, i.e. after kubeadm init/join have already run against it. Flush here so it lands
+# before the cluster is built. On a converged node nothing is pending and this is a no-op.
+- name: Apply any pending kubelet restart before kubeadm runs
+  ansible.builtin.meta: flush_handlers

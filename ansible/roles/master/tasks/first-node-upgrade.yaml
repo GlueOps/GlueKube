@@ -3,6 +3,7 @@
     export KUBECONFIG=/etc/kubernetes/admin.conf
     kubeadm upgrade plan --allow-release-candidate-upgrades > /opt/kubernetes/upgrade_plan.txt
   register: upgrade_plan
+  changed_when: false
   tags: upgrade
 
 # fetch the upgrade plan
@@ -10,7 +11,7 @@
   ansible.builtin.fetch:
     src: /opt/kubernetes/upgrade_plan.txt
     dest: /tmp/upgrade_plan.txt
-    flat: yes
+    flat: true
   tags: upgrade
 
 # debug

@@ -51,9 +51,15 @@
 
     - name: etcd membership matches the control-plane count
       ansible.builtin.shell: |
-        ETCDCTL_API=3 etcdctl member list --cacert=... --cert=... --key=... -w json | jq '.members | length'
+        ETCDCTL_API=3 etcdctl member list --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+          --cert=/etc/kubernetes/pki/etcd/server.crt \
+          --key=/etc/kubernetes/pki/etcd/server.key -w json | jq '.members | length'
       register: etcd_members
       changed_when: false
 
-    - ansible.builtin.assert:
+    - name: Etcd membership matches the number of masters in the inventory
+      ansible.builtin.assert:
         that: etcd_members.stdout | int == groups['masters'] | length
+        fail_msg: >-
+          Expected {{ groups['masters'] | length }} etcd members,
+          found {{ etcd_members.stdout }}

@@ -29,13 +29,14 @@
       set -euo pipefail
       export KUBECONFIG=/etc/kubernetes/admin.conf
       kubectl get nodes -o json | jq -r '.items[].metadata.name' | sort \
-        > /opt/kubernetes/current_nodes_list
+        | tee /opt/kubernetes/current_nodes_list
     executable: /bin/bash
+  register: current_nodes_list
   changed_when: false
 
 - name: Refuse to diff against an empty cluster
   ansible.builtin.assert:
-    that: lookup('file', '/opt/kubernetes/current_nodes_list') | trim | length > 0
+    that: current_nodes_list.stdout_lines | length > 0
     fail_msg: >-
       kubectl returned no nodes - refusing to compute a node diff.
 
@@ -55,11 +56,13 @@
 - name: Register worker nodes to remove
   ansible.builtin.command: python3 /opt/kubernetes/compare-to-remove.py
   register: nodes_to_remove
+  changed_when: false
 
 
 - name: Register worker nodes to add
   ansible.builtin.command: python3 /opt/kubernetes/compare-to-add.py
   register: nodes_to_add
+  changed_when: false
 
 # debug
 - name: List of nodes changes

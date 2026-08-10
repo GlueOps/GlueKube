@@ -1,13 +1,13 @@
 - name: Print Kubeadm join node command
   ansible.builtin.command: kubeadm token create --print-join-command --ttl 10m
-  when: inventory_hostname == groups['masters'][0]
+  when: inventory_hostname == orchestrator_node
   register: join_command
   tags: create_join_command
 
 
 - name: Get Join Token
   ansible.builtin.command: kubeadm token create --ttl 10m
-  when: inventory_hostname == groups['masters'][0]
+  when: inventory_hostname == orchestrator_node
   register: join_token
   tags: create_join_command
 

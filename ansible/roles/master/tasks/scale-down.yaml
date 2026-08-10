@@ -24,37 +24,31 @@
 
 - name: Remove etcd members only if it's control plane node
   ansible.builtin.shell: |
+    set -o pipefail
     export ETCDCTL_API=3
     ETCD_MEMBER_ID=$(etcdctl \
       --cacert=/etc/kubernetes/pki/etcd/ca.crt \
       --cert=/etc/kubernetes/pki/etcd/server.crt \
       --key=/etc/kubernetes/pki/etcd/server.key \
       member list | grep -P '(?<![\w-]){{ item }}(?![\w-])' | awk '{print $1}' | tr -d ',' )
-    
+
+    # the grep misses when the member is already gone. without this guard the removal below
+    # runs as `member remove` with no argument and fails on a usage error instead of being a
+    # no-op. remove-single-master.yaml guards the same case with `when: stdout | length > 0`.
+    if [ -z "$ETCD_MEMBER_ID" ]; then
+      echo "no etcd member matching {{ item }} - nothing to remove"
+      exit 0
+    fi
+
     etcdctl  \
       --cacert=/etc/kubernetes/pki/etcd/ca.crt \
       --cert=/etc/kubernetes/pki/etcd/server.crt \
       --key=/etc/kubernetes/pki/etcd/server.key \
       member remove $ETCD_MEMBER_ID
-
+  args:
+    executable: /bin/bash
   with_items: "{{ nodes_to_remove | default([]) }}"
   when: 
-    - inventory_hostname == groups['masters'][0] and nodes_to_remove | length > 0
+    - inventory_hostname == orchestrator_node and nodes_to_remove | length > 0
     - item is search("master-node-*")
   
-
-- name: Reset the removed node
-  ansible.builtin.command: kubeadm reset -f --cleanup-tmp-dir
-  delegate_to: "{{ item }}"
-  loop: "{{ nodes_to_remove }}"
-  failed_when: false      # host may already be destroyed
-  changed_when: true
-
-- name: Stop and disable kubelet on the removed node
-  ansible.builtin.systemd_service:
-    name: kubelet
-    state: stopped
-    enabled: false
-  delegate_to: "{{ item }}"
-  loop: "{{ nodes_to_remove }}"
-  failed_when: false

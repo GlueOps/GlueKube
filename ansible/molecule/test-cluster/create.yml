@@ -24,22 +24,38 @@
         type: cloud
       register: subnet
 
+    # The test nodes carry a public IPv4 and a Hetzner firewall only filters that public
+    # interface. Everything the cluster itself needs -- etcd, the apiserver behind the ctrp
+    # record, kubelet -- travels over test-molecule-network, so the only traffic that has to
+    # reach a node from outside is SSH from whatever is running molecule.
+    #
+    # Node-to-node still needs the public interface open: calico autodetects with firstFound
+    # and lands on eth0 here, so VXLAN would break if the nodes could not reach each other.
+    # Their addresses do not exist yet -- the firewall has to be created before the servers
+    # that attach to it -- so that rule is added in "Restrict the firewall ..." below, once
+    # master_nodes and worker_nodes are registered.
+    - name: Discover the public address molecule connects from
+      ansible.builtin.uri:
+        url: https://api.ipify.org?format=json
+        return_content: true
+      register: controller_public_ip
+      when: lookup('env', 'MOLECULE_SSH_SOURCE_CIDRS') | length == 0
+
+    - name: Set the CIDRs allowed to SSH into the test nodes
+      ansible.builtin.set_fact:
+        ssh_source_cidrs: >-
+          {{ lookup('env', 'MOLECULE_SSH_SOURCE_CIDRS') | split(',') | map('trim') | select | list
+             if lookup('env', 'MOLECULE_SSH_SOURCE_CIDRS') | length > 0
+             else [controller_public_ip.json.ip ~ '/32'] }}
+
     - name: Create Firewall
       hetzner.hcloud.firewall:
         name: my-firewall
         rules:
           - direction: in
             protocol: tcp
-            port: "1-65535"
-            source_ips:
-              - "0.0.0.0/0"
-              - "::/0"
-          - direction: in
-            protocol: udp
-            port: "1-65535"
-            source_ips:
-              - "0.0.0.0/0"
-              - "::/0"
+            port: "22"
+            source_ips: "{{ ssh_source_cidrs }}"
         api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
       register: firewall
 
@@ -78,6 +94,32 @@
       loop: "{{ range(0, num_worker_nodes) | list }}"
       register: worker_nodes
 
+    # Now that the nodes exist, replace the bootstrap ruleset: SSH stays scoped to the
+    # controller, and the nodes are allowed to talk to each other over their public
+    # addresses. Nothing else on the internet can reach the cluster.
+    - name: Restrict the firewall to SSH and node-to-node traffic
+      hetzner.hcloud.firewall:
+        name: my-firewall
+        rules:
+          - direction: in
+            protocol: tcp
+            port: "22"
+            source_ips: "{{ ssh_source_cidrs }}"
+          - direction: in
+            protocol: tcp
+            port: "1-65535"
+            source_ips: "{{ node_source_cidrs }}"
+          - direction: in
+            protocol: udp
+            port: "1-65535"
+            source_ips: "{{ node_source_cidrs }}"
+        api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
+      vars:
+        node_source_cidrs: >-
+          {{ (master_nodes.results + worker_nodes.results)
+             | map(attribute='hcloud_server.ipv4_address')
+             | map('regex_replace', '$', '/32') | list }}
+
     - name: Store default inventory
       ansible.builtin.copy:
         content: |
@@ -104,8 +146,7 @@
                       ansible_user: cluster
                       ansible_ssh_private_key_file: keys/vm_node
                       extra:
-                        taints:
-                          - node-role.kubernetes.io/control-plane:NoSchedule-
+                        taints: []
                   {% endfor +%}
         dest: "./inventory/hosts.yaml"
         mode: "0644"

@@ -1,0 +1,46 @@
+---
+# Copy to hosts.yaml and fill in. hosts.yaml is gitignored on purpose: a real inventory
+# carries private IPs, SSH usernames and private key paths.
+#
+# If you created the VMs with the terraform in ../../terraform, hosts.yaml is generated
+# for you and you do not need this file.
+#
+#   ansible all -i inventory/hosts.yaml -m ping
+#
+# `ansible_host` is the address ansible connects to. `ip` is the address the cluster itself
+# uses -- etcd peers, the kubeadm join endpoint and the ctrp DNS record are all built from
+# it, so it must be the private/internal address, not the public one.
+
+all:
+  children:
+    loadbalancer:
+      hosts:
+        lb-node-1:
+          ansible_host: PUBLIC_IP
+          ansible_user: haproxyadmin
+          ip: PRIVATE_IP
+          ansible_ssh_private_key_file: ../keys/lb_node
+
+    masters:
+      hosts:
+        # the number of control-plane nodes must be odd
+        master-node-1:
+          ansible_host: PUBLIC_IP
+          ansible_user: cluster
+          ip: PRIVATE_IP
+          ansible_ssh_private_key_file: ../keys/master_node
+          extra:
+            taints:
+              # trailing "-" removes the taint, i.e. makes the master schedulable
+              - node-role.kubernetes.io/control-plane:NoSchedule-
+
+    workers:
+      hosts:
+        worker-node-1:
+          ansible_host: PUBLIC_IP
+          ansible_user: cluster
+          ip: PRIVATE_IP
+          ansible_ssh_private_key_file: ../keys/worker_node
+          extra:
+            taints:
+              - glueops.dev/role=glueops-platform:NoSchedule

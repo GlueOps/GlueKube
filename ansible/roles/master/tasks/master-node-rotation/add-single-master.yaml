@@ -21,7 +21,7 @@
 
     - name: Reupload certs on orchestrator
       ansible.builtin.include_tasks: reupload-certs.yaml
-  delegate_to: "{{ execution_host | default(groups['masters'][0]) }}"
+  delegate_to: "{{ execution_host | default(orchestrator_node) }}"
 
 - name: Join new node to cluster
   block:
@@ -35,11 +35,12 @@
   ansible.builtin.shell: |
     export KUBECONFIG=/etc/kubernetes/admin.conf
     kubectl wait --for=condition=Ready node/{{ node_to_add }} --timeout=120s
-  delegate_to: "{{ execution_host | default(groups['masters'][0]) }}"
+  delegate_to: "{{ execution_host | default(orchestrator_node) }}"
   register: node_ready
   retries: 5
   delay: 10
   until: node_ready.rc == 0
+  changed_when: false
 
 - name: "Successfully added master node: {{ node_to_add }}"
   debug:

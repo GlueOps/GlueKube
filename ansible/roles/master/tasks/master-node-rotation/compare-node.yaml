@@ -25,8 +25,12 @@
 
 - name: Write current nodes list
   ansible.builtin.shell: |
+    set -euo pipefail
     export KUBECONFIG=/etc/kubernetes/admin.conf
     kubectl get nodes -o json | jq -r '.items[] | select(.metadata.labels["kubernetes.io/hostname"]) | .metadata.name' | sort > /opt/kubernetes/current_nodes_list
+  args:
+    executable: /bin/bash
+  changed_when: false
 
 - name: Copy Compare-to-Add python script
   ansible.builtin.copy:
@@ -36,14 +40,19 @@
 
 - name: Register current master nodes for removal(filter for master nodes will applied alter)
   ansible.builtin.shell: |
+    set -euo pipefail
     export KUBECONFIG=/etc/kubernetes/admin.conf
     kubectl get nodes -o json | jq -c '[.items[] | select(.metadata.labels["kubernetes.io/hostname"]) | .metadata.name] | sort'
+  args:
+    executable: /bin/bash
   register: nodes_to_remove
+  changed_when: false
 
 
 - name: Register master nodes to replace with above master nodes
   ansible.builtin.command: python3 /opt/kubernetes/compare-to-add.py
   register: nodes_to_add
+  changed_when: false
 
 # debug
 - name: List of nodes changes

@@ -45,6 +45,7 @@
   until: tigera_operator_ready.rc == 0
   retries: 20
   delay: 30
+  changed_when: false
   tags: install_calico
 
 

@@ -1,11 +1,16 @@
 ---
+- name: Select the orchestrator node
+  ansible.builtin.import_tasks: select-orchestrator.yaml
+  vars:
+    orchestrator_in_play_required: true
+
 - name: Prepare node
   ansible.builtin.import_tasks: prepare-nodes.yaml
   tags: prepare-nodes
 
 - name: Init kubeadm
   ansible.builtin.import_tasks: kubeadm-init.yaml
-  when: inventory_hostname == groups['masters'][0]
+  when: inventory_hostname == orchestrator_node
   tags: init_kubeadm
 
 - name: Copy join command
@@ -17,15 +22,15 @@
 
 - name: Install addons
   ansible.builtin.import_tasks: install-addons.yaml
-  when: inventory_hostname == groups['masters'][0]
+  when: inventory_hostname == orchestrator_node
   tags: install_addons
 
 - name: Install calico CNI
   ansible.builtin.import_tasks: install-calico.yaml
-  when: inventory_hostname == groups['masters'][0] and cni_type == "calico"
+  when: inventory_hostname == orchestrator_node and cni_type == "calico"
   tags: install_calico
 
 - name: Create Etcd Secret
   ansible.builtin.import_tasks: create-etcd-secret.yaml
-  when: inventory_hostname == groups['masters'][0]
+  when: inventory_hostname == orchestrator_node
   tags: create_etcd_secret

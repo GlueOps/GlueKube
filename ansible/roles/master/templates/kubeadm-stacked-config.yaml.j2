@@ -78,6 +78,18 @@ etcd:
         value: "33554432"   # 32MB to allow larger object sizes
       - name: "auto-compaction-retention"
         value: "1h"         # Prevent database bloat
+      # Metrics/health-only listener for Prometheus. This port serves /metrics and /health and
+      # nothing else -- no key data, no write path -- and needs no client certificate, which is
+      # what lets monitoring stop holding an etcd client credential altogether (see the note in
+      # create-etcd-secret.yaml).
+      #
+      # The bind address has to be 0.0.0.0. ClusterConfiguration is cluster-wide: kubeadm uploads
+      # it to the kubeadm-config ConfigMap and replays it verbatim on every member, so a per-node
+      # private IP cannot be expressed here. 2381 is unauthenticated and must therefore be blocked
+      # from outside the cluster at the network layer -- the molecule scenarios do this in their
+      # create.yml, and any public-IP deployment needs the equivalent.
+      - name: "listen-metrics-urls"
+        value: "http://0.0.0.0:2381"
     serverCertSANs: 
     {% for ip in etcd_initial_cluster %}
       - {{ ip }}

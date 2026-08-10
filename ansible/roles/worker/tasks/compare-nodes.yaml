@@ -18,16 +18,21 @@
   lineinfile:
     path: "/opt/kubernetes/new_worker_list"
     line: "{{ item }}"
-    create: yes
+    create: true
     state: present
     mode: "0644"
   with_items: "{{ groups['workers'] }}"
 
 - name: Write new worker node list
   ansible.builtin.shell: |
+    set -euo pipefail
     export KUBECONFIG=/etc/kubernetes/admin.conf
     kubectl get nodes -o json | jq -r '.items[] | select(.metadata.labels["kubernetes.io/hostname"] | startswith("worker-")) | .metadata.name' | sort > /opt/kubernetes/current_worker_list
+  args:
+    executable: /bin/bash
+  changed_when: false
 
 - name: Compare worker node list
   ansible.builtin.shell: python3 diff.py
   register: worker_nodes_to_add
+  changed_when: false

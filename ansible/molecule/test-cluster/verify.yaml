@@ -1,22 +1,6 @@
 ---
-- name: Verify Kubernetes Nodes Status
-  hosts: masters[0]
-  become: true
-  gather_facts: true
-  tasks:
-    - name: Get Kubernetes Nodes Status
-      ansible.builtin.shell: |
-        export KUBECONFIG=/etc/kubernetes/admin.conf
-        kubectl get nodes --no-headers
-      register: kube_nodes
-      changed_when: false
-
-    - name: Debug Node Status Output
-      ansible.builtin.debug:
-        msg: "{{ kube_nodes.stdout_lines }}"
-
-    - name: Fail if any node is not Ready
-      ansible.builtin.fail:
-        msg: "One or more Kubernetes nodes are NOT in Ready state!"
-      when: "' Ready ' not in item"
-      loop: "{{ kube_nodes.stdout_lines }}"
+# One definition of "healthy" per scenario. This used to be a weaker copy of the file below
+# -- it only checked that every node kubectl happened to list was Ready, which passes just as
+# happily on a half-built cluster (#462) -- and it was not in the test_sequence at all.
+- name: Verify the cluster reached its expected state
+  ansible.builtin.import_playbook: tests/test_cluster_healthy.yaml

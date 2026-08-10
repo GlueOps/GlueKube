@@ -19,7 +19,12 @@ scenario:
     - create
     - side_effect tests/test_nodes_pingable.yaml
     - converge
+    # a second converge must report zero changed tasks -- this is the regression guard for
+    # the convergence work in epic D (#439). It is only on this scenario: scale-cluster and
+    # rotate-master-nodes interleave side effects, so a re-converge there means something else.
+    - idempotence
     - side_effect tests/test_cluster_healthy.yaml
+    - verify
     - destroy
 
 verifier:

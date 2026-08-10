@@ -6,9 +6,11 @@
 
 - name: Convert Kubernetes GPG key to keyring format
   ansible.builtin.shell: |
-    cat /tmp/kubernetes-release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+    set -euo pipefail
+    gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg < /tmp/kubernetes-release.key
     chmod a+r /etc/apt/keyrings/kubernetes-apt-keyring.gpg
   args:
+    executable: /bin/bash
     creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
   
   

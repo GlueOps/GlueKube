@@ -39,12 +39,34 @@ terraform.rc
 **/keys/**
 kubeconfig
 config.yaml
-scale-down-worker.yaml
-scale-up-worker.yaml
 hosts.old.yaml
-scale-down-ctrp.yaml
-scale-up-ctrp.yaml
-rotate-master-nodes.yaml
 hosts.ini
 .kube
 .env
+
+# ansible.cfg sends every task result here, including the join token, the certificate key and
+# the AutoGlue org secret. #433 (no_log + file modes) was closed as won't-do, so this file will
+# keep containing credentials -- and this repo is public. Never commit it, never upload it as a
+# CI artifact, never attach it to a support bundle.
+/ansible/ansible.log
+
+# operator inventory: contains private IPs, SSH users and key paths.
+# ship ansible/inventory/hosts.yaml.example instead, or generate it with terraform.
+/ansible/inventory/hosts.yaml
+
+# NOTE: /ansible/molecule/*/inventory/hosts.yaml is deliberately NOT listed here, even though
+# create.yml overwrites it with the live public IPs, SSH users and key paths of the test VMs.
+# Molecule resolves inventory.links.hosts before running anything and aborts with
+# "The source path ... does not exist" if the target is missing, so the empty placeholders have
+# to stay tracked. After a molecule run those files are dirty and contain real infrastructure
+# data -- `git checkout` them before committing, and never `git add -A` blind.
+
+# inventories molecule generates at create time. anchored to the scenario inventory
+# directories on purpose -- as bare filenames, "rotate-master-nodes.yaml" also matches
+# the playbook and the task file of the same name.
+/ansible/molecule/*/inventory/scale-down-worker.yaml
+/ansible/molecule/*/inventory/scale-up-worker.yaml
+/ansible/molecule/*/inventory/scale-down-ctrp.yaml
+/ansible/molecule/*/inventory/scale-up-ctrp.yaml
+/ansible/molecule/*/inventory/rotate-master-nodes.yaml
+/ansible/molecule/*/inventory/second-rotate-master-nodes.yaml

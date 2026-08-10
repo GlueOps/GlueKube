@@ -1,0 +1,79 @@
+# ansible-lint BASELINE -- generated with `ansible-lint --generate-ignore` when linting was
+# first wired into CI (#460). It records the violations that already existed so the gate could
+# be switched on immediately instead of after a ~150-finding cleanup.
+#
+# This file is expected to SHRINK. Never add a line by hand: if a new violation appears, fix it.
+# Entries are per file + rule, so a second violation of an already-listed rule in an
+# already-listed file is silenced too -- that is the cost of the baseline. Rules in the
+# `syntax-check` family cannot be ignored at all.
+#
+# Regenerate only when deliberately re-baselining, from the repo root:
+#   ANSIBLE_ROLES_PATH=$PWD/ansible/roles ansible-lint --generate-ignore ansible/playbooks ansible/roles
+ansible/playbooks/check-network-connectivity.yaml fqcn[action-core]
+ansible/playbooks/migrate-local-path-provisioner.yaml no-changed-when
+ansible/playbooks/setup-cluster.yaml jinja[spacing]
+ansible/playbooks/setup-cluster.yaml name[play]
+ansible/playbooks/setup-cluster.yaml var-naming[no-role-prefix]
+ansible/playbooks/upgrade-cluster.yaml name[template]
+ansible/roles/common/handlers/main.yml fqcn[action-core]
+ansible/roles/master/tasks/apply-calico-firewall.yaml command-instead-of-shell
+ansible/roles/master/tasks/apply-calico-firewall.yaml jinja[spacing]
+ansible/roles/master/tasks/apply-calico-firewall.yaml no-changed-when
+ansible/roles/master/tasks/apply-calico-firewall.yaml var-naming[no-role-prefix]
+ansible/roles/master/tasks/compare-node.yaml var-naming[no-role-prefix]
+ansible/roles/master/tasks/copy-join-command.yaml no-changed-when
+ansible/roles/master/tasks/copy-join-command.yaml var-naming[no-role-prefix]
+ansible/roles/master/tasks/create-etcd-secret.yaml no-changed-when
+ansible/roles/master/tasks/create-etcd-secret.yaml var-naming[no-role-prefix]
+ansible/roles/master/tasks/first-node-upgrade.yaml name[casing]
+ansible/roles/master/tasks/first-node-upgrade.yaml no-changed-when
+ansible/roles/master/tasks/first-node-upgrade.yaml var-naming[no-role-prefix]
+ansible/roles/master/tasks/install-calico.yaml var-naming[no-role-prefix]
+ansible/roles/master/tasks/join-nodes.yaml no-changed-when
+ansible/roles/master/tasks/join-nodes.yaml var-naming[no-role-prefix]
+ansible/roles/master/tasks/kubeadm-init.yaml literal-compare
+ansible/roles/master/tasks/kubeadm-init.yaml no-changed-when
+ansible/roles/master/tasks/kubeadm-init.yaml var-naming[no-role-prefix]
+ansible/roles/master/tasks/master-node-rotation/add-single-master.yaml fqcn[action-core]
+ansible/roles/master/tasks/master-node-rotation/add-single-master.yaml key-order[task]
+ansible/roles/master/tasks/master-node-rotation/add-single-master.yaml var-naming[no-role-prefix]
+ansible/roles/master/tasks/master-node-rotation/check-etcd-health.yaml fqcn[action-core]
+ansible/roles/master/tasks/master-node-rotation/check-etcd-health.yaml var-naming[no-role-prefix]
+ansible/roles/master/tasks/master-node-rotation/compare-node.yaml var-naming[no-role-prefix]
+ansible/roles/master/tasks/master-node-rotation/copy-join-command.yaml no-changed-when
+ansible/roles/master/tasks/master-node-rotation/copy-join-command.yaml var-naming[no-role-prefix]
+ansible/roles/master/tasks/master-node-rotation/join-nodes.yaml no-changed-when
+ansible/roles/master/tasks/master-node-rotation/remove-single-master.yaml fqcn[action-core]
+ansible/roles/master/tasks/master-node-rotation/remove-single-master.yaml no-changed-when
+ansible/roles/master/tasks/master-node-rotation/remove-single-master.yaml var-naming[no-role-prefix]
+ansible/roles/master/tasks/master-node-rotation/rotate-nodes.yaml fqcn[action-core]
+ansible/roles/master/tasks/master-node-rotation/rotate-nodes.yaml var-naming[no-role-prefix]
+ansible/roles/master/tasks/master-node-rotation/rotate-single-node.yaml fqcn[action-core]
+ansible/roles/master/tasks/master-node-rotation/rotate-single-node.yaml name[template]
+ansible/roles/master/tasks/master-node-rotation/update-dns-records.yaml fqcn[action-core]
+ansible/roles/master/tasks/master-node-rotation/update-dns-records.yaml var-naming[no-role-prefix]
+ansible/roles/master/tasks/prepare-nodes.yaml var-naming[no-role-prefix]
+ansible/roles/master/tasks/reset-nodes.yaml command-instead-of-shell
+ansible/roles/master/tasks/reset-nodes.yaml no-changed-when
+ansible/roles/master/tasks/reupload-certs.yaml no-changed-when
+ansible/roles/master/tasks/rotate-certs-with-config.yaml no-changed-when
+ansible/roles/master/tasks/rotate-certs-with-config.yaml var-naming[no-role-prefix]
+ansible/roles/master/tasks/rotate-master-nodes.yaml fqcn[action-core]
+ansible/roles/master/tasks/rotate-master-nodes.yaml var-naming[no-role-prefix]
+ansible/roles/master/tasks/scale-down.yaml no-changed-when
+ansible/roles/master/tasks/select-orchestrator.yaml var-naming[no-role-prefix]
+ansible/roles/master/tasks/sync.yaml fqcn[action-core]
+ansible/roles/master/tasks/sync.yaml var-naming[no-role-prefix]
+ansible/roles/master/tasks/taint-nodes.yaml name[casing]
+ansible/roles/master/tasks/taint-nodes.yaml no-changed-when
+ansible/roles/master/tasks/upgrade.yaml no-changed-when
+ansible/roles/worker/tasks/compare-nodes.yaml command-instead-of-shell
+ansible/roles/worker/tasks/compare-nodes.yaml fqcn[action-core]
+ansible/roles/worker/tasks/copy-join-command.yaml no-changed-when
+ansible/roles/worker/tasks/copy-join-command.yaml var-naming[no-role-prefix]
+ansible/roles/worker/tasks/join-nodes.yaml no-changed-when
+ansible/roles/worker/tasks/join-nodes.yaml var-naming[no-role-prefix]
+ansible/roles/worker/tasks/main.yaml var-naming[no-role-prefix]
+ansible/roles/worker/tasks/prepare-nodes.yaml var-naming[no-role-prefix]
+ansible/roles/worker/tasks/upgrade.yaml name[casing]
+ansible/roles/worker/tasks/upgrade.yaml no-changed-when

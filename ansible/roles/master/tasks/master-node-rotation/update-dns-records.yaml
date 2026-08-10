@@ -1,16 +1,27 @@
 ---
-- name: Get current cluster master node IPs from kubectl
+- name: Get current cluster master node names and IPs from kubectl
   ansible.builtin.shell:
     cmd: |
+      set -euo pipefail
       export KUBECONFIG=/etc/kubernetes/admin.conf
-      kubectl get nodes -l node-role.kubernetes.io/control-plane -o jsonpath='{.items[*].status.addresses[?(@.type=="InternalIP")].address}'
+      kubectl get nodes -l node-role.kubernetes.io/control-plane -o jsonpath='{range .items[*]}{.metadata.name}={.status.addresses[?(@.type=="InternalIP")].address}{"\n"}{end}'
+    executable: /bin/bash
   register: kubectl_node_ips
+  changed_when: false
   delegate_to: "{{ orchestrator_node }}"
 
-  
+
+# nodes_to_remove holds nodes that are in the cluster but no longer in the inventory, so
+# hostvars[node] does not exist for them. Their IPs are matched by node name against what
+# kubectl reports instead of being looked up in the inventory.
 - name: Build updated master IPs list (add new, exclude old)
   set_fact:
-    updated_master_ips: "{{ (kubectl_node_ips.stdout.split()) | difference(nodes_to_remove | map('extract', hostvars, 'ip') | list) | unique }}"
+    updated_master_ips: >-
+      {{ kubectl_node_ips.stdout_lines
+         | map('split', '=')
+         | rejectattr('0', 'in', nodes_to_remove)
+         | map(attribute='1')
+         | unique | list }}
 
 - name: Update DNS records with master node IPs via AutoGlue API
   ansible.builtin.uri:
@@ -34,7 +45,10 @@
 
 - name: Get authoritative NS servers for domain
   ansible.builtin.shell:
+    # pipefail only: the block handles its own failures with `|| true` and a search loop,
+    # so `set -e` would abort it on the first lookup that finds nothing.
     cmd: |
+      set -o pipefail
       DOMAIN="{{ loadbalancer_apiserver }}"
       
       # Try to find NS records by progressively removing subdomains
@@ -55,6 +69,8 @@
       
       # Fallback: get NS from authority section without +short
       dig NS "$DOMAIN" | awk '/^;; AUTHORITY SECTION:/,/^$/ {if ($4 == "NS") print $5}' | sed 's/\.$//' | sort
+  args:
+    executable: /bin/bash
   register: ns_servers
   changed_when: false
 
@@ -70,7 +86,7 @@
 - name: Verify DNS propagation on at least 2 NS servers
   ansible.builtin.shell:
     cmd: |
-      set -e
+      set -eo pipefail
       EXPECTED_IPS='{{ updated_master_ips | sort | join(" ") }}'
       NS_SERVERS='{{ ns_servers.stdout_lines | join(" ") }}'
       RECORD_NAME="{{ loadbalancer_apiserver }}"
@@ -99,6 +115,8 @@
       
       echo "Only ${SUCCESS_COUNT}/${REQUIRED_SUCCESS} NS servers confirmed propagation"
       exit 1
+  args:
+    executable: /bin/bash
   register: dns_check
   retries: 4
   delay: 60

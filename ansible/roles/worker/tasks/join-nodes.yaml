@@ -6,20 +6,21 @@
     kubectl get nodes --no-headers -o custom-columns=":metadata.name"
   tags: join_worker
   register: current_cluster_nodes
-  when: inventory_hostname == groups['masters'][0]
+  changed_when: false
+  when: inventory_hostname == orchestrator_node
 
 # debug
 - name: List of nodes will join the cluster
   ansible.builtin.debug:
     var: inventory_hostname
-  when: inventory_hostname in groups['workers'] and inventory_hostname not in hostvars[groups['masters'][0]]['current_cluster_nodes'].stdout_lines
+  when: inventory_hostname in groups['workers'] and inventory_hostname not in hostvars[orchestrator_node]['current_cluster_nodes'].stdout_lines
   tags: join_worker
 
 # reset the nodes before joining
 - name: Reset the worker node
   ansible.builtin.command: kubeadm reset -f
   tags: join_worker
-  when: inventory_hostname in groups['workers'] and inventory_hostname not in hostvars[groups['masters'][0]]['current_cluster_nodes'].stdout_lines
+  when: inventory_hostname in groups['workers'] and inventory_hostname not in hostvars[orchestrator_node]['current_cluster_nodes'].stdout_lines
 
 
 - name: Create kubeadm patches directory
@@ -28,7 +29,7 @@
     state: directory
     mode: "0755"
   tags: join_worker
-  when: inventory_hostname in groups['workers'] and inventory_hostname not in hostvars[groups['masters'][0]]['current_cluster_nodes'].stdout_lines
+  when: inventory_hostname in groups['workers'] and inventory_hostname not in hostvars[orchestrator_node]['current_cluster_nodes'].stdout_lines
 
 - name: Render Kubelet configuration patch
   ansible.builtin.template:
@@ -36,9 +37,9 @@
     dest: "/etc/kubernetes/patches/kubeletconfiguration+merge.yaml"
     mode: "0644"
   tags: join_worker
-  when: inventory_hostname in groups['workers'] and inventory_hostname not in hostvars[groups['masters'][0]]['current_cluster_nodes'].stdout_lines
+  when: inventory_hostname in groups['workers'] and inventory_hostname not in hostvars[orchestrator_node]['current_cluster_nodes'].stdout_lines
 
 - name: Join the worker node to the Kubernetes cluster
   ansible.builtin.command: kubeadm join --config /opt/kubeadm_join.yaml
   tags: join_worker
-  when: inventory_hostname in groups['workers'] and inventory_hostname not in hostvars[groups['masters'][0]]['current_cluster_nodes'].stdout_lines
+  when: inventory_hostname in groups['workers'] and inventory_hostname not in hostvars[orchestrator_node]['current_cluster_nodes'].stdout_lines

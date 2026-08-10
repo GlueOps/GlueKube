@@ -22,15 +22,21 @@
 
 # Step 3: Remove etcd member
 - name: Get etcd member ID for {{ node_to_remove }}
+  # deliberately no `set -e`: grep legitimately misses when the member is already gone, and
+  # the next task guards on the captured id being non-empty rather than on this rc.
   ansible.builtin.shell: |
+    set -o pipefail
     export ETCDCTL_API=3
     etcdctl \
       --cacert=/etc/kubernetes/pki/etcd/ca.crt \
       --cert=/etc/kubernetes/pki/etcd/server.crt \
       --key=/etc/kubernetes/pki/etcd/server.key \
       member list | grep -P '(?<![\w-]){{ node_to_remove }}(?![\w-])'  | awk '{print $1}' | tr -d ','
+  args:
+    executable: /bin/bash
   delegate_to: "{{ execution_host }}"
   register: etcd_member_id
+  changed_when: false
   failed_when: false
 
 - name: Remove etcd member {{ node_to_remove }}
@@ -56,17 +62,3 @@
 - name: "Successfully removed master node: {{ node_to_remove }}"
   debug:
     msg: "Node {{ node_to_remove }} has been removed from the cluster"
-
-- name: Reset the removed node
-  ansible.builtin.command: kubeadm reset -f --cleanup-tmp-dir
-  delegate_to: "{{ node_to_remove }}"
-  failed_when: false      # host may already be destroyed
-  changed_when: true
-
-- name: Stop and disable kubelet on the removed node
-  ansible.builtin.systemd_service:
-    name: kubelet
-    state: stopped
-    enabled: false
-  delegate_to: "{{ node_to_remove }}"
-  failed_when: false

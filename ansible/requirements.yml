@@ -1,0 +1,25 @@
+---
+# The collections GlueKube needs, pinned to the versions the readme documents.
+#
+#   ansible-galaxy collection install -r ansible/requirements.yml
+#
+# CI installs from this file too, so the linter, the molecule job and a local
+# workstation cannot drift apart. If you bump a version here, bump readme.md's
+# list in the same commit.
+collections:
+  - name: ansible.netcommon
+    version: "7.1.0"
+  - name: ansible.posix
+    version: "2.0.0"
+  - name: ansible.utils
+    version: "5.1.2"
+  - name: community.crypto
+    version: "2.24.0"
+  - name: community.docker
+    version: "4.3.1"
+  - name: community.general
+    version: "10.3.0"
+  - name: hetzner.hcloud
+    version: "4.2.2"
+  - name: kubernetes.core
+    version: "5.1.0"

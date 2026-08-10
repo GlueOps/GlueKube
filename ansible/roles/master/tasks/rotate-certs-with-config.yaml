@@ -1,3 +1,6 @@
+- name: Select the orchestrator node
+  ansible.builtin.import_tasks: select-orchestrator.yaml
+
 - name: Generate Kubeadm configuration
   ansible.builtin.template:
     src: "kubeadm-stacked-config.yaml.j2"
@@ -31,7 +34,7 @@
 
 - name: Upload kubeadm ClusterConfiguration to kubeadm-config ConfigMap
   ansible.builtin.command: "kubeadm init phase upload-config kubeadm --config {{ kubeadm_config_file }}"
-  when: inventory_hostname == groups['masters'][0]
+  when: inventory_hostname == orchestrator_node
   tags: rotate-certs-with-config
 
 - name: Regenerate API server static pod manifest from kubeadm config
@@ -50,7 +53,11 @@
   tags: rotate-certs-with-config
 
 - name: Wait until old kube-apiserver container is removed
-  ansible.builtin.shell: "ctr -n k8s.io containers list | grep kube-apiserver || true"
+  ansible.builtin.shell: |
+    set -o pipefail
+    ctr -n k8s.io containers list | grep kube-apiserver || true
+  args:
+    executable: /bin/bash
   register: old_apiserver_container
   retries: 18
   delay: 5
@@ -65,7 +72,11 @@
   tags: rotate-certs-with-config
 
 - name: Verify kube-apiserver static pod container is recreated
-  ansible.builtin.shell: "ctr -n k8s.io containers list | grep kube-apiserver || true"
+  ansible.builtin.shell: |
+    set -o pipefail
+    ctr -n k8s.io containers list | grep kube-apiserver || true
+  args:
+    executable: /bin/bash
   register: new_apiserver_container
   retries: 18
   delay: 5

@@ -1,0 +1,65 @@
+---
+# Picks the control-plane node the rest of the run reads its state from.
+#
+# Everything downstream (the node diff, the join token and hash, delegated kubectl calls) is read
+# off a single master. Pinning that to groups['masters'][0] positionally means the tooling stops
+# working whenever that node is down or excluded by --limit, even though the cluster itself is
+# healthy. So probe the masters and take the first one whose apiserver answers /readyz.
+#
+# On a fresh cluster no apiserver is up yet, so nothing answers and this falls back to
+# groups['masters'][0] - the bootstrap behaviour, unchanged.
+#
+# Computed once per run: later plays and serial batches reuse the fact instead of re-probing,
+# so the orchestrator cannot flap mid-operation.
+
+- name: Probe each control-plane node for apiserver readiness
+  ansible.builtin.shell: |
+    export KUBECONFIG=/etc/kubernetes/admin.conf
+    kubectl get --raw='/readyz'
+  delegate_to: "{{ item }}"
+  loop: "{{ groups['masters'] }}"
+  register: control_plane_probe
+  changed_when: false
+  failed_when: false
+  ignore_unreachable: true
+  # read-only, so run it under --check too. without this the probe is skipped during a dry run
+  # and the election silently falls back to groups['masters'][0] instead of the real one.
+  check_mode: false
+  run_once: true
+  when: orchestrator_node is not defined
+  tags: always
+
+- name: Set the orchestrator to the first healthy control-plane node
+  ansible.builtin.set_fact:
+    orchestrator_node: >-
+      {{ control_plane_probe.results
+         | selectattr('rc', 'defined')
+         | selectattr('rc', 'equalto', 0)
+         | map(attribute='item')
+         | list
+         | first
+         | default(groups['masters'][0], true) }}
+  run_once: true
+  when: orchestrator_node is not defined
+  tags: always
+
+- name: Report the selected orchestrator
+  ansible.builtin.debug:
+    msg: "{{ orchestrator_node }} is the orchestrator for this run"
+  run_once: true
+  tags: always
+
+# Callers that read registered state off the orchestrator (the node diff, the join token and hash)
+# need it to be in the play, because that is where those tasks run. They opt in by setting
+# orchestrator_in_play_required, and get one clear message instead of an undefined-variable error
+# several tasks later. Callers that only delegate to it do not need this - delegation reaches hosts
+# outside the play.
+- name: The orchestrator must be part of this run
+  ansible.builtin.assert:
+    that: orchestrator_node in ansible_play_hosts
+    fail_msg: >-
+      {{ orchestrator_node }} is not part of this run, but the node diff and the join token are
+      read from it. Drop the --limit, or widen it to include a healthy control-plane node.
+  when: orchestrator_in_play_required | default(false) | bool
+  run_once: true
+  tags: always

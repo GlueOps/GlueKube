@@ -1,8 +1,7 @@
 ---
 
-- name: Set orchestrator node fact
-  set_fact:
-    orchestrator_node: "{{ groups['masters'][0] }}"
+- name: Select the orchestrator node
+  ansible.builtin.import_tasks: ../select-orchestrator.yaml
 
 - name: Display nodes to add/remove for debugging
   debug:

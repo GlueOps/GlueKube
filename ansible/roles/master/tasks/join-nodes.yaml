@@ -4,12 +4,13 @@
     kubectl get nodes --no-headers -o custom-columns=":metadata.name"
   tags: join_nodes
   register: current_cluster_nodes
-  when: inventory_hostname == groups['masters'][0]
+  changed_when: false
+  when: inventory_hostname == orchestrator_node
 
 - name: List of nodes will join the cluster
   ansible.builtin.debug:
     var: inventory_hostname
-  when: inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[groups['masters'][0]]['current_cluster_nodes'].stdout_lines_lines
+  when: inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[orchestrator_node]['current_cluster_nodes'].stdout_lines
   tags: join_nodes
 
 - name: Create PKI directory
@@ -17,7 +18,7 @@
     path: /etc/kubernetes/pki/
     state: directory
     mode: '0755'
-  when: inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[groups['masters'][0]]['current_cluster_nodes'].stdout_lines_lines
+  when: inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[orchestrator_node]['current_cluster_nodes'].stdout_lines
 
 - name: Generate Authentication Configuration
   ansible.builtin.template:
@@ -27,13 +28,13 @@
     group: root
     mode: "0644"
   tags: join_nodes
-  when: inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[groups['masters'][0]]['current_cluster_nodes'].stdout_lines_lines
+  when: inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[orchestrator_node]['current_cluster_nodes'].stdout_lines
 
 
 - name: Join the control-node to the Kubernetes cluster
   ansible.builtin.command: kubeadm join --config /opt/kubeadm_join.yaml 
   tags: join_worker
-  when: inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[groups['masters'][0]]['current_cluster_nodes'].stdout_lines_lines
+  when: inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[orchestrator_node]['current_cluster_nodes'].stdout_lines
 
 
 # create a directory for the kubeconfig file
@@ -46,4 +47,4 @@
     mode: "0644"
   tags: kubeconfig_setup
   when: 
-    - inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[groups['masters'][0]]['current_cluster_nodes'].stdout_lines_lines
+    - inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[orchestrator_node]['current_cluster_nodes'].stdout_lines
