@@ -97,10 +97,16 @@ zero changed tasks.
 ## DNS lifecycle
 
 `create.yml` creates the AutoGlue DNS domain named by `$domain_name`, then creates the `ctrp` A
-record inside it pointing at the master private IPs. It writes both ids to
-`<scenario>/autoglue-ids.yaml` (gitignored), and `destroy.yml` reads that file and deletes the
-record and then the domain. A `DELETE` that 404s is treated as success, so re-running `destroy`
-is harmless.
+record inside it pointing at the master private IPs:
+
+```
+POST /api/v1/dns/domains                        {credential_id, domain_name, zone_id}
+POST /api/v1/dns/domains/{domain_id}/records    {name: ctrp, ttl, type: A, values: [...]}
+```
+
+It writes both ids to `<scenario>/autoglue-ids.yaml` (gitignored), and `destroy.yml` reads that
+file and deletes the record and then the domain. A `DELETE` that 404s is treated as success, so
+re-running `destroy` is harmless.
 
 Two consequences worth knowing:
 

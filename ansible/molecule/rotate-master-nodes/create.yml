@@ -250,7 +250,7 @@
 
     - name: Create the ctrp A record in the new domain via AutoGlue API
       ansible.builtin.uri:
-        url: "{{ lookup('env', 'AUTOGLUE_BASE_URL') }}/api/v1/dns/records"
+        url: "{{ lookup('env', 'AUTOGLUE_BASE_URL') }}/api/v1/dns/domains/{{ autoglue_domain.json.id }}/records"
         method: POST
         headers:
           accept: application/json
@@ -260,7 +260,6 @@
           x-org-id: "{{ lookup('env', 'AUTOGLUE_ORG_ID') }}"
         body_format: json
         body:
-          domain_id: "{{ autoglue_domain.json.id }}"
           name: ctrp
           ttl: 60
           type: A
