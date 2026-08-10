@@ -26,5 +26,12 @@ autoglue_base_url: "{{ lookup('env', 'AUTOGLUE_BASE_URL') | default('https://aut
 autoglue_org_key: "{{ lookup('env', 'AUTOGLUE_ORG_KEY') }}"
 autoglue_org_secret: "{{ lookup('env', 'AUTOGLUE_ORG_SECRET') }}"
 autoglue_org_id: "{{ lookup('env', 'AUTOGLUE_ORG_ID') }}"
-autoglue_record_id: "{{ lookup('env', 'AUTOGLUE_RECORD_ID') }}"
+# The record create.yml made, read from the file it drops in the scenario directory. Molecule
+# exports MOLECULE_SCENARIO_DIRECTORY to every playbook it runs, so this resolves the same way
+# from converge, from a side_effect and from verify. Falls back to $AUTOGLUE_RECORD_ID for a run
+# whose create step did not make a record.
+autoglue_record_id: >-
+  {{ (lookup('file', lookup('env', 'MOLECULE_SCENARIO_DIRECTORY') ~ '/autoglue-record-id', errors='ignore')
+      | default('', true) | trim)
+     or lookup('env', 'AUTOGLUE_RECORD_ID') }}
 autoglue_cluster_id: "{{ lookup('env', 'AUTOGLUE_CLUSTER_ID') }}"

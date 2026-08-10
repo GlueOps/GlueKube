@@ -222,6 +222,16 @@
         dest: "./autoglue-ids.yaml"
         mode: "0644"
 
+    # The same id again, bare, because inventory/group_vars/masters.yaml reads it with
+    # lookup('file') to give the master role an autoglue_record_id that actually exists.
+    # A plain file rather than parsing the YAML above: lookup('file', errors='ignore') returns
+    # None when the file is missing, and from_yaml would then blow up instead of falling back.
+    - name: Hand the record id to the inventory
+      ansible.builtin.copy:
+        content: "{{ autoglue_record.json.id }}"
+        dest: "./autoglue-record-id"
+        mode: "0644"
+
     - name: wait for 60 seconds to ensure that the nodes are up and running
       ansible.builtin.pause:
         seconds: 60

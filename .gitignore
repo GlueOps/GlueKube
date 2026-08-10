@@ -71,5 +71,7 @@ hosts.ini
 /ansible/molecule/*/inventory/rotate-master-nodes.yaml
 /ansible/molecule/*/inventory/second-rotate-master-nodes.yaml
 
-# ids of the AutoGlue DNS domain and record that create.yml builds, handed to destroy.yml
+# ids of the AutoGlue DNS domain and record that create.yml builds: the yaml one is handed to
+# destroy.yml, the bare one is read by inventory/group_vars/masters.yaml
 /ansible/molecule/*/autoglue-ids.yaml
+/ansible/molecule/*/autoglue-record-id
