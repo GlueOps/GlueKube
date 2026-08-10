@@ -51,6 +51,14 @@ export AUTOGLUE_ORG_KEY=""
 export AUTOGLUE_ORG_SECRET=""
 export AUTOGLUE_ORG_ID=""
 
+# create.yml creates the DNS domain and the ctrp A record, and destroy.yml deletes both.
+# these three drive that; the calls use `authorization: Bearer $AUTOGLUE_TOKEN` + x-org-id.
+export AUTOGLUE_TOKEN=""
+export AUTOGLUE_CREDENTIAL_ID=""
+export AUTOGLUE_ZONE_ID=""
+
+# still read by the master role during scale and rotate (update-dns-records.yaml).
+# create.yml no longer uses it.
 export AUTOGLUE_RECORD_ID=""
 
 export AUTOGLUE_CLUSTER_ID=empty
@@ -86,3 +94,22 @@ passes just as happily on an empty cluster.
 
 `test-cluster` additionally runs molecule's `idempotence` step: a second `converge` must report
 zero changed tasks.
+
+## DNS lifecycle
+
+`create.yml` creates the AutoGlue DNS domain named by `$domain_name`, then creates the `ctrp` A
+record inside it pointing at the master private IPs. It writes both ids to
+`<scenario>/autoglue-ids.yaml` (gitignored), and `destroy.yml` reads that file and deletes the
+record and then the domain. A `DELETE` that 404s is treated as success, so re-running `destroy`
+is harmless.
+
+Two consequences worth knowing:
+
+- **The domain create is not idempotent.** If a run dies between creating the domain and reaching
+  `destroy`, the next run's `POST /dns/domains` will hit the leftover. Delete it in AutoGlue
+  before re-running.
+- **`AUTOGLUE_RECORD_ID` is now inconsistent during scale and rotate.** `create.yml` no longer
+  reads it, but `roles/master/tasks/master-node-rotation/update-dns-records.yaml` still PATCHes
+  whatever record that id names — which is not the record `create.yml` just made. Until that is
+  wired up, point `AUTOGLUE_RECORD_ID` at a record you do not mind being overwritten, or expect
+  the scale/rotate DNS updates to land on the wrong object.

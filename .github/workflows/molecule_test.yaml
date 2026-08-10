@@ -109,7 +109,9 @@ jobs:
           AUTOGLUE_ORG_KEY: ${{ secrets.AUTOGLUE_ORG_KEY || '' }}
           AUTOGLUE_ORG_SECRET: ${{ secrets.AUTOGLUE_ORG_SECRET || '' }}
           AUTOGLUE_ORG_ID: ${{ secrets.AUTOGLUE_ORG_ID || '' }}
-          AUTOGLUE_RECORD_ID: ${{ secrets.AUTOGLUE_RECORD_ID || '' }}
+          AUTOGLUE_TOKEN: ${{ secrets.AUTOGLUE_TOKEN || '' }}
+          AUTOGLUE_CREDENTIAL_ID: ${{ secrets.AUTOGLUE_CREDENTIAL_ID || '' }}
+          AUTOGLUE_ZONE_ID: ${{ secrets.AUTOGLUE_ZONE_ID || '' }}
           AUTOGLUE_CLUSTER_ID: 'empty'
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN || '' }}
         run: |
@@ -128,7 +130,9 @@ jobs:
           echo "AUTOGLUE_ORG_KEY=${AUTOGLUE_ORG_KEY}" >> $GITHUB_ENV
           echo "AUTOGLUE_ORG_SECRET=${AUTOGLUE_ORG_SECRET}" >> $GITHUB_ENV
           echo "AUTOGLUE_ORG_ID=${AUTOGLUE_ORG_ID}" >> $GITHUB_ENV
-          echo "AUTOGLUE_RECORD_ID=${AUTOGLUE_RECORD_ID}" >> $GITHUB_ENV
+          echo "AUTOGLUE_TOKEN=${AUTOGLUE_TOKEN}" >> $GITHUB_ENV
+          echo "AUTOGLUE_CREDENTIAL_ID=${AUTOGLUE_CREDENTIAL_ID}" >> $GITHUB_ENV
+          echo "AUTOGLUE_ZONE_ID=${AUTOGLUE_ZONE_ID}" >> $GITHUB_ENV
           echo "AUTOGLUE_CLUSTER_ID=${AUTOGLUE_CLUSTER_ID}" >> $GITHUB_ENV
           echo "HCLOUD_TOKEN=${HCLOUD_TOKEN}" >> $GITHUB_ENV
 

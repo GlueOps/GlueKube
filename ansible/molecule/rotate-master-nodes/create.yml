@@ -217,23 +217,71 @@
         dest: "./inventory/second-rotate-master-nodes.yaml"
         mode: "0644"
         
-    - name: Update DNS records with master node IPs via AutoGlue API
+    # AutoGlue owns the DNS the apiserver is reached through. The domain and the ctrp record are
+    # both created here rather than assumed to exist, and destroy.yml removes them again, so a
+    # run leaves nothing behind. The ids are written to autoglue-ids.yaml because destroy runs
+    # as a separate playbook and cannot see these registers.
+    - name: Create the DNS domain via AutoGlue API
       ansible.builtin.uri:
-        url: "{{ lookup('env', 'AUTOGLUE_BASE_URL') }}/api/v1/dns/records/{{ lookup('env', 'AUTOGLUE_RECORD_ID') }}"
-        method: PATCH
+        url: "{{ lookup('env', 'AUTOGLUE_BASE_URL') }}/api/v1/dns/domains"
+        method: POST
         headers:
           accept: application/json
-          x-org-key: "{{ lookup('env', 'AUTOGLUE_ORG_KEY') }}"
-          x-org-secret: "{{ lookup('env', 'AUTOGLUE_ORG_SECRET') }}"
           content-type: application/json
+          authorization: "Bearer {{ lookup('env', 'AUTOGLUE_TOKEN') }}"
           x-org-id: "{{ lookup('env', 'AUTOGLUE_ORG_ID') }}"
         body_format: json
         body:
+          credential_id: "{{ lookup('env', 'AUTOGLUE_CREDENTIAL_ID') }}"
+          domain_name: "{{ lookup('env', 'domain_name') }}"
+          zone_id: "{{ lookup('env', 'AUTOGLUE_ZONE_ID') }}"
+        status_code: [200, 201]
+      register: autoglue_domain
+
+    # Fail here with the body in the message rather than three tasks later with an empty URL,
+    # if the response ever stops carrying `id` at the top level.
+    - name: Confirm AutoGlue returned a domain id
+      ansible.builtin.assert:
+        that:
+          - autoglue_domain.json.id is defined
+          - autoglue_domain.json.id | string | length > 0
+        fail_msg: "AutoGlue did not return an id for the domain: {{ autoglue_domain.json }}"
+
+    - name: Create the ctrp A record in the new domain via AutoGlue API
+      ansible.builtin.uri:
+        url: "{{ lookup('env', 'AUTOGLUE_BASE_URL') }}/api/v1/dns/records"
+        method: POST
+        headers:
+          accept: application/json
+          content-type: application/json
+          authorization: "Bearer {{ lookup('env', 'AUTOGLUE_TOKEN') }}"
+          x-org-id: "{{ lookup('env', 'AUTOGLUE_ORG_ID') }}"
+        body_format: json
+        body:
+          domain_id: "{{ autoglue_domain.json.id }}"
           name: ctrp
           ttl: 60
           type: A
+          # the three masters the scenario starts with
           values: "{{ master_nodes.results[:3] | map(attribute='hcloud_server') | map(attribute='private_networks_info') | map('first') | map(attribute='ip') | list }}"
-        status_code: [200, 201, 204]
+        status_code: [200, 201]
+      register: autoglue_record
+
+    - name: Confirm AutoGlue returned a record id
+      ansible.builtin.assert:
+        that:
+          - autoglue_record.json.id is defined
+          - autoglue_record.json.id | string | length > 0
+        fail_msg: "AutoGlue did not return an id for the record: {{ autoglue_record.json }}"
+
+    - name: Hand the AutoGlue ids to destroy
+      ansible.builtin.copy:
+        content: |
+          ---
+          autoglue_domain_id: "{{ autoglue_domain.json.id }}"
+          autoglue_record_id: "{{ autoglue_record.json.id }}"
+        dest: "./autoglue-ids.yaml"
+        mode: "0644"
 
     - name: wait for 60 seconds to ensure that the nodes are up and running
       ansible.builtin.pause:

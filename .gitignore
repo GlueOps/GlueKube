@@ -70,3 +70,6 @@ hosts.ini
 /ansible/molecule/*/inventory/scale-up-ctrp.yaml
 /ansible/molecule/*/inventory/rotate-master-nodes.yaml
 /ansible/molecule/*/inventory/second-rotate-master-nodes.yaml
+
+# ids of the AutoGlue DNS domain and record that create.yml builds, handed to destroy.yml
+/ansible/molecule/*/autoglue-ids.yaml

@@ -46,3 +46,46 @@
         api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
         state: absent
       register: network
+
+    # The domain and record created in create.yml. Deleted record-first, and 404 is accepted so a
+    # partially-completed create, or a second destroy, is a no-op rather than a failure.
+    - name: Check whether create recorded any AutoGlue ids
+      ansible.builtin.stat:
+        path: ./autoglue-ids.yaml
+      register: autoglue_ids_file
+
+    - name: Load the AutoGlue ids written by create
+      ansible.builtin.include_vars:
+        file: ./autoglue-ids.yaml
+      when: autoglue_ids_file.stat.exists
+
+    - name: Delete the ctrp DNS record via AutoGlue API
+      ansible.builtin.uri:
+        url: "{{ lookup('env', 'AUTOGLUE_BASE_URL') }}/api/v1/dns/records/{{ autoglue_record_id }}"
+        method: DELETE
+        headers:
+          accept: application/json
+          authorization: "Bearer {{ lookup('env', 'AUTOGLUE_TOKEN') }}"
+          x-org-id: "{{ lookup('env', 'AUTOGLUE_ORG_ID') }}"
+        status_code: [200, 202, 204, 404]
+      when:
+        - autoglue_ids_file.stat.exists
+        - autoglue_record_id | default('') | string | length > 0
+
+    - name: Delete the DNS domain via AutoGlue API
+      ansible.builtin.uri:
+        url: "{{ lookup('env', 'AUTOGLUE_BASE_URL') }}/api/v1/dns/domains/{{ autoglue_domain_id }}"
+        method: DELETE
+        headers:
+          accept: application/json
+          authorization: "Bearer {{ lookup('env', 'AUTOGLUE_TOKEN') }}"
+          x-org-id: "{{ lookup('env', 'AUTOGLUE_ORG_ID') }}"
+        status_code: [200, 202, 204, 404]
+      when:
+        - autoglue_ids_file.stat.exists
+        - autoglue_domain_id | default('') | string | length > 0
+
+    - name: Drop the AutoGlue ids file
+      ansible.builtin.file:
+        path: ./autoglue-ids.yaml
+        state: absent
