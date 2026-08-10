@@ -18,14 +18,14 @@ for system level, you need to do:
 ansible-galaxy collection install -r ansible/requirements.yml
 ```
 
-ansible.netcommon                        7.1.0
-ansible.posix                            2.0.0
-ansible.utils                            5.1.2
-community.crypto                         2.24.0
-community.docker                         4.3.1
-community.general                        10.3.0
-hetzner.hcloud                           4.2.2
-kubernetes.core                          5.1.0
+ansible.netcommon                        8.6.1
+ansible.posix                            2.2.2
+ansible.utils                            6.0.3
+community.crypto                         3.3.0
+community.docker                         5.2.2
+community.general                        13.2.0
+hetzner.hcloud                           6.11.0
+kubernetes.core                          5.4.4
 
 ## Scenario # 1 (You have VMs)
 
