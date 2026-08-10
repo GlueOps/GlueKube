@@ -61,6 +61,9 @@ export HCLOUD_TOKEN=""
 # optional: CIDRs allowed to SSH into the test nodes. defaults to this machine's public
 # address, discovered at create time.
 export MOLECULE_SSH_SOURCE_CIDRS=""
+
+# optional: Hetzner location for the test VMs. defaults to hel1.
+export HCLOUD_LOCATION=""
 ```
 
 `domain_name` is required — `kubeadm-stacked-config.yaml.j2` puts `kube-api.$domain_name` in the
