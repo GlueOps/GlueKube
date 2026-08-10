@@ -1,11 +1,11 @@
 ## ⚠️ Do not run a scenario while CI is running one
 
 Every scenario uses the same fixed Hetzner resource names — network `test-molecule-network`,
-firewall `my-firewall`, servers `master-node-N` / `worker-node-N` — and all three PATCH the one
-shared `AUTOGLUE_RECORD_ID`. `hetzner.hcloud.server` is idempotent **by name**, so a second run
-does not fail: it silently *adopts* the first run's servers, writes their IPs into its own
-inventory, and re-points the shared `ctrp` record. Whichever run reaches `destroy` first deletes
-the other's VMs.
+firewall `my-firewall`, servers `master-node-N` / `worker-node-N` — and all three create the same
+DNS domain, `$domain_name`. `hetzner.hcloud.server` is idempotent **by name**, so a second run
+does not fail: it silently *adopts* the first run's servers and writes their IPs into its own
+inventory. Whichever run reaches `destroy` first deletes the other's VMs, and its DNS teardown
+removes the domain the other run is still using.
 
 The symptoms are inexplicable SSH failures, or — worse — a green run against a cluster somebody
 else half-built.
@@ -52,8 +52,7 @@ export AUTOGLUE_ORG_SECRET=""
 export AUTOGLUE_ORG_ID=""
 
 # create.yml creates the DNS domain and the ctrp A record, and destroy.yml deletes both.
-# these three drive that; the calls use `authorization: Bearer $AUTOGLUE_TOKEN` + x-org-id.
-export AUTOGLUE_TOKEN=""
+# these two drive that; the calls authenticate with the x-org-key/x-org-secret pair above.
 export AUTOGLUE_CREDENTIAL_ID=""
 export AUTOGLUE_ZONE_ID=""
 
@@ -108,8 +107,11 @@ Two consequences worth knowing:
 - **The domain create is not idempotent.** If a run dies between creating the domain and reaching
   `destroy`, the next run's `POST /dns/domains` will hit the leftover. Delete it in AutoGlue
   before re-running.
-- **`AUTOGLUE_RECORD_ID` is now inconsistent during scale and rotate.** `create.yml` no longer
-  reads it, but `roles/master/tasks/master-node-rotation/update-dns-records.yaml` still PATCHes
-  whatever record that id names — which is not the record `create.yml` just made. Until that is
-  wired up, point `AUTOGLUE_RECORD_ID` at a record you do not mind being overwritten, or expect
-  the scale/rotate DNS updates to land on the wrong object.
+- **`AUTOGLUE_RECORD_ID` no longer lines up with the record that exists.** `create.yml` does not
+  read it any more, but `roles/master/tasks/master-node-rotation/update-dns-records.yaml` still
+  PATCHes `/dns/records/{{ autoglue_record_id }}` during scale and rotate — a different object
+  from the record `create.yml` just made, and in CI an *empty* one, since the workflow no longer
+  exports the variable at all. Until the created id is threaded into
+  `inventory/group_vars/masters.yaml`, the runtime DNS updates in the scale-cluster and
+  rotate-master-nodes scenarios do not reach the record the cluster resolves through. `test-cluster`
+  is unaffected — it never calls that task.

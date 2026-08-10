@@ -65,7 +65,8 @@
         method: DELETE
         headers:
           accept: application/json
-          authorization: "Bearer {{ lookup('env', 'AUTOGLUE_TOKEN') }}"
+          x-org-key: "{{ lookup('env', 'AUTOGLUE_ORG_KEY') }}"
+          x-org-secret: "{{ lookup('env', 'AUTOGLUE_ORG_SECRET') }}"
           x-org-id: "{{ lookup('env', 'AUTOGLUE_ORG_ID') }}"
         status_code: [200, 202, 204, 404]
       when:
@@ -78,7 +79,8 @@
         method: DELETE
         headers:
           accept: application/json
-          authorization: "Bearer {{ lookup('env', 'AUTOGLUE_TOKEN') }}"
+          x-org-key: "{{ lookup('env', 'AUTOGLUE_ORG_KEY') }}"
+          x-org-secret: "{{ lookup('env', 'AUTOGLUE_ORG_SECRET') }}"
           x-org-id: "{{ lookup('env', 'AUTOGLUE_ORG_ID') }}"
         status_code: [200, 202, 204, 404]
       when:

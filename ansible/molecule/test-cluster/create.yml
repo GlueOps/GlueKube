@@ -166,7 +166,8 @@
         headers:
           accept: application/json
           content-type: application/json
-          authorization: "Bearer {{ lookup('env', 'AUTOGLUE_TOKEN') }}"
+          x-org-key: "{{ lookup('env', 'AUTOGLUE_ORG_KEY') }}"
+          x-org-secret: "{{ lookup('env', 'AUTOGLUE_ORG_SECRET') }}"
           x-org-id: "{{ lookup('env', 'AUTOGLUE_ORG_ID') }}"
         body_format: json
         body:
@@ -192,7 +193,8 @@
         headers:
           accept: application/json
           content-type: application/json
-          authorization: "Bearer {{ lookup('env', 'AUTOGLUE_TOKEN') }}"
+          x-org-key: "{{ lookup('env', 'AUTOGLUE_ORG_KEY') }}"
+          x-org-secret: "{{ lookup('env', 'AUTOGLUE_ORG_SECRET') }}"
           x-org-id: "{{ lookup('env', 'AUTOGLUE_ORG_ID') }}"
         body_format: json
         body:

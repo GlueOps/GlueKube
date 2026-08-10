@@ -109,7 +109,8 @@ jobs:
           AUTOGLUE_ORG_KEY: ${{ secrets.AUTOGLUE_ORG_KEY || '' }}
           AUTOGLUE_ORG_SECRET: ${{ secrets.AUTOGLUE_ORG_SECRET || '' }}
           AUTOGLUE_ORG_ID: ${{ secrets.AUTOGLUE_ORG_ID || '' }}
-          AUTOGLUE_TOKEN: ${{ secrets.AUTOGLUE_TOKEN || '' }}
+          # create.yml creates the DNS domain and the ctrp record, destroy.yml deletes both.
+          # Those calls authenticate with the x-org-key/x-org-secret pair above.
           AUTOGLUE_CREDENTIAL_ID: ${{ secrets.AUTOGLUE_CREDENTIAL_ID || '' }}
           AUTOGLUE_ZONE_ID: ${{ secrets.AUTOGLUE_ZONE_ID || '' }}
           AUTOGLUE_CLUSTER_ID: 'empty'
@@ -130,7 +131,6 @@ jobs:
           echo "AUTOGLUE_ORG_KEY=${AUTOGLUE_ORG_KEY}" >> $GITHUB_ENV
           echo "AUTOGLUE_ORG_SECRET=${AUTOGLUE_ORG_SECRET}" >> $GITHUB_ENV
           echo "AUTOGLUE_ORG_ID=${AUTOGLUE_ORG_ID}" >> $GITHUB_ENV
-          echo "AUTOGLUE_TOKEN=${AUTOGLUE_TOKEN}" >> $GITHUB_ENV
           echo "AUTOGLUE_CREDENTIAL_ID=${AUTOGLUE_CREDENTIAL_ID}" >> $GITHUB_ENV
           echo "AUTOGLUE_ZONE_ID=${AUTOGLUE_ZONE_ID}" >> $GITHUB_ENV
           echo "AUTOGLUE_CLUSTER_ID=${AUTOGLUE_CLUSTER_ID}" >> $GITHUB_ENV
