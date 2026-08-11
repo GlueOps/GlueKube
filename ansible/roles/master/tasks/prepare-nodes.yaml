@@ -144,18 +144,20 @@
     content: "{{ containerd_config.stdout | regex_replace('SystemdCgroup = false', 'SystemdCgroup = true') }}"
     dest: /etc/containerd/config.toml
     mode: "0644"
-  notify: Restart containerd
+  register: containerd_config_file
 
+# Restarted inline rather than through a notified handler. The master rotation path includes
+# this file with delegate_to the new node, and handlers do not inherit delegation: the restart
+# would run against the play host (an existing, already-configured master) while the new node
+# keeps serving the packaged config.toml, which ships disabled_plugins = ["cri"]. kubeadm join
+# then fails preflight with 'unknown service runtime.v1.RuntimeService'. A regular task carries
+# the delegation, so the restart lands on the node whose config just changed.
 - name: Reload systemd and enable containerd
   ansible.builtin.systemd:
     name: containerd
     enabled: true
-    state: started
-
-# handlers run at the end of the play, but kubeadm init/join happen earlier in this
-# same play and need the SystemdCgroup config already live, so flush here
-- name: Apply the pending containerd restart before kubeadm runs
-  ansible.builtin.meta: flush_handlers
+    state: "{{ 'restarted' if containerd_config_file is changed else 'started' }}"
+    daemon_reload: true
 
 - name: Copy Kubernetes GPG key
   ansible.builtin.copy:
@@ -239,7 +241,7 @@
     allow_unauthenticated: true
     allow_change_held_packages: true
     allow_downgrade: true
-  notify: Restart kubelet
+  register: kubelet_packages
   tags: kubernetes_component_kubelet
 
 - name: Hold kubelet and kubectl at the pinned version
@@ -251,11 +253,14 @@
     - kubectl
   tags: kubernetes_component_kubelet
 
+# Same reason as the containerd restart above: a notified handler would run against the play
+# host instead of the delegated new node during a master rotation, so restart inline when the
+# kubelet package actually moved.
 - name: Enable kubelet
   ansible.builtin.systemd_service:
     name: kubelet
     enabled: true
-    state: started
+    state: "{{ 'restarted' if (kubelet_packages is defined and kubelet_packages is changed) else 'started' }}"
     daemon_reload: true
   tags: kubernetes_component_kubelet
 
@@ -315,9 +320,3 @@
     name: etcd-client
     state: present
   tags: install_etcd
-
-# A kubelet restart notified by the package install above would otherwise sit until the end of
-# the play, i.e. after kubeadm init/join have already run against it. Flush here so it lands
-# before the cluster is built. On a converged node nothing is pending and this is a no-op.
-- name: Apply any pending kubelet restart before kubeadm runs
-  ansible.builtin.meta: flush_handlers
