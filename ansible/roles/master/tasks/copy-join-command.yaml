@@ -1,28 +1,11 @@
-- name: Print Kubeadm join node command
-  ansible.builtin.command: kubeadm token create --print-join-command --ttl 10m
-  when: inventory_hostname == orchestrator_node
-  register: join_command
-  tags: create_join_command
+---
+# Control-plane side of the join: shared credentials, then the JoinConfiguration that carries
+# controlPlane/certificateKey. The credential half lives in roles/common (#474).
 
-
-- name: Get Join token
-  ansible.builtin.command: kubeadm token create --ttl 10m
-  when: inventory_hostname == orchestrator_node
-  register: join_token
-  tags: create_join_command
-
-
-- name: Get Join hash
-  ansible.builtin.shell: |
-    set -euo pipefail
-    openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt \
-    | openssl rsa -pubin -outform der 2>/dev/null \
-    | openssl dgst -sha256 -hex | sed 's/^.* //'
-  args:
-    executable: /bin/bash
-  when: inventory_hostname == orchestrator_node
-  register: join_hash
-  changed_when: false
+- name: Create the join credentials on the orchestrator
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: create-join-credentials.yaml
   tags: create_join_command
 
 - name: Generate Kubeadm Join configuration

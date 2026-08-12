@@ -81,11 +81,22 @@
           Expected {{ (expected_masters + groups['workers']) | sort }},
           got {{ nodes.stdout_lines | sort }}
 
+    # masters[0] is this play's host, but after a rotation that is a master the cluster no longer
+    # has: the inventory lists 1..6 while the cluster holds 4,5,6. kubectl still answers there
+    # because admin.conf points at the control-plane endpoint, but etcdctl talks to localhost:2379
+    # and that node's etcd stopped the moment its member was removed -- so the member list has to
+    # be asked of a master the rotation kept. `set -o pipefail` is what makes that failure visible:
+    # without it the pipeline exits with jq's rc, jq is handed no input, and the task reports ok
+    # with an empty stdout that the assert below then compares as "found ".
     - name: etcd membership matches the control-plane count
       ansible.builtin.shell: |
+        set -o pipefail
         ETCDCTL_API=3 etcdctl member list --cacert=/etc/kubernetes/pki/etcd/ca.crt \
           --cert=/etc/kubernetes/pki/etcd/server.crt \
           --key=/etc/kubernetes/pki/etcd/server.key -w json | jq '.members | length'
+      args:
+        executable: /bin/bash
+      delegate_to: "{{ expected_masters | first }}"
       register: etcd_members
       changed_when: false
 
@@ -93,7 +104,10 @@
     # after a rotation is the added masters, not every master the inventory names.
     - name: Etcd membership matches the number of masters in the inventory
       ansible.builtin.assert:
-        that: etcd_members.stdout | int == expected_masters | length
+        that:
+          - etcd_members.stdout | trim | length > 0
+          - etcd_members.stdout | int == expected_masters | length
         fail_msg: >-
-          Expected {{ expected_masters | length }} etcd members,
-          found {{ etcd_members.stdout }}
+          Expected {{ expected_masters | length }} etcd members on
+          {{ expected_masters | first }}, found '{{ etcd_members.stdout | trim }}'
+          (stderr: {{ etcd_members.stderr | default('') | trim }})

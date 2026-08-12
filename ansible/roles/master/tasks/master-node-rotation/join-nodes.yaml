@@ -34,4 +34,4 @@
     owner: root
     group: root
     mode: "0644"
-  tags: kubeconfig_setup
+  tags: kubeadm_config

@@ -31,13 +31,18 @@
   when: inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[orchestrator_node]['current_cluster_nodes'].stdout_lines
 
 
+# join_master, not join_worker: this joins a control-plane node. `--tags join_worker` reaching
+# the control-plane join was the opposite of what anyone typing it intends -- the worker join
+# lives in roles/worker/tasks/join-nodes.yaml and keeps that tag (#476).
 - name: Join the control-node to the Kubernetes cluster
-  ansible.builtin.command: kubeadm join --config /opt/kubeadm_join.yaml 
-  tags: join_worker
+  ansible.builtin.command: kubeadm join --config /opt/kubeadm_join.yaml
+  tags: join_master
   when: inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[orchestrator_node]['current_cluster_nodes'].stdout_lines
 
 
-# create a directory for the kubeconfig file
+# kubeadm_config, not kubeconfig_setup: this renders the kubeadm ClusterConfiguration, not a
+# kubeconfig. kubeadm-init.yaml keeps kubeconfig_setup for the tasks that really do handle
+# admin.conf (#476).
 - name: Generate Kubeadm configuration
   ansible.builtin.template:
     src: "kubeadm-stacked-config.yaml.j2"
@@ -45,6 +50,6 @@
     owner: root
     group: root
     mode: "0644"
-  tags: kubeconfig_setup
+  tags: kubeadm_config
   when: 
     - inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[orchestrator_node]['current_cluster_nodes'].stdout_lines

@@ -1,4 +1,9 @@
 ---
+# Validates the environment and the inventory before a single node is touched (#466). The
+# molecule scenarios reach this through converge.yml, so they get the same checks CI does.
+- name: Preflight
+  ansible.builtin.import_playbook: preflight.yaml
+
 - hosts: masters
   become: true
   roles:

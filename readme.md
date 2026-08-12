@@ -1,16 +1,19 @@
 # Prerequisite
 
-this arhcitecture need at least:
+this architecture needs at least:
 
-- 1 LoadBalancers
-- 1 master node
+- 1 master node (the control-plane count has to be **odd** — see
+  [the control-plane endpoint](#the-control-plane-endpoint))
 - 1 worker node
-  
+
+there is no load-balancer tier. clients reach the API servers through a multi-value DNS record,
+described below.
 
 for system level, you need to do:
 
 - install ansible
-- pip install jmespath
+- `pip install jmespath netaddr` — jmespath backs the `json_query` used when labelling nodes,
+  netaddr backs the CIDR overlap check in `playbooks/preflight.yaml`
 - install the ansible collections, pinned in `ansible/requirements.yml` (CI installs from the
   same file, so keep the two in step):
 
@@ -18,11 +21,8 @@ for system level, you need to do:
 ansible-galaxy collection install -r ansible/requirements.yml
 ```
 
-ansible.netcommon                        8.6.1
 ansible.posix                            2.2.2
 ansible.utils                            6.0.3
-community.crypto                         3.3.0
-community.docker                         5.2.2
 community.general                        13.2.0
 hetzner.hcloud                           6.11.0
 kubernetes.core                          5.4.4
@@ -37,26 +37,6 @@ here is an example of the `hosts.yaml` format:
 
 all:
   children:
-    loadbalancer:
-      hosts:
-        lb-node-1:
-          ansible_host: IP
-          ansible_user: haproxyadmin
-          ip: PRIVATE_IP
-          ansible_ssh_private_key_file: ../keys/lb_node
-
-        lb-node-2:
-          ansible_host: IP
-          ansible_user: haproxyadmin
-          ip: PRIVATE_IP
-          ansible_ssh_private_key_file: ../keys/lb_node
-
-        lb-node-3:
-          ansible_host: IP
-          ansible_user: haproxyadmin
-          ip: PRIVATE_IP
-          ansible_ssh_private_key_file: ../keys/lb_node
-
     masters:
       hosts:
         master-node-1:
@@ -84,33 +64,21 @@ then test if ansible can ssh into all the hosts using:
 
 `ansible all -i inventory/hosts.yaml -m ping`
 
-## Scenario # 2 (else)
+## Scenario # 2 (you need VMs)
 
-If you didn't create VMs, you can run the terraform file `main.tf` to  create ones.
+There is no terraform in this repository — the modules that provision the VMs live in their own
+repositories, and they are what generates `hosts.yaml`:
 
-first, you need to create ssh-keys, you either create an ssh-key for each (loadbalancer,master,worker) Vms or single ssh-key for all Vms
+- `opentofu-module-GlueKube-AWS`
+- `opentofu-module-GlueKube-Proxmox`
 
-to create an ssh-key run the following:
+In the hosted flow you do not run either by hand: AutoGlue provisions the nodes and drops a
+`platform.json` next to this Makefile, and `parser.py` turns it into `ansible/inventory/hosts.yaml`
+and `.env` (`make .env`).
 
-`ssh-keygen -o -a 100 -t ed25519 -f vm_node`
-
-then move into terraform folder and because we're using hetzner to create Vms, create a file .tfvars and add the following:
-
-```bash
-  hcloud_token = "XXXXXX"
-  public_key = "the_public_key_you_copied" 
-
-```
-
-finally run
-
-```bash
-    terraform init
-    terraform apply -var-file .tfvars
-
-```
-
-If terraform finished succesfully a `hosts.yaml` file will be created under `ansible/inventory`
+If you want throwaway Hetzner VMs to try things on, the molecule scenarios under
+`ansible/molecule/` build and destroy a whole cluster — see
+[ansible/molecule/readme.md](ansible/molecule/readme.md).
 
 # Install Kubernetes
 
@@ -154,10 +122,23 @@ export calico_network_calico_cidr=172.16.0.0/16  # calico pod CIDR
 export calico_nodeAddressAutodetectionV4=        # e.g. cidrs=10.0.0.0/8; leave empty for
                                                  # calico's firstFound, which picks the public
                                                  # interface on most cloud images
+export calico_chart_version=v3.31.4
+export calico_tigera_operator_version=v1.40.7
 
 export AUTOGLUE_BASE_URL= AUTOGLUE_ORG_KEY= AUTOGLUE_ORG_SECRET=
 export AUTOGLUE_ORG_ID= AUTOGLUE_RECORD_ID= AUTOGLUE_CLUSTER_ID=empty
 ```
+
+`AUTOGLUE_ORG_ID` is sent as the `x-org-id` header on every AutoGlue DNS call. `parser.py` writes
+it from `platform.json`'s `org_id`, and CI sets it from a secret — before that it had no producer
+at all outside CI, so the header went out empty (#467). Preflight refuses to run without it.
+
+in the container these come from `.env`, which `parser.py` writes from `platform.json`. the four
+version variables above are the exception: `parser.py` only writes them when `platform.json`
+carries them, and otherwise the pinned `ENV` defaults in the `Dockerfile` apply.
+
+`playbooks/preflight.yaml` runs first on every `setup-cluster`, `sync-resources` and
+`upgrade-cluster` run and names whichever of these is empty, before any node is touched.
 
 then to allow ansible noticing the .env file, we need to export it like the following: `export $(grep -v '^#' .env | xargs)`
 
@@ -165,11 +146,42 @@ then test if ansible can ssh into all the hosts using:
 
 `ansible all -i inventory/hosts.yaml -m ping`
 
+to check the network before building anything:
+
+`ansible-playbook -i inventory/hosts.yaml playbooks/check-network-connectivity.yaml`
+
+it fails if a node is unreachable, if a node cannot reach the other nodes' private addresses, or
+if the package mirrors are not reachable. it reports — without failing — whether the control-plane
+endpoint resolves and which etcd/apiserver ports are open, both of which are expected to be
+"not yet" before the first build.
+
 if all the hosts pinged just fine, start creating the cluster by running:
 
 `ansible-playbook -i inventory/hosts.yaml playbooks/setup-cluster.yaml`
 
 after the playbook run successfully, you will see a kubeconfig file in `ansible/playbooks/.kube/config`
+
+# The control-plane endpoint
+
+`loadbalancer_apiserver` (`ctrp.<domain>`) is **not** a load balancer and there is no haproxy tier
+in this repository. It is a single DNS A record holding the private address of **every** master,
+created in AutoGlue and updated through its API by
+`roles/master/tasks/master-node-rotation/update-dns-records.yaml` whenever the control plane
+changes. `kubeadm`'s `controlPlaneEndpoint` points at it, so every joining node and every
+kubeconfig resolves the API server through it.
+
+What that means operationally:
+
+- **Failover is client-side.** A client picks one of the returned addresses and, if it cannot
+  connect, tries another. There is no health checking and no VIP, so a dead master keeps being
+  handed out until DNS is updated.
+- **DNS is only updated by a run.** `sync-resources.yaml` and `rotate-master-nodes.yaml` PATCH the
+  record; nothing does it continuously. A master that dies unexpectedly stays in the record until
+  you run one of them.
+- **TTL bounds the recovery.** The record is written with a 60 second TTL, and the rotation path
+  waits for at least two authoritative nameservers to agree before it continues.
+- **The count must be odd.** etcd needs a quorum, so an even number of masters buys nothing over
+  the odd number below it. `playbooks/preflight.yaml` refuses to run against an even count.
 
 # Scale Nodes
 
@@ -260,7 +272,9 @@ Now to run the syncing process, use the following command:
 
 `ansible-playbook  -i inventory/hosts.yaml playbooks/sync-resources.yaml`
 
-The cluster will scale up/down depends on your desired state, also it will **update the loadbalancer haproxyconfig** file to the desired workloads
+The cluster will scale up/down depending on your desired state. When the control plane changes,
+the sync also **updates the `ctrp` DNS record** so it lists the masters that now exist — see
+[the control-plane endpoint](#the-control-plane-endpoint).
 
 to verify, run :
 
@@ -268,6 +282,26 @@ to verify, run :
     export KUBECONFIG=$PWD/playbooks/.kube/config
     kubectl get nodes
 ```
+
+# Day-2 operations
+
+Everything below runs from the `ansible/` directory with `.env` sourced. `preflight.yaml` runs
+first on the starred ones and stops the run if a variable or the inventory shape is wrong.
+
+| I want to | Run | |
+|---|---|---|
+| add or remove a worker or a master | edit `hosts.yaml`, then `playbooks/sync-resources.yaml` | ★ |
+| replace every master with new machines | `playbooks/rotate-master-nodes.yaml` | |
+| upgrade Kubernetes | bump the versions in `.env`, then `playbooks/upgrade-cluster.yaml` | ★ |
+| rotate the control-plane certificates | `playbooks/rotate-certs-with-config.yaml` | |
+| re-apply labels and taints only | `playbooks/setup-cluster.yaml --tags label_nodes` | |
+| move local-path-provisioner to Helm (once per old cluster) | `playbooks/migrate-local-path-provisioner.yaml` | |
+| check the network before any of the above | `playbooks/check-network-connectivity.yaml` | |
+
+**There is no etcd backup or restore path in this repository.** Nothing here snapshots etcd before
+an upgrade and there is no playbook to restore one, so an upgrade is not recoverable from within
+this tooling — take a snapshot yourself, or restore from the platform's own backups. Adding it is
+tracked separately.
 
 # Upgrade Cluster
 

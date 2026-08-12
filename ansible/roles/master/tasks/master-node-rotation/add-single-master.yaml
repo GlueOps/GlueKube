@@ -16,8 +16,12 @@
 # Tasks that run ON the orchestrator
 - name: Copy join command and reupload certs on orchestrator
   block:
-    - name: Copy join command on orchestrator
-      ansible.builtin.include_tasks: master-node-rotation/copy-join-command.yaml
+    # No join config is rendered here: master-node-rotation/join-nodes.yaml renders it on the
+    # joining node itself, so the rotation only needs the credentials (#474).
+    - name: Create the join credentials on orchestrator
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: create-join-credentials.yaml
 
     - name: Reupload certs on orchestrator
       ansible.builtin.include_tasks: reupload-certs.yaml

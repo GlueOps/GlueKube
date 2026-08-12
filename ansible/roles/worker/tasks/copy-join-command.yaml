@@ -1,16 +1,13 @@
-- name: Print Kubeadm join node command
-  ansible.builtin.command: kubeadm token create --print-join-command --ttl 10m
-  when: inventory_hostname == orchestrator_node
-  register: join_command
+---
+# Worker side of the join: the same shared credentials as the control plane (#474), then the
+# worker JoinConfiguration -- which differs from the master one by carrying the containerd
+# criSocket and the kubelet patch directory instead of a controlPlane block.
+
+- name: Create the join credentials on the orchestrator
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: create-join-credentials.yaml
   tags: create_join_command
-
-
-- name: Get Join Token
-  ansible.builtin.command: kubeadm token create --ttl 10m
-  when: inventory_hostname == orchestrator_node
-  register: join_token
-  tags: create_join_command
-
 
 - name: Generate Kubeadm Join configuration
   ansible.builtin.template:

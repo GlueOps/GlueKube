@@ -13,17 +13,17 @@
 # `server.datacenter.name` and the field is no longer populated -- every node creation died with
 # "'NoneType' object has no attribute 'name'" after the VM had already been built. 6.x dropped
 # the `datacenter` key and reads `server.location.name` instead.
+#
+# Trimmed to what the repo actually uses (#471). ansible.netcommon, community.crypto and
+# community.docker were listed for years with zero references anywhere in ansible/ -- galaxy
+# still pulls them in if something here depends on them.
 collections:
-  - name: ansible.netcommon
-    version: "8.6.1"
   - name: ansible.posix
     version: "2.2.2"
+  # ipaddr/network_in_network, used by playbooks/preflight.yaml. Needs the netaddr python
+  # package on the controller as well (Dockerfile and readme install it).
   - name: ansible.utils
     version: "6.0.3"
-  - name: community.crypto
-    version: "3.3.0"
-  - name: community.docker
-    version: "5.2.2"
   - name: community.general
     version: "13.2.0"
   - name: hetzner.hcloud

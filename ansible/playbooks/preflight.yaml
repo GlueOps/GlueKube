@@ -1,0 +1,139 @@
+---
+# Preflight (#466). Runs before anything on a node is touched.
+#
+# Every check here exists because its absence produced a confusing failure partway through a
+# build, after a dist-upgrade had already run on the node:
+#
+#   unset kubernetes_version -> "list object has no element 1" at prepare-nodes.yaml, from
+#                               kubernetes_version.split('.')[1] in the apt repo URL
+#   unset domain_name        -> a certSAN of "kube-api." that kubeadm rejects as not DNS-1123
+#   a host without `ip`      -> a HostVarsVars error that never names the offending host
+#   an even master count     -> an etcd cluster that cannot tolerate a single failure
+#
+# Imported by setup-cluster.yaml, sync-resources.yaml and upgrade-cluster.yaml. Deliberately NOT
+# imported by rotate-master-nodes.yaml: a rotation runs against an inventory that holds the
+# outgoing and the incoming control planes at once (six masters in the molecule scenario), so
+# the odd-count assertion below would reject it by design. That playbook has its own guard.
+#
+# any_errors_fatal stops the whole run on the first bad host rather than letting the other
+# hosts march on into a half-built cluster.
+- name: Preflight
+  hosts: all
+  gather_facts: true
+  any_errors_fatal: true
+  vars:
+    # "v1.34.5" -> "1.34". Used for the version floor and for the apt pin cross-check.
+    k8s_major_minor: "{{ kubernetes_version | regex_replace('^v', '') | regex_replace('^([0-9]+)\\.([0-9]+).*$', '\\1.\\2') }}"
+  tasks:
+    # default('', true) rather than plain default(): these variables are lookup('env', ...), so
+    # an unset one is *defined and empty*, which plain default() would happily pass through.
+    - name: Cluster-wide variables are set
+      ansible.builtin.assert:
+        that:
+          - kubernetes_version | default('', true) | length > 0
+          - kubernetes_package_version | default('', true) | length > 0
+          - loadbalancer_apiserver | default('', true) | length > 0
+          - domain_name | default('', true) | length > 0
+        fail_msg: >-
+          One of kubernetes_version, kubernetes_package_version, loadbalancer_apiserver or
+          domain_name is empty on {{ inventory_hostname }}. They are read from the environment by
+          inventory/group_vars/all.yaml and have no default -- source your .env
+          (`export $(grep -v '^#' .env | xargs)`) or, in the container, check that parser.py
+          wrote them.
+        quiet: true
+
+    - name: Control-plane variables are set
+      ansible.builtin.assert:
+        that:
+          - certificate_key | default('', true) | length > 0
+          - random_token | default('', true) | length > 0
+          - service_subnet | default('', true) | length > 0
+          - calico_network_calico_cidr | default('', true) | length > 0
+          - calico_chart_version | default('', true) | length > 0
+          - calico_tigera_operator_version | default('', true) | length > 0
+        fail_msg: >-
+          One of certificate_key, random_token, service_subnet, calico_network_calico_cidr,
+          calico_chart_version or calico_tigera_operator_version is empty on
+          {{ inventory_hostname }}. They come from inventory/group_vars/masters.yaml, which reads
+          them from the environment. An empty service_subnet becomes the kubeadm serviceSubnet.
+        quiet: true
+      when: inventory_hostname in groups['masters'] | default([])
+
+    # The DNS record these drive is how every client, and every joining node, finds the API
+    # server. An empty id here is a PATCH to /dns/records/ with no id, which 404s mid-rotation.
+    - name: AutoGlue variables are set
+      ansible.builtin.assert:
+        that:
+          - autoglue_base_url | default('', true) | length > 0
+          - autoglue_org_key | default('', true) | length > 0
+          - autoglue_org_secret | default('', true) | length > 0
+          - autoglue_org_id | default('', true) | length > 0
+          - autoglue_record_id | default('', true) | length > 0
+        fail_msg: >-
+          One of autoglue_base_url, autoglue_org_key, autoglue_org_secret, autoglue_org_id or
+          autoglue_record_id is empty on {{ inventory_hostname }}. Scale and rotation update the
+          ctrp A record through the AutoGlue API and cannot do it without all five.
+        quiet: true
+      when: inventory_hostname in groups['masters'] | default([])
+
+    - name: Kubernetes version is a full vX.Y.Z string
+      ansible.builtin.assert:
+        that:
+          - kubernetes_version is match('^v[0-9]+\.[0-9]+\.[0-9]+$')
+        fail_msg: >-
+          kubernetes_version is "{{ kubernetes_version }}"; it has to look like v1.34.5.
+          prepare-nodes.yaml builds the apt repository URL from kubernetes_version.split('.'),
+          which dies with "list object has no element 1" on anything shorter.
+        quiet: true
+      run_once: true
+
+    # 1.34 floor: authentication-configuration.yaml.j2 pins apiserver.config.k8s.io/v1, which
+    # only exists from 1.34. On an older cluster the apiserver crash-loops on start-up with an
+    # unrecognised apiVersion, long after this playbook has finished. (Epic E, #451.)
+    - name: Kubernetes version is 1.34 or newer
+      ansible.builtin.assert:
+        that:
+          - k8s_major_minor is version('1.34', '>=')
+        fail_msg: >-
+          kubernetes_version is {{ kubernetes_version }} ({{ k8s_major_minor }}), and
+          templates/authentication-configuration.yaml.j2 pins apiserver.config.k8s.io/v1, which
+          requires Kubernetes 1.34+. Below that the apiserver crash-loops after kubeadm init.
+        quiet: true
+      run_once: true
+
+    - name: Apt package version matches the Kubernetes version
+      ansible.builtin.assert:
+        that:
+          - kubernetes_package_version.startswith(k8s_major_minor ~ '.')
+        fail_msg: >-
+          kubernetes_package_version ({{ kubernetes_package_version }}) is not a
+          {{ k8s_major_minor }} package. The apt pin and kubeadm's version would disagree, which
+          shows up as kubelet and kubeadm being different minors on the node.
+        quiet: true
+      run_once: true
+
+    - name: Every host defines an ip
+      ansible.builtin.assert:
+        that:
+          - hostvars[item].ip is defined
+          - hostvars[item].ip | default('', true) | length > 0
+        fail_msg: >-
+          Host {{ item }} has no 'ip' in the inventory. `ip` is the private address the cluster
+          itself uses -- etcd peers, the kubeadm join endpoint and the ctrp DNS record are all
+          built from it, and it is not the same thing as ansible_host.
+        quiet: true
+      loop: "{{ groups['all'] }}"
+      run_once: true
+
+    - name: Node ip addresses are unique
+      ansible.builtin.assert:
+        that:
+          - node_ips | unique | length == node_ips | length
+        fail_msg: >-
+          Two hosts share an `ip` in the inventory: {{ node_ips }}. etcd would try to add a
+          member that already exists and the join silently targets the wrong node.
+        quiet: true
+      vars:
+        node_ips: "{{ groups['all'] | map('extract', hostvars, 'ip') | list }}"
+      run_once: true
+

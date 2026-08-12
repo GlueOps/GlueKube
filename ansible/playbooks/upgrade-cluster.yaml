@@ -1,5 +1,10 @@
 # this should upgrade all the cluster component like: kubelet, kube-proxy, coredns, etcd(with cert rotation)
 ---
+# The version floor and the kubernetes_version/kubernetes_package_version cross-check matter most
+# here: an upgrade is exactly where those two drift apart (#466).
+- name: Preflight
+  ansible.builtin.import_playbook: preflight.yaml
+
 - name: Upgrade cluster
   hosts: masters[0]
   become: true
@@ -9,9 +14,9 @@
         name: master
         tasks_from: select-orchestrator.yaml
 
-    - name: Upgrade kubernetes package versions
+    - name: Upgrade kubeadm on the first control plane
       ansible.builtin.include_role:
-        name: master
+        name: common
         tasks_from: upgrade-kubeadm.yaml
       when: inventory_hostname == orchestrator_node
 
@@ -22,9 +27,9 @@
       tags: upgrade
       when: inventory_hostname == orchestrator_node
 
-    - name: Upgrade kubernetes package versions
+    - name: Upgrade kubelet and kubectl on the first control plane
       ansible.builtin.include_role:
-        name: master
+        name: common
         tasks_from: upgrade-kubelet.yaml
       when: inventory_hostname == orchestrator_node
 
@@ -39,9 +44,9 @@
         name: master
         tasks_from: select-orchestrator.yaml
 
-    - name: Upgrade kubernetes package versions
+    - name: Upgrade kubeadm on this control-plane node
       ansible.builtin.include_role:
-        name: master
+        name: common
         tasks_from: upgrade-kubeadm.yaml
       when: inventory_hostname != orchestrator_node
 
@@ -68,9 +73,9 @@
       ansible.builtin.debug:
         msg: "Node {{ inventory_hostname }} is drained. Performing maintenance now."
 
-    - name: Upgrade kubernetes package versions
+    - name: Upgrade kubelet and kubectl on this control-plane node
       ansible.builtin.include_role:
-        name: master
+        name: common
         tasks_from: upgrade-kubelet.yaml
       when: inventory_hostname != orchestrator_node
     
@@ -101,9 +106,9 @@
         name: master
         tasks_from: select-orchestrator.yaml
 
-    - name: Upgrade kubernetes package versions
+    - name: Upgrade kubeadm on this worker
       ansible.builtin.include_role:
-        name: master
+        name: common
         tasks_from: upgrade-kubeadm.yaml
       
     - name: Upgrade Worker Nodes
@@ -127,9 +132,9 @@
       ansible.builtin.debug:
         msg: "Node {{ inventory_hostname }} is drained. Performing maintenance now."
 
-    - name: Upgrade kubernetes package versions
+    - name: Upgrade kubelet and kubectl on this worker
       ansible.builtin.include_role:
-        name: worker
+        name: common
         tasks_from: upgrade-kubelet.yaml
         apply:
           tags:

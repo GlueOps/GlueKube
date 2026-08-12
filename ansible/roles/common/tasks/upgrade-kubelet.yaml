@@ -1,4 +1,9 @@
-- name: Update package list and install kube components
+---
+# Move kubelet and kubectl onto the pinned version and restart the kubelet. Shared by the master
+# and worker plays in upgrade-cluster.yaml (#474); the two former copies differed only in that the
+# worker one carried these tags, so the tagged version is the one kept.
+
+- name: Upgrade kubelet and kubectl to {{ kubernetes_package_version }}
   ansible.builtin.apt:
     name:
       - kubelet={{ kubernetes_package_version }}
@@ -9,13 +14,13 @@
     allow_downgrade: true
   tags: kubernetes_component_kubelet
 
-- name: Hold kube packages
+- name: Hold kubelet at the pinned version
   ansible.builtin.dpkg_selections:
     name: kubelet
     selection: hold
   tags: kubernetes_component_kubelet
 
-- name: Hold kube packages
+- name: Hold kubectl at the pinned version
   ansible.builtin.dpkg_selections:
     name: kubectl
     selection: hold

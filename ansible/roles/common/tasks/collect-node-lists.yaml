@@ -1,0 +1,61 @@
+
+---
+# Build the two lists every node diff is computed from: what the inventory says the cluster
+# should hold, and what kubectl says it holds right now. Shared by the sync diff and the rotation
+# diff (#474) -- those two files were 58 lines apart by four, and that gap is where the "refuse to
+# diff against an empty cluster" guard went missing from the rotation copy.
+#
+# Imported statically rather than via include_role: the sync path wraps its import in
+# `check_mode: false` (sync.yaml) and the rotation path in `run_once`/`delegate_to`
+# (rotate-master-nodes.yaml), and a static import keeps those keywords applying exactly as they
+# did when this lived inside each caller. Staying inside the caller's role also means
+# compare-to-add.py still resolves from roles/master/files/.
+
+- name: Current work nodes
+  ansible.builtin.debug:
+    var: groups['workers']
+
+- name: Remove the stale desired-node list
+  ansible.builtin.file:
+    path: "/opt/kubernetes/new_nodes_list"
+    state: absent
+
+- name: Remove the stale current-node list
+  ansible.builtin.file:
+    path: "/opt/kubernetes/current_nodes_list"
+    state: absent
+
+- name: Write new nodes list
+  ansible.builtin.lineinfile:
+    path: "/opt/kubernetes/new_nodes_list"
+    line: "{{ item }}"
+    create: true
+    state: present
+    mode: "0644"
+  with_items: "{{ groups['workers'] + groups['masters'] }}"
+
+- name: Write current nodes list
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      export KUBECONFIG=/etc/kubernetes/admin.conf
+      kubectl get nodes -o json | jq -r '.items[].metadata.name' | sort \
+        | tee /opt/kubernetes/current_nodes_list
+    executable: /bin/bash
+  register: current_nodes_list
+  changed_when: false
+
+# Without this an empty kubectl result reads as "the cluster holds nothing", which makes every
+# inventory node look like an addition and -- on the rotation path -- every cluster node look like
+# a removal.
+- name: Refuse to diff against an empty cluster
+  ansible.builtin.assert:
+    that: current_nodes_list.stdout_lines | length > 0
+    fail_msg: >-
+      kubectl returned no nodes - refusing to compute a node diff.
+
+- name: Copy the add-diff script
+  ansible.builtin.copy:
+    src: "compare-to-add.py"
+    dest: "/opt/kubernetes/compare-to-add.py"
+    mode: "0644"

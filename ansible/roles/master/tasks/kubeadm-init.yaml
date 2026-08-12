@@ -63,14 +63,3 @@
     dest: ./.kube/config
     flat: true
   tags: kubeconfig_setup
-
-
-# Save Kubeconfig inside AutoGlue
-
-- name: Read kubeconfig file
-  ansible.builtin.slurp:
-    src: /etc/kubernetes/admin.conf
-  register: kubeconfig_content
-  tags:
-    - kubeconfig_setup
-    - kubeconfig_autoglue

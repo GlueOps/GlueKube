@@ -90,7 +90,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install molecule molecule-plugins[docker] ansible-core ansible-lint yamllint
           pip install docker
-          pip install jmespath python-dateutil
+          # netaddr backs the ansible.utils ipaddr/network_in_network filters that
+          # playbooks/preflight.yaml uses for the pod/service CIDR overlap check.
+          pip install jmespath python-dateutil netaddr
 
       - name: Install Ansible collections
         run: ansible-galaxy collection install -r ansible/requirements.yml

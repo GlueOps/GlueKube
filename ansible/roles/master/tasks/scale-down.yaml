@@ -22,7 +22,12 @@
   with_items: "{{ nodes_to_remove | default([]) }}"
   when: nodes_to_remove | length > 0
 
-- name: Remove etcd members only if it's control plane node
+# The name used to claim this was gated on the node being a control plane. It is not: the `when`
+# below is a hostname regex, so a control-plane node named anything other than master-node-*
+# skips etcd member removal and leaves a phantom member counting toward quorum. The name now
+# says what the code does; replacing the regex with `item in groups['masters']` is the fix and
+# is still open (#475).
+- name: Remove etcd member (nodes named master-node-* only)
   ansible.builtin.shell: |
     set -o pipefail
     export ETCDCTL_API=3

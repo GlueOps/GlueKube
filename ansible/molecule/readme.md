@@ -56,8 +56,9 @@ export AUTOGLUE_ORG_ID=""
 export AUTOGLUE_CREDENTIAL_ID=""
 export AUTOGLUE_ZONE_ID=""
 
-# still read by the master role during scale and rotate (update-dns-records.yaml).
-# create.yml no longer uses it.
+# fallback only. create.yml writes the id of the record it just made to
+# <scenario>/autoglue-record-id, and inventory/group_vars/masters.yaml reads that file first;
+# this variable is used only for a run whose create step did not make a record.
 export AUTOGLUE_RECORD_ID=""
 
 export AUTOGLUE_CLUSTER_ID=empty
@@ -108,16 +109,17 @@ It writes both ids to `<scenario>/autoglue-ids.yaml` (gitignored), and `destroy.
 file and deletes the record and then the domain. A `DELETE` that 404s is treated as success, so
 re-running `destroy` is harmless.
 
-Two consequences worth knowing:
+It also writes the record id on its own to `<scenario>/autoglue-record-id`, which
+`inventory/group_vars/masters.yaml` reads through `$MOLECULE_SCENARIO_DIRECTORY`. That is how the
+scale and rotate scenarios' `update-dns-records.yaml` PATCHes the record this run actually created
+instead of whatever `$AUTOGLUE_RECORD_ID` happens to point at.
+
+Two things worth knowing:
 
 - **The domain create is not idempotent.** If a run dies between creating the domain and reaching
   `destroy`, the next run's `POST /dns/domains` will hit the leftover. Delete it in AutoGlue
   before re-running.
-- **`AUTOGLUE_RECORD_ID` no longer lines up with the record that exists.** `create.yml` does not
-  read it any more, but `roles/master/tasks/master-node-rotation/update-dns-records.yaml` still
-  PATCHes `/dns/records/{{ autoglue_record_id }}` during scale and rotate — a different object
-  from the record `create.yml` just made, and in CI an *empty* one, since the workflow no longer
-  exports the variable at all. Until the created id is threaded into
-  `inventory/group_vars/masters.yaml`, the runtime DNS updates in the scale-cluster and
-  rotate-master-nodes scenarios do not reach the record the cluster resolves through. `test-cluster`
-  is unaffected — it never calls that task.
+- **`AUTOGLUE_ORG_ID` has to be set.** The calls send it as `x-org-id`, the workflow sets it from
+  a secret and `parser.py` now writes it from `platform.json`'s `org_id` (#467). Preflight fails
+  the run if it is empty, so a scenario with the secret unset stops at converge rather than
+  halfway through a DNS update.
