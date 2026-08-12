@@ -29,12 +29,56 @@
       register: nodes
       changed_when: false
 
+    # A rotate does not converge the cluster onto the masters group: compare-node.yaml marks
+    # *every* node currently in the cluster for removal and only the inventory masters that are
+    # not in the cluster yet for addition, so what survives a rotation is the newly added masters
+    # plus the workers -- never the whole masters group. After `rotate_master_nodes` the inventory
+    # lists master-node-1..6 while the cluster holds 4,5,6; after `second_rotate_master_nodes` it
+    # lists 4..9 while the cluster holds 7,8,9. The inventory the side_effect replaced, saved
+    # alongside as hosts.old.yaml, is what tells the new masters from the rotated-out ones.
+    - name: Locate the inventory the last rotation replaced
+      ansible.builtin.set_fact:
+        previous_inventory: "{{ lookup('first_found', candidate_paths, errors='ignore') | default('', true) }}"
+      vars:
+        # This playbook runs both directly (side_effect, playbook_dir is tests/) and imported by
+        # verify.yaml (playbook_dir is the scenario root).
+        candidate_paths:
+          - "{{ playbook_dir }}/inventory/hosts.old.yaml"
+          - "{{ playbook_dir }}/../inventory/hosts.old.yaml"
+          - "{{ playbook_dir }}/../../inventory/hosts.old.yaml"
+          - "inventory/hosts.old.yaml"
+          - "../inventory/hosts.old.yaml"
+
+    # .get() rather than [...] all the way down so a missing or half-written old inventory
+    # degrades to "nothing was rotated out" instead of an undefined-variable traceback.
+    - name: Read the masters the replaced inventory listed
+      ansible.builtin.set_fact:
+        previous_masters: "{{ (lookup('file', previous_inventory) | from_yaml | default({}, true)).get('all', {}).get('children', {}).get('masters', {}).get('hosts', {}) | list if previous_inventory | length > 0 else [] }}"
+
+    - name: Work out which masters the last rotation added
+      ansible.builtin.set_fact:
+        rotated_masters: "{{ groups['masters'] | difference(previous_masters) }}"
+
+    - name: Debug the rotation the cluster is being checked against
+      ansible.builtin.debug:
+        msg: >-
+          previous inventory: {{ previous_inventory | default('none', true) }},
+          masters it listed: {{ previous_masters }},
+          masters this rotation added: {{ rotated_masters }}
+
+    # Empty difference means no rotation has happened yet -- the first health check of the
+    # sequence, or a hosts.old.yaml left behind by an earlier run -- and then the cluster is
+    # expected to hold the full masters group.
+    - name: Build the expected node set
+      ansible.builtin.set_fact:
+        expected_masters: "{{ rotated_masters if rotated_masters | length > 0 else groups['masters'] }}"
+
     - name: Every inventory node is present and Ready
       ansible.builtin.assert:
         that:
-          - nodes.stdout_lines | sort == (groups['masters'] + groups['workers']) | sort
+          - nodes.stdout_lines | sort == (expected_masters + groups['workers']) | sort
         fail_msg: >-
-          Expected {{ (groups['masters'] + groups['workers']) | sort }},
+          Expected {{ (expected_masters + groups['workers']) | sort }},
           got {{ nodes.stdout_lines | sort }}
 
     - name: etcd membership matches the control-plane count
@@ -45,9 +89,11 @@
       register: etcd_members
       changed_when: false
 
+    # Same expectation as above: one member per master the cluster is actually left with, which
+    # after a rotation is the added masters, not every master the inventory names.
     - name: Etcd membership matches the number of masters in the inventory
       ansible.builtin.assert:
-        that: etcd_members.stdout | int == groups['masters'] | length
+        that: etcd_members.stdout | int == expected_masters | length
         fail_msg: >-
-          Expected {{ groups['masters'] | length }} etcd members,
+          Expected {{ expected_masters | length }} etcd members,
           found {{ etcd_members.stdout }}
