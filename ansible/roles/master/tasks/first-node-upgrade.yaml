@@ -31,10 +31,14 @@
 
 # upgrade nodes pacakages
 
+- name: Render the per-node kubelet patch
+  ansible.builtin.import_tasks: render-kubelet-patch.yaml
+  tags: upgrade
+
 - name: making the upgrade
   ansible.builtin.shell: |
     export KUBECONFIG=/etc/kubernetes/admin.conf
-    kubeadm upgrade apply {{ kubernetes_version }} -y
+    kubeadm upgrade apply {{ kubernetes_version }} -y --patches /etc/kubernetes/patches
   tags: upgrade
 
 - name: Generate Kubeadm configuration

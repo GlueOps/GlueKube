@@ -157,5 +157,4 @@ with open(env_output_path, 'w') as f:
     f.write(f"AUTOGLUE_CLUSTER_ID={autoglue_cluster_id}\n")
     f.write(f"AUTOGLUE_RECORD_ID={autoglue_record_id}\n")
     f.write(f"AUTOGLUE_BASE_URL={autoglue_base_url}\n")
-    f.write(f"AUTOGLUE_BASE_URL={autoglue_org_id}\n")
     print(f"✅ Successfully wrote to {env_output_path} and {ansible_output_path}")

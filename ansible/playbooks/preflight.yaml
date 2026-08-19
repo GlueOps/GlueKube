@@ -87,17 +87,20 @@
         quiet: true
       run_once: true
 
-    # 1.34 floor: authentication-configuration.yaml.j2 pins apiserver.config.k8s.io/v1, which
-    # only exists from 1.34. On an older cluster the apiserver crash-loops on start-up with an
-    # unrecognised apiVersion, long after this playbook has finished. (Epic E, #451.)
-    - name: Kubernetes version is 1.34 or newer
+    # 1.31 floor: kubeadm-stacked-config.yaml.j2 is written against kubeadm.k8s.io/v1beta4,
+    # which kubeadm only recognises from 1.31 -- on 1.30 and below `kubeadm init` rejects the
+    # config outright. authentication-configuration.yaml.j2 used to add a 1.34 floor of its own
+    # by pinning apiserver.config.k8s.io/v1; it now selects v1 or v1beta1 from this same version,
+    # so 1.31 is the real minimum. (Epic E, #451.)
+    - name: Kubernetes version is 1.31 or newer
       ansible.builtin.assert:
         that:
-          - k8s_major_minor is version('1.34', '>=')
+          - k8s_major_minor is version('1.31', '>=')
         fail_msg: >-
           kubernetes_version is {{ kubernetes_version }} ({{ k8s_major_minor }}), and
-          templates/authentication-configuration.yaml.j2 pins apiserver.config.k8s.io/v1, which
-          requires Kubernetes 1.34+. Below that the apiserver crash-loops after kubeadm init.
+          templates/kubeadm-stacked-config.yaml.j2 uses kubeadm.k8s.io/v1beta4, which requires
+          Kubernetes 1.31+. Below that kubeadm rejects the configuration and the cluster never
+          comes up.
         quiet: true
       run_once: true
 

@@ -23,19 +23,11 @@
   when: inventory_hostname in groups['workers'] and inventory_hostname not in hostvars[orchestrator_node]['current_cluster_nodes'].stdout_lines
 
 
-- name: Create kubeadm patches directory
-  ansible.builtin.file:
-    path: "/etc/kubernetes/patches"
-    state: directory
-    mode: "0755"
-  tags: join_worker
-  when: inventory_hostname in groups['workers'] and inventory_hostname not in hostvars[orchestrator_node]['current_cluster_nodes'].stdout_lines
-
-- name: Render Kubelet configuration patch
-  ansible.builtin.template:
-    src: "kubeletConfigurationPatch.yaml.j2"
-    dest: "/etc/kubernetes/patches/kubeletconfiguration+merge.yaml"
-    mode: "0644"
+# Shared with roles/worker/tasks/upgrade.yaml, which has to re-render the same file because
+# kubeadm re-reads --patches from disk on every upgrade and this task is gated on the node not
+# already being in the cluster (#448).
+- name: Render the per-node kubelet patch
+  ansible.builtin.import_tasks: render-kubelet-patch.yaml
   tags: join_worker
   when: inventory_hostname in groups['workers'] and inventory_hostname not in hostvars[orchestrator_node]['current_cluster_nodes'].stdout_lines
 

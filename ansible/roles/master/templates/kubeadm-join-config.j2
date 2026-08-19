@@ -15,3 +15,8 @@ controlPlane:
     advertiseAddress: "{{ hostvars[node_to_add | default(inventory_hostname)].ip }}"
     bindPort: 6443
   certificateKey: "{{ certificate_key }}"
+
+# Without this the joining control-plane node has no way to override the cluster-wide kubelet
+# configuration, which was sized from the facts of the node that ran `kubeadm init` (#449).
+patches:
+  directory: /etc/kubernetes/patches

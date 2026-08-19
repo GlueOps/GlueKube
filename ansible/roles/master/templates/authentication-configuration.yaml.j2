@@ -1,4 +1,14 @@
-apiVersion: apiserver.config.k8s.io/v1
+{#- AuthenticationConfiguration only reaches apiserver.config.k8s.io/v1 in Kubernetes 1.34. On
+    1.31 through 1.33 it exists solely as v1beta1. kube-apiserver strict-decodes
+    --authentication-config, so pinning v1 on an older cluster is a fatal start-up error and not
+    a warning: the apiserver crash-loops with "no kind AuthenticationConfiguration is registered
+    for version apiserver.config.k8s.io/v1" and `kubeadm init` times out several minutes later
+    with nothing pointing at this file. Pick the group from the target version instead (#451).
+
+    The 1.31 floor is asserted in playbooks/preflight.yaml -- it comes from
+    kubeadm-stacked-config.yaml.j2 using kubeadm.k8s.io/v1beta4, not from this file. -#}
+{% set k8s_minor = (kubernetes_version | regex_replace('^v', '')).split('.')[1] | int %}
+apiVersion: apiserver.config.k8s.io/{{ 'v1' if k8s_minor >= 34 else 'v1beta1' }}
 kind: AuthenticationConfiguration
 jwt:
   - issuer:

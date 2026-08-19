@@ -31,6 +31,15 @@
   when: inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[orchestrator_node]['current_cluster_nodes'].stdout_lines
 
 
+# Re-render the per-node kubelet patch before the join. `patches.directory` in
+# kubeadm-join-config.j2 points here; without the file the join silently falls back to the
+# cluster-wide reservations sized from masters[0] (#449).
+- name: Render the per-node kubelet patch
+  ansible.builtin.import_tasks: render-kubelet-patch.yaml
+  tags: join_master
+  when: inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[orchestrator_node]['current_cluster_nodes'].stdout_lines
+
+
 # join_master, not join_worker: this joins a control-plane node. `--tags join_worker` reaching
 # the control-plane join was the opposite of what anyone typing it intends -- the worker join
 # lives in roles/worker/tasks/join-nodes.yaml and keeps that tag (#476).

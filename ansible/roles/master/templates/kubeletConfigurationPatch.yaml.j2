@@ -1,0 +1,25 @@
+# Per-node kubelet reservations for control-plane nodes (#449).
+#
+# kubeadm's cluster-wide KubeletConfiguration lives in the kubelet-config ConfigMap. It is
+# rendered exactly once, from the facts of whichever master ran `kubeadm init`
+# (kubeadm-stacked-config.yaml.j2) -- so without a patch every other control-plane node inherits
+# reservations sized for a machine it is not. A 32 GiB replacement master joining under a 4 GiB
+# masters[0] would reserve 512Mi instead of 2560Mi and OOM the control plane under load.
+#
+# kubeadm merges this file over the ConfigMap at join time and again at every
+# `kubeadm upgrade node`/`upgrade apply` -- the --patches flag has to be re-supplied on both,
+# because kubeadm does not persist the patches directory in the cluster (#448).
+#
+# The expressions are deliberately identical to the ones in kubeadm-stacked-config.yaml.j2, so on
+# a homogeneous control plane this patch resolves to the same values and changes nothing. Change
+# the two together. The worker role keeps its own copy
+# (roles/worker/templates/kubeletConfigurationPatch.yaml.j2) because its small-tier
+# systemReserved is deliberately higher -- workers carry more non-kubelet system load.
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+kubeReserved:
+  cpu: "{{ '512m' if (ansible_processor_vcpus | int) >= 4 else '200m' }}"
+  memory: "{{ '2560Mi' if (ansible_memtotal_mb | int) >= 16384 else '512Mi' }}"
+systemReserved:
+  cpu: "{{ '512m' if (ansible_processor_vcpus | int) >= 4 else '200m' }}"
+  memory: "{{ '2560Mi' if (ansible_memtotal_mb | int) >= 16384 else '512Mi' }}"

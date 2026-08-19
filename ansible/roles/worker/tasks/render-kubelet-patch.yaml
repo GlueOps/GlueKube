@@ -1,0 +1,17 @@
+# Writes the per-node kubelet patch kubeadm merges over the cluster-wide kubelet-config
+# ConfigMap. Imported before `kubeadm join` and before every `kubeadm upgrade node`: kubeadm
+# reads --patches from disk on each call and keeps no record of the directory in the cluster, so
+# an upgrade that omits it reverts the node to reservations sized from masters[0] (#448).
+- name: Create kubeadm patches directory
+  ansible.builtin.file:
+    path: /etc/kubernetes/patches
+    state: directory
+    mode: "0755"
+
+- name: Render kubelet configuration patch
+  ansible.builtin.template:
+    src: kubeletConfigurationPatch.yaml.j2
+    dest: /etc/kubernetes/patches/kubeletconfiguration+merge.yaml
+    owner: root
+    group: root
+    mode: "0644"
