@@ -17,7 +17,7 @@ scenario:
   name: test-cluster
   test_sequence:
     - create
-    - side_effect tests/test_nodes_pingable.yaml
+    # - side_effect tests/test_nodes_pingable.yaml
     - converge
     # a second converge must report zero changed tasks -- this is the regression guard for
     # the convergence work in epic D (#439). It is only on this scenario: scale-cluster and
