@@ -1,11 +1,22 @@
+## Which scenario runs where
+
+`test-cluster` builds on **Proxmox**. `scale-cluster` and `rotate-master-nodes` are still on
+**Hetzner**. Both collections are pinned in `ansible/requirements.yml`, and the `.env` below
+carries the credentials for both.
+
 ## ⚠️ Do not run a scenario while CI is running one
 
-Every scenario uses the same fixed Hetzner resource names — network `test-molecule-network`,
-firewall `my-firewall`, servers `master-node-N` / `worker-node-N` — and all three create the same
-DNS domain, `$domain_name`. `hetzner.hcloud.server` is idempotent **by name**, so a second run
-does not fail: it silently *adopts* the first run's servers and writes their IPs into its own
-inventory. Whichever run reaches `destroy` first deletes the other's VMs, and its DNS teardown
-removes the domain the other run is still using.
+Every scenario reuses a fixed resource identity, and all three create the same DNS domain,
+`$domain_name`. On Hetzner that identity is the names — network `test-molecule-network`, firewall
+`my-firewall`, servers `master-node-N` / `worker-node-N`; on Proxmox it is the **vmid range**
+starting at `$PROXMOX_VMID_BASE` (masters `base+1..3`, workers `base+11..13`). Both providers'
+create steps are idempotent on that identity, so a second run does not fail: it silently *adopts*
+the first run's VMs and writes their IPs into its own inventory. Whichever run reaches `destroy`
+first deletes the other's VMs, and its DNS teardown removes the domain the other run is still
+using.
+
+Pick a `PROXMOX_VMID_BASE` in a range reserved for molecule. `destroy` deletes those vmids
+outright, so a base that collides with a real VM destroys it.
 
 The symptoms are inexplicable SSH failures, or — worse — a green run against a cluster somebody
 else half-built.
@@ -63,22 +74,111 @@ export AUTOGLUE_RECORD_ID=""
 
 export AUTOGLUE_CLUSTER_ID=empty
 
-# HCLOUD TOKEN
+# HCLOUD TOKEN -- scale-cluster and rotate-master-nodes only
 export HCLOUD_TOKEN=""
 
 # optional: CIDRs allowed to SSH into the test nodes. defaults to this machine's public
-# address, discovered at create time.
+# address, discovered at create time. used by every scenario.
 export MOLECULE_SSH_SOURCE_CIDRS=""
 
 # optional: Hetzner location for the test VMs. defaults to hel1.
 export HCLOUD_LOCATION=""
+
+
+# ---- Proxmox: test-cluster only ----
+#
+# community.proxmox reads these four itself, which is why no module in create.yml passes any
+# api_* parameter. PROXMOX_TOKEN_ID is the token name alone, not user@realm!name.
+export PROXMOX_HOST=""
+export PROXMOX_USER="root@pam"
+export PROXMOX_TOKEN_ID=""
+export PROXMOX_TOKEN_SECRET=""
+
+# optional: 8006 and true. Set PROXMOX_VALIDATE_CERTS=false for a self-signed PVE certificate.
+export PROXMOX_PORT="8006"
+export PROXMOX_VALIDATE_CERTS="true"
+
+# the node the six VMs are built on. required.
+export PROXMOX_NODE=""
+
+# the Ubuntu 24.04 cloud-init template to clone. it MUST have a cloud-init drive -- without one,
+# cicustom and ipconfig0 are accepted and then silently ignored, and nothing works.
+export PROXMOX_TEMPLATE="ubuntu-2404-cloudinit"
+
+# target storage for the full clones.
+export PROXMOX_STORAGE="local-lvm"
+
+# each node gets two NICs, and BOTH bridges have to serve DHCP -- create.yml reads the addresses
+# back out of the qemu guest agent.
+#   net0, public bridge: the address molecule SSHes to. this is the inventory's ansible_host, and
+#                        the only NIC with a firewall on it (SSH from your address, nothing else).
+#   net1, LAN bridge:    the address the cluster runs on -- kubelet, etcd, Calico VXLAN, and what
+#                        the ctrp record resolves to. this is the inventory's `ip`. unfiltered.
+export PROXMOX_BRIDGE_PUBLIC="vmbr_public"
+export PROXMOX_BRIDGE_LAN="vmbr_lan"
+
+# REQUIRED. the subnet the LAN bridge hands out. the guest agent reports both addresses in one
+# list with no hint which NIC each came from, so this is the only thing that tells them apart:
+# in-range is `ip`, out-of-range is ansible_host. get it wrong and every node fails the LAN assert
+# after all six VMs are already built. it is also what Calico's nodeAddressAutodetectionV4 is
+# pinned to, via inventory/group_vars/masters.yaml.
+export PROXMOX_LAN_CIDR="10.10.0.0/16"
+
+# storage with the "snippets" content type enabled, and where that storage keeps them on disk.
+export PROXMOX_SNIPPET_STORAGE="local"
+export PROXMOX_SNIPPET_DIR="/var/lib/vz/snippets"
+
+# vmids: masters base+1..3, workers base+11..13. must be free, and must not be VMs you care
+# about -- destroy.yml deletes them.
+export PROXMOX_VMID_BASE="9000"
+
+# per-node hardware. defaults are roughly a Hetzner ccx13.
+export PROXMOX_CORES="4"
+export PROXMOX_MEMORY="8192"
+
+# SSH to the hypervisor. the Proxmox API's storage upload endpoint does not accept snippets, so
+# create.yml writes the cloud-init files to the PVE host directly. host defaults to PROXMOX_HOST,
+# user to root, and the key to whatever your ssh-agent/config offers if left empty.
+export PROXMOX_SSH_HOST=""
+export PROXMOX_SSH_USER="root"
+export PROXMOX_SSH_KEY_FILE=""
 ```
+
+### Proxmox prerequisites
+
+`create.yml` does not build any of these — it assumes them and fails early with a message if it
+can:
+
+- the cloud-init template above, with a cloud-init drive
+- a storage with the `snippets` content type enabled
+- SSH access to the PVE host
+- both bridges, with DHCP on each
+- **no default gateway in the LAN bridge's DHCP scope.** Two default routes make the node's
+  outbound path nondeterministic, and `/etc/glueops/public-interface` — derived from the default
+  route in `cloudinit/cloud-init.yaml.j2` — stops reliably naming the public NIC. Hand out an
+  address and a netmask on `$PROXMOX_BRIDGE_LAN`, nothing else.
+- **the datacenter firewall switched on.** The scenario attaches its rules at `level: vm`, and
+  those do nothing while the datacenter firewall is off — the nodes would sit on a public address
+  with no filtering at all, so `create.yml` asserts on it. Only `net0` carries `firewall=1`, so
+  the ruleset governs the public NIC alone and is just SSH from `$MOLECULE_SSH_SOURCE_CIDRS`;
+  `net1` is deliberately unfiltered, which is how the cluster protocols get through without a
+  single rule. Anything else on `$PROXMOX_BRIDGE_LAN` can therefore reach etcd and the kubelet —
+  fine for a throwaway cluster on a private bridge, worth knowing before you put one elsewhere. Enabling it is deliberately left to a
+  human: it applies a default-DROP input policy across the whole cluster and can lock you out of
+  unrelated VMs and of the PVE host itself. Read your default policies first, then
+  `pvesh set /cluster/firewall/options --enable 1`.
+
+The firewall rules themselves live on the VM, so `destroy.yml` has no firewall teardown to do —
+deleting a VM takes its rules with it.
 
 `domain_name` is required — `kubeadm-stacked-config.yaml.j2` puts `kube-api.$domain_name` in the
 apiserver certSANs and `authentication-configuration.yaml.j2` builds the Dex issuer from it.
 Without it every scenario dies at *Init kubeadm* with `AnsibleUndefinedVariable`.
 
 - install the collections: `ansible-galaxy collection install -r ansible/requirements.yml`
+
+- install the python libraries the modules need on the controller:
+  `pip install jmespath netaddr proxmoxer requests`
 
 - source .env
 
@@ -98,7 +198,9 @@ zero changed tasks.
 ## DNS lifecycle
 
 `create.yml` creates the AutoGlue DNS domain named by `$domain_name`, then creates the `ctrp` A
-record inside it pointing at the master private IPs:
+record inside it pointing at the master node addresses. Every scenario uses the private address,
+never the public one: `private_networks_info[0].ip` on Hetzner, the `$PROXMOX_LAN_CIDR` address on
+Proxmox. That is the same value as the inventory's `ip`, which is what the apiserver listens on:
 
 ```
 POST /api/v1/dns/domains                        {credential_id, domain_name, zone_id}

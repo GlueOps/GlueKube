@@ -1,5 +1,29 @@
 ---
-- name: Create Hetzner VMs and Firewall
+# Builds the six-node test cluster on Proxmox VE.
+#
+# Everything downstream of this playbook is provider-agnostic, so the contract it has to honour is
+# just the three files it drops in the scenario directory:
+#
+#   inventory/hosts.yaml   the real inventory, linked by molecule.yml's inventory.links.hosts
+#   autoglue-ids.yaml      domain + record ids, read back by destroy.yml
+#   autoglue-record-id     the bare record id, read by inventory/group_vars/masters.yaml
+#
+# Auth comes from the environment and is never written here: community.proxmox reads PROXMOX_HOST,
+# PROXMOX_USER, PROXMOX_TOKEN_ID, PROXMOX_TOKEN_SECRET and PROXMOX_VALIDATE_CERTS itself, which is
+# why no module below passes api_* parameters. The two ansible.builtin.uri calls cannot use that
+# fallback and rebuild the token header from the same variables.
+#
+# Prerequisites on the cluster, none of which this playbook creates:
+#   - an Ubuntu 24.04 cloud-init template ($PROXMOX_TEMPLATE) that has a cloud-init drive.
+#     Without the drive, cicustom and ipconfig0 are accepted and then silently ignored.
+#   - a storage with the "snippets" content type ($PROXMOX_SNIPPET_STORAGE)
+#   - SSH access to the PVE host. The API's storage upload endpoint does not accept snippets, so
+#     the cloud-init files have to be written to the hypervisor directly.
+#   - the datacenter firewall switched on (asserted below, never set here)
+#   - two bridges with DHCP on each: $PROXMOX_BRIDGE_PUBLIC carries net0, the address molecule
+#     SSHes to and the only NIC that is firewalled; $PROXMOX_BRIDGE_LAN carries net1, which is
+#     what the cluster itself runs on. $PROXMOX_LAN_CIDR is what tells the two leases apart.
+- name: Create Proxmox VMs and their firewall rules
   hosts: localhost
   gather_facts: true
   vars:
@@ -7,33 +31,300 @@
     num_worker_nodes: 3
     public_key: "{{ lookup('file', 'keys/vm_node.pub') }}"
 
+    # `default('x')` alone does not work for any of these: lookup('env', ...) returns "" for an
+    # unset variable, which is DEFINED but falsy, so the default never fires. The boolean form
+    # below also replaces empty values. (Same trap the old HCLOUD_LOCATION line documented.)
+    pve_node: "{{ lookup('env', 'PROXMOX_NODE') }}"
+    pve_template: "{{ lookup('env', 'PROXMOX_TEMPLATE') | default('ubuntu-2404-cloudinit', true) }}"
+    pve_storage: "{{ lookup('env', 'PROXMOX_STORAGE') | default('local-lvm', true) }}"
+    # Two NICs. net0 on the public bridge is what molecule SSHes to and the only one that is
+    # firewalled; net1 on the LAN bridge carries everything the cluster does -- kubelet, etcd,
+    # Calico VXLAN -- and is what lands in the inventory's `ip`. Both take a DHCP lease.
+    pve_bridge_public: "{{ lookup('env', 'PROXMOX_BRIDGE_PUBLIC') | default('vmbr_public', true) }}"
+    pve_bridge_lan: "{{ lookup('env', 'PROXMOX_BRIDGE_LAN') | default('vmbr_lan', true) }}"
+    # Required, and the only thing that tells the two leases apart: the guest agent reports both
+    # addresses in one list with nothing to say which NIC they came from.
+    pve_lan_cidr: "{{ lookup('env', 'PROXMOX_LAN_CIDR') }}"
+    pve_snippet_storage: "{{ lookup('env', 'PROXMOX_SNIPPET_STORAGE') | default('local', true) }}"
+    pve_snippet_dir: "{{ lookup('env', 'PROXMOX_SNIPPET_DIR') | default('/var/lib/vz/snippets', true) }}"
+    pve_cores: "{{ lookup('env', 'PROXMOX_CORES') | default('4', true) }}"
+    pve_memory: "{{ lookup('env', 'PROXMOX_MEMORY') | default('8192', true) }}"
+    # Masters take base+1..3, workers base+11..13. Deterministic so destroy.yml needs no state
+    # file -- and so a collision with a pre-existing VM is a collision with a *known* range.
+    pve_vmid_base: "{{ lookup('env', 'PROXMOX_VMID_BASE') | default('9000', true) | int }}"
+
+    # Used only by the two uri calls, which cannot use the collection's env fallbacks.
+    pve_api_host: "{{ lookup('env', 'PROXMOX_HOST') }}"
+    pve_api_port: "{{ lookup('env', 'PROXMOX_PORT') | default('8006', true) }}"
+    pve_api_user: "{{ lookup('env', 'PROXMOX_USER') | default('root@pam', true) }}"
+    pve_token_id: "{{ lookup('env', 'PROXMOX_TOKEN_ID') }}"
+    pve_token_secret: "{{ lookup('env', 'PROXMOX_TOKEN_SECRET') }}"
+    pve_validate_certs: "{{ lookup('env', 'PROXMOX_VALIDATE_CERTS') | default('true', true) | bool }}"
+    pve_api_url: "https://{{ pve_api_host }}:{{ pve_api_port }}/api2/json"
+    pve_auth_header:
+      Authorization: "PVEAPIToken={{ pve_api_user }}!{{ pve_token_id }}={{ pve_token_secret }}"
+
+    # SSH to the hypervisor, for the cloud-init snippets.
+    pve_ssh_host: "{{ lookup('env', 'PROXMOX_SSH_HOST') | default(lookup('env', 'PROXMOX_HOST'), true) }}"
+    pve_ssh_user: "{{ lookup('env', 'PROXMOX_SSH_USER') | default('root', true) }}"
+    pve_ssh_key_file: "{{ lookup('env', 'PROXMOX_SSH_KEY_FILE') }}"
+
+    snippet_prefix: molecule-test-cluster
+
   tasks:
-    - name: Create Hetzner Network
-      hetzner.hcloud.network:
-        name: test-molecule-network
-        ip_range: "10.1.0.0/16"
-        api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
-      register: network
+    - name: Required Proxmox variables are set
+      ansible.builtin.assert:
+        that:
+          - pve_api_host | length > 0
+          - pve_node | length > 0
+          - pve_token_id | length > 0
+          - pve_token_secret | length > 0
+          - pve_lan_cidr | length > 0
+        fail_msg: >-
+          PROXMOX_HOST, PROXMOX_NODE, PROXMOX_TOKEN_ID, PROXMOX_TOKEN_SECRET and PROXMOX_LAN_CIDR
+          must all be set. See ansible/molecule/readme.md. Failing here beats failing inside a
+          module with "api_host is required" after some of the six VMs already exist -- and, for
+          the CIDR, beats building all six and then finding no address can be classified.
+        quiet: true
 
-    - name: Create Hetzner Network Subnet
-      hetzner.hcloud.subnetwork:
-        network: test-molecule-network
-        network_zone: "eu-central"
-        ip_range: "10.1.0.0/24"
-        api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
-        type: cloud
-      register: subnet
+    # The per-VM rules below only take effect if the datacenter firewall is on. Enabling it is
+    # deliberately NOT done here: it applies a default-DROP input policy across the whole cluster
+    # and can lock you out of unrelated VMs and of the PVE host itself. Assert and let a human do
+    # it once.
+    - name: Read the datacenter firewall options
+      ansible.builtin.uri:
+        url: "{{ pve_api_url }}/cluster/firewall/options"
+        method: GET
+        headers: "{{ pve_auth_header }}"
+        validate_certs: "{{ pve_validate_certs }}"
+        return_content: true
+      register: cluster_firewall
 
-    # The test nodes carry a public IPv4 and a Hetzner firewall only filters that public
-    # interface. Everything the cluster itself needs -- etcd, the apiserver behind the ctrp
-    # record, kubelet -- travels over test-molecule-network, so the only traffic that has to
-    # reach a node from outside is SSH from whatever is running molecule.
-    #
-    # Node-to-node still needs the public interface open: calico autodetects with firstFound
-    # and lands on eth0 here, so VXLAN would break if the nodes could not reach each other.
-    # Their addresses do not exist yet -- the firewall has to be created before the servers
-    # that attach to it -- so that rule is added in "Restrict the firewall ..." below, once
-    # master_nodes and worker_nodes are registered.
+    - name: The datacenter firewall is enabled
+      ansible.builtin.assert:
+        that:
+          - cluster_firewall.json.data.enable | default(0) | int == 1
+        fail_msg: >-
+          The datacenter firewall is off, so the per-VM rules this playbook creates would do
+          nothing and the test nodes would be wide open on a public address. Turn it on once at
+          Datacenter -> Firewall -> Options (or `pvesh set /cluster/firewall/options --enable 1`).
+          Read the default policies before you do: enabling it applies a default-DROP input policy
+          cluster-wide.
+        quiet: true
+
+    # One list, used by every loop below and rebuilt identically in destroy.yml.
+    - name: Build the master node list
+      ansible.builtin.set_fact:
+        cluster_nodes: >-
+          {{ cluster_nodes | default([])
+             + [{'name': 'master-node-' ~ (item + 1),
+                 'vmid': (pve_vmid_base | int) + item + 1,
+                 'role': 'master'}] }}
+      loop: "{{ range(0, num_master_nodes) | list }}"
+
+    - name: Add the worker nodes to the list
+      ansible.builtin.set_fact:
+        cluster_nodes: >-
+          {{ cluster_nodes
+             + [{'name': 'worker-node-' ~ (item + 1),
+                 'vmid': (pve_vmid_base | int) + 10 + item + 1,
+                 'role': 'worker'}] }}
+      loop: "{{ range(0, num_worker_nodes) | list }}"
+
+    # The hypervisor as an ansible host, so the snippet tasks can delegate_to it. In memory only;
+    # nothing is written to an inventory file.
+    - name: Register the Proxmox host for the snippet upload
+      ansible.builtin.add_host:
+        name: pve_host
+        ansible_host: "{{ pve_ssh_host }}"
+        ansible_user: "{{ pve_ssh_user }}"
+        ansible_ssh_private_key_file: "{{ pve_ssh_key_file | default(omit, true) }}"
+        ansible_python_interpreter: /usr/bin/python3
+      changed_when: false
+
+    - name: Ensure the snippet directory exists
+      ansible.builtin.file:
+        path: "{{ pve_snippet_dir }}"
+        state: directory
+        mode: "0755"
+      delegate_to: pve_host
+
+    # One snippet per node, not one shared file: cicustom user= REPLACES the user-data Proxmox
+    # generates rather than merging with it, so the hostname qm would normally inject is lost.
+    # Six VMs with the template's hostname all register as a single Kubernetes node and
+    # tests/test_cluster_healthy.yaml fails its "every inventory node is present" assert.
+    - name: Render a cloud-init snippet for each node
+      ansible.builtin.template:
+        src: cloudinit/cloud-init.yaml.j2
+        dest: "{{ pve_snippet_dir }}/{{ snippet_prefix }}-{{ item.name }}.yaml"
+        mode: "0644"
+      vars:
+        node_name: "{{ item.name }}"
+      delegate_to: pve_host
+      loop: "{{ cluster_nodes }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    # Idempotent the same way hetzner.hcloud.server was, just keyed on the vmid rather than the
+    # name: proxmox_kvm's clone returns changed=false when newid already exists. So a create
+    # re-run after a partial failure picks up where it left off. It also means a *stale* VM on one
+    # of our vmids is silently adopted -- see the warning at the top of ansible/molecule/readme.md.
+    - name: Clone the template into each node
+      community.proxmox.proxmox_kvm:
+        node: "{{ pve_node }}"
+        clone: "{{ pve_template }}"
+        newid: "{{ item.vmid }}"
+        name: "{{ item.name }}"
+        storage: "{{ pve_storage }}"
+        full: true
+        timeout: 300
+      loop: "{{ cluster_nodes }}"
+      loop_control:
+        label: "{{ item.name }} ({{ item.vmid }})"
+
+    # A separate call from the clone: proxmox_kvm will not clone and configure in one pass.
+    # firewall=1 on the NIC is what makes the per-VM rules further down apply at all.
+    - name: Configure hardware and cloud-init on each node
+      community.proxmox.proxmox_kvm:
+        node: "{{ pve_node }}"
+        vmid: "{{ item.vmid }}"
+        name: "{{ item.name }}"
+        update: true
+        cores: "{{ pve_cores | int }}"
+        memory: "{{ pve_memory | int }}"
+        # "1", not "enabled": the module runs this through ansible's boolean() and only
+        # converts recognised booleans to the 1/0 the API wants. Anything else is passed through
+        # verbatim, so `agent: enabled` reaches PVE as agent=enabled -- which it parses as
+        # enabled=enabled and rejects.
+        agent: "1"
+        onboot: false
+        net:
+          net0: "virtio,bridge={{ pve_bridge_public }},firewall=1"
+          # No firewall=1 here on purpose. PVE only filters interfaces carrying the flag, so the
+          # LAN stays open no matter what policy_in the VM firewall is set to -- which is what
+          # lets etcd, the kubelet and Calico talk without a single rule.
+          net1: "virtio,bridge={{ pve_bridge_lan }}"
+        # cicustom below replaces only user-data, so Proxmox still builds network-config from
+        # these two. That is also why the snippet must not configure networking itself.
+        ipconfig:
+          ipconfig0: "ip=dhcp"
+          ipconfig1: "ip=dhcp"
+        cicustom: "user={{ pve_snippet_storage }}:snippets/{{ snippet_prefix }}-{{ item.name }}.yaml"
+      loop: "{{ cluster_nodes }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Start each node
+      community.proxmox.proxmox_kvm:
+        node: "{{ pve_node }}"
+        vmid: "{{ item.vmid }}"
+        state: started
+      loop: "{{ cluster_nodes }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    # Replaces the old blind `pause: seconds: 60`. The nodes take a DHCP lease, so their addresses
+    # are not known until the guest agent answers -- and the agent is installed by the snippet, so
+    # this also proves cloud-init ran. proxmox_vm_info fail_json()s while the agent is still down,
+    # hence ignore_errors alongside until.
+    - name: Wait for the guest agent to report an address
+      community.proxmox.proxmox_vm_info:
+        node: "{{ pve_node }}"
+        type: qemu
+        vmid: "{{ item.vmid }}"
+        network: true
+      register: vm_net
+      ignore_errors: true
+      changed_when: false
+      # Templated lazily, after the register is set, so it sees this task's own result.
+      vars:
+        agent_ipv4: >-
+          {{ vm_net.proxmox_vms | default([])
+             | selectattr('network', 'defined') | map(attribute='network') | flatten
+             | rejectattr('name', 'equalto', 'lo')
+             | selectattr('ip-addresses', 'defined') | map(attribute='ip-addresses') | flatten
+             | selectattr('ip-address-type', 'equalto', 'ipv4') | map(attribute='ip-address')
+             | reject('match', '^(127\.|169\.254\.)') | list }}
+      # Both leases, not just one: net0 usually comes up first, and stopping there would map a
+      # node's public address into `ip` on the run where the LAN lease was a second slower.
+      until: >-
+        (agent_ipv4 | ansible.utils.ipaddr(pve_lan_cidr) | length) > 0
+        and
+        (agent_ipv4 | difference(agent_ipv4 | ansible.utils.ipaddr(pve_lan_cidr)) | length) > 0
+      retries: 40
+      delay: 15
+      loop: "{{ cluster_nodes }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    # Collected once, then split, so the extraction expression lives in exactly one place.
+    - name: Collect the addresses each agent reported
+      ansible.builtin.set_fact:
+        node_agent_ipv4: >-
+          {{ node_agent_ipv4 | default({}) | combine({item.item.name: (
+               item.proxmox_vms | default([])
+               | selectattr('network', 'defined') | map(attribute='network') | flatten
+               | rejectattr('name', 'equalto', 'lo')
+               | selectattr('ip-addresses', 'defined') | map(attribute='ip-addresses') | flatten
+               | selectattr('ip-address-type', 'equalto', 'ipv4') | map(attribute='ip-address')
+               | reject('match', '^(127\.|169\.254\.)') | list) }) }}
+      loop: "{{ vm_net.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    # Split by CIDR rather than by interface name: ens18/ens19 is a Proxmox naming convention, not
+    # a guarantee, and the guest agent gives no hint which NIC an address belongs to. The two
+    # tasks are separate so a node that got only one of its two leases still lands in the map it
+    # did get -- which is what makes the assert below able to say which lease is missing.
+    - name: Map each node to its LAN address (net1)
+      ansible.builtin.set_fact:
+        node_lan_addresses: "{{ node_lan_addresses | default({}) | combine({item.key: lan | first}) }}"
+      vars:
+        lan: "{{ item.value | ansible.utils.ipaddr(pve_lan_cidr) }}"
+      when: lan | length > 0
+      loop: "{{ node_agent_ipv4 | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+
+    - name: Map each node to its public address (net0)
+      ansible.builtin.set_fact:
+        node_public_addresses: "{{ node_public_addresses | default({}) | combine({item.key: public | first}) }}"
+      vars:
+        public: "{{ item.value | difference(item.value | ansible.utils.ipaddr(pve_lan_cidr)) }}"
+      when: public | length > 0
+      loop: "{{ node_agent_ipv4 | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+
+    # Without this the missing node surfaces much later as an inventory that is quietly one host
+    # short, or as an AnsibleUndefinedVariable with no host name in it.
+    - name: Every node reported a public address
+      ansible.builtin.assert:
+        that:
+          - node_public_addresses | default({}) | length == cluster_nodes | length
+        fail_msg: >-
+          No address outside {{ pve_lan_cidr }} came back for
+          {{ cluster_nodes | map(attribute='name') | difference(node_public_addresses | default({}) | list) | sort }}.
+          Either the qemu-guest-agent never answered -- so cloud-init did not run; check that
+          {{ pve_template }} has a cloud-init drive, and `qm cloudinit dump <vmid> user` -- or
+          {{ pve_bridge_public }} handed out no lease.
+        quiet: true
+
+    # Split from the assert above because the two failures have completely different causes, and
+    # the LAN one is almost always a wrong PROXMOX_LAN_CIDR rather than a broken VM.
+    - name: Every node reported a LAN address
+      ansible.builtin.assert:
+        that:
+          - node_lan_addresses | default({}) | length == cluster_nodes | length
+        fail_msg: >-
+          No address inside {{ pve_lan_cidr }} came back for
+          {{ cluster_nodes | map(attribute='name') | difference(node_lan_addresses | default({}) | list) | sort }}.
+          Either PROXMOX_LAN_CIDR does not describe what {{ pve_bridge_lan }} hands out -- compare
+          it against `ip -4 addr` on a node -- or that bridge has no DHCP server on it.
+        quiet: true
+
+    # Same logic the Hetzner scenario used, and still meaningful: these nodes carry public
+    # addresses, so SSH has to be scoped to whatever is running molecule.
     - name: Discover the public address molecule connects from
       ansible.builtin.uri:
         url: https://api.ipify.org?format=json
@@ -48,82 +339,76 @@
              if lookup('env', 'MOLECULE_SSH_SOURCE_CIDRS') | length > 0
              else [controller_public_ip.json.ip ~ '/32'] }}
 
-    - name: Create Firewall
-      hetzner.hcloud.firewall:
-        name: my-firewall
-        rules:
-          - direction: in
-            protocol: tcp
-            port: "22"
-            source_ips: "{{ ssh_source_cidrs }}"
-        api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
-      register: firewall
+    # Two things differ from the Hetzner firewall and both shape the tasks below:
+    #   - a PVE rule's `source` is a single string, not a list, so one rule per CIDR
+    #   - rules are position-indexed, and `pos` is required
+    #
+    # level: vm means the rules live on the VM and are deleted with it, so destroy.yml has no
+    # firewall teardown to do. Only net0 carries firewall=1, so this ruleset governs the public
+    # NIC alone -- SSH is the only thing that has to reach a node from off-box, because every
+    # cluster protocol rides the unfiltered LAN NIC.
+    - name: Start the ruleset with SSH from the controller
+      ansible.builtin.set_fact:
+        fw_rules: >-
+          {{ fw_rules | default([])
+             + [{'type': 'in', 'action': 'ACCEPT', 'proto': 'tcp', 'dport': '22',
+                 'source': item, 'enable': true, 'comment': 'molecule controller'}] }}
+      loop: "{{ ssh_source_cidrs }}"
 
+    # No node-to-node rule. The Hetzner scenarios need one because Calico autodetects with
+    # firstFound and lands on their public NIC; here inventory/group_vars/masters.yaml pins
+    # nodeAddressAutodetectionV4 to PROXMOX_LAN_CIDR, so VXLAN never touches net0.
+    - name: Number the rules
+      ansible.builtin.set_fact:
+        vm_firewall_rules: "{{ vm_firewall_rules | default([]) + [fw_rules[item] | combine({'pos': item})] }}"
+      loop: "{{ range(0, fw_rules | length) | list }}"
+      loop_control:
+        label: "{{ item }}"
 
-    - name: Create Master Nodes
-      hetzner.hcloud.server:
-        name: "master-node-{{ item + 1 }}"
-        server_type: ccx13
-        image: ubuntu-24.04
-        # `default('hel1')` alone does not work here: lookup('env', ...) returns "" for an unset
-        # variable, which is DEFINED but falsy, so the default never fires. hetzner.hcloud then
-        # calls locations.get_by_name("") -> None and dies with
-        # "'NoneType' object has no attribute 'name'". The boolean form also replaces empty values.
-        location: "{{ lookup('env', 'HCLOUD_LOCATION') | default('hel1', true) }}"
-        enable_ipv4: true
-        enable_ipv6: false
-        firewalls:
-          - my-firewall
-        user_data: "{{ lookup('template', 'cloudinit/cloud-init.yaml.j2')}}"
-        api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
-        private_networks:
-          - test-molecule-network
-      loop: "{{ range(0, num_master_nodes) | list }}"
-      register: master_nodes
-    
-    - name: Create Worker Nodes
-      hetzner.hcloud.server:
-        name: "worker-node-{{ item + 1 }}"
-        server_type: ccx13
-        image: ubuntu-24.04
-        location: "{{ lookup('env', 'HCLOUD_LOCATION') | default('hel1', true) }}"
-        enable_ipv4: true
-        enable_ipv6: false
-        firewalls:
-          - my-firewall
-        user_data: "{{ lookup('template', 'cloudinit/cloud-init.yaml.j2')}}"
-        api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
-        private_networks:
-          - test-molecule-network
-      loop: "{{ range(0, num_worker_nodes) | list }}"
-      register: worker_nodes
+    # There is no VM-level firewall-options module in community.proxmox, so this one goes through
+    # the API directly. dhcp: 1 is not optional -- the nodes hold a DHCP lease, and a default-DROP
+    # input policy without it drops the renewal and the node falls off the network mid-run.
+    - name: Enable the firewall on each VM
+      ansible.builtin.uri:
+        url: "{{ pve_api_url }}/nodes/{{ pve_node }}/qemu/{{ item.vmid }}/firewall/options"
+        method: PUT
+        headers: "{{ pve_auth_header }}"
+        validate_certs: "{{ pve_validate_certs }}"
+        body_format: form-urlencoded
+        body:
+          enable: 1
+          dhcp: 1
+          policy_in: DROP
+          policy_out: ACCEPT
+        status_code: [200]
+      loop: "{{ cluster_nodes }}"
+      loop_control:
+        label: "{{ item.name }}"
 
-    # Now that the nodes exist, replace the bootstrap ruleset: SSH stays scoped to the
-    # controller, and the nodes are allowed to talk to each other over their public
-    # addresses. Nothing else on the internet can reach the cluster.
-    - name: Restrict the firewall to SSH and node-to-node traffic
-      hetzner.hcloud.firewall:
-        name: my-firewall
-        rules:
-          - direction: in
-            protocol: tcp
-            port: "22"
-            source_ips: "{{ ssh_source_cidrs }}"
-          - direction: in
-            protocol: tcp
-            port: "1-65535"
-            source_ips: "{{ node_source_cidrs }}"
-          - direction: in
-            protocol: udp
-            port: "1-65535"
-            source_ips: "{{ node_source_cidrs }}"
-        api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
-      vars:
-        node_source_cidrs: >-
-          {{ (master_nodes.results + worker_nodes.results)
-             | map(attribute='hcloud_server.ipv4_address')
-             | map('regex_replace', '$', '/32') | list }}
+    - name: Apply the firewall rules to each VM
+      community.proxmox.proxmox_firewall:
+        level: vm
+        vmid: "{{ item.vmid }}"
+        state: present
+        update: true
+        rules: "{{ vm_firewall_rules }}"
+      loop: "{{ cluster_nodes }}"
+      loop_control:
+        label: "{{ item.name }}"
 
+    - name: Wait for SSH on every node
+      ansible.builtin.wait_for:
+        host: "{{ item.value }}"
+        port: 22
+        timeout: 300
+      loop: "{{ node_public_addresses | dict2items }}"
+      loop_control:
+        label: "{{ item.key }} ({{ item.value }})"
+
+    # ansible_host is the public address molecule connects over; ip is the LAN address every
+    # cluster component binds to -- etcd_initial_cluster, the kubelet and the ctrp record all read
+    # it. Same split the Hetzner scenarios use (scale-cluster/create.yml: public ipv4_address vs
+    # private_networks_info[0].ip).
     - name: Store default inventory
       ansible.builtin.copy:
         content: |
@@ -131,10 +416,10 @@
             children:
               masters:
                 hosts:
-                  {% for node in master_nodes.results -%}
-                    {{ node.hcloud_server.name }}:
-                      ansible_host: {{ node.hcloud_server.ipv4_address }}
-                      ip: {{ node.hcloud_server.private_networks_info[0].ip }}
+                  {% for node in cluster_nodes | selectattr('role', 'equalto', 'master') -%}
+                    {{ node.name }}:
+                      ansible_host: {{ node_public_addresses[node.name] }}
+                      ip: {{ node_lan_addresses[node.name] }}
                       ansible_user: cluster
                       ansible_ssh_private_key_file: keys/vm_node
                       extra:
@@ -143,10 +428,10 @@
                   {% endfor +%}
               workers:
                 hosts:
-                  {% for node in worker_nodes.results -%}
-                    {{ node.hcloud_server.name }}:
-                      ansible_host: {{ node.hcloud_server.ipv4_address }}
-                      ip: {{ node.hcloud_server.private_networks_info[0].ip }}
+                  {% for node in cluster_nodes | selectattr('role', 'equalto', 'worker') -%}
+                    {{ node.name }}:
+                      ansible_host: {{ node_public_addresses[node.name] }}
+                      ip: {{ node_lan_addresses[node.name] }}
                       ansible_user: cluster
                       ansible_ssh_private_key_file: keys/vm_node
                       extra:
@@ -154,7 +439,7 @@
                   {% endfor +%}
         dest: "./inventory/hosts.yaml"
         mode: "0644"
-    
+
     # AutoGlue owns the DNS the apiserver is reached through. The domain and the ctrp record are
     # both created here rather than assumed to exist, and destroy.yml removes them again, so a
     # run leaves nothing behind. The ids are written to autoglue-ids.yaml because destroy runs
@@ -201,8 +486,11 @@
           name: ctrp
           ttl: 60
           type: A
-          # all three masters
-          values: "{{ master_nodes.results | map(attribute='hcloud_server') | map(attribute='private_networks_info') | map('first') | map(attribute='ip') | list }}"
+          # all three masters, on the LAN -- this is the address the apiserver listens on and the
+          # one every node resolves ctrp to, so it must match the inventory's `ip`.
+          values: >-
+            {{ cluster_nodes | selectattr('role', 'equalto', 'master')
+               | map(attribute='name') | map('extract', node_lan_addresses) | list }}
         status_code: [200, 201]
       register: autoglue_record
 
@@ -231,7 +519,3 @@
         content: "{{ autoglue_record.json.id }}"
         dest: "./autoglue-record-id"
         mode: "0644"
-
-    - name: wait for 60 seconds to ensure that the nodes are up and running
-      ansible.builtin.pause:
-        seconds: 60

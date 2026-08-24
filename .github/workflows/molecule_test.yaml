@@ -18,10 +18,11 @@ on:
 env:
   ANSIBLE_ROLES_PATH: ${{ github.workspace }}/ansible/roles
 
-# Every scenario uses the same fixed Hetzner resource names (test-molecule-network,
-# my-firewall, master-node-N, worker-node-N) and PATCHes the same AUTOGLUE_RECORD_ID, and
-# hetzner.hcloud.server is idempotent by name -- so two concurrent runs adopt and then destroy
-# each other's servers. Queue them instead (#461).
+# Every scenario reuses fixed resource identities and PATCHes the same AUTOGLUE_RECORD_ID, and
+# both providers' create steps are idempotent on that identity -- so two concurrent runs adopt and
+# then destroy each other's VMs. On scale-cluster and rotate-master-nodes that identity is the
+# Hetzner names (test-molecule-network, my-firewall, master-node-N, worker-node-N); on test-cluster
+# it is the Proxmox vmid range starting at PROXMOX_VMID_BASE. Queue them instead (#461).
 #
 # cancel-in-progress must stay false: cancelling a molecule run mid-flight skips `destroy` and
 # leaks six VMs.
@@ -71,8 +72,9 @@ jobs:
 
   molecule:
     name: Molecule Tests
-    # Molecule builds six Hetzner VMs and needs HCLOUD_TOKEN plus the AutoGlue secrets, which
-    # GitHub does not expose to pull requests from forks. PRs get the lint job only.
+    # Molecule builds six VMs -- Proxmox for test-cluster, Hetzner for the other two -- and needs
+    # the PROXMOX_* / HCLOUD_TOKEN credentials plus the AutoGlue secrets, which GitHub does not
+    # expose to pull requests from forks. PRs get the lint job only.
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
 
@@ -85,6 +87,14 @@ jobs:
         with:
           python-version: '3.14'
 
+      - name: Setup Tailscale
+        uses: tailscale/github-action@780049a30b6ff5c378a9e7b389d15ece7a204888 # v4.1.3
+        with:
+          oauth-client-id: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
+          args: "--exit-node=${{ secrets.TAILSCALE_EXIT_NODE }}  --accept-dns=false"
+          tags: tag:github-actions
+      
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -92,7 +102,9 @@ jobs:
           pip install docker
           # netaddr backs the ansible.utils ipaddr/network_in_network filters that
           # playbooks/preflight.yaml uses for the pod/service CIDR overlap check.
-          pip install jmespath python-dateutil netaddr
+          # proxmoxer + requests back the community.proxmox modules that
+          # molecule/test-cluster's create.yml and destroy.yml use.
+          pip install jmespath python-dateutil netaddr proxmoxer requests
 
       - name: Install Ansible collections
         run: ansible-galaxy collection install -r ansible/requirements.yml
@@ -116,7 +128,27 @@ jobs:
           AUTOGLUE_CREDENTIAL_ID: ${{ secrets.AUTOGLUE_CREDENTIAL_ID || '' }}
           AUTOGLUE_ZONE_ID: ${{ secrets.AUTOGLUE_ZONE_ID || '' }}
           AUTOGLUE_CLUSTER_ID: 'empty'
+          # scale-cluster and rotate-master-nodes are still on Hetzner.
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN || '' }}
+          # test-cluster builds on Proxmox instead. PROXMOX_HOST/USER/TOKEN_ID/TOKEN_SECRET are
+          # the names community.proxmox reads from the environment on its own, which is why no
+          # module in create.yml passes api_* parameters.
+          PROXMOX_HOST: ${{ secrets.PROXMOX_HOST || '' }}
+          PROXMOX_USER: ${{ secrets.PROXMOX_USER || 'root@pam' }}
+          PROXMOX_TOKEN_ID: ${{ secrets.PROXMOX_TOKEN_ID || '' }}
+          PROXMOX_TOKEN_SECRET: ${{ secrets.PROXMOX_TOKEN_SECRET || '' }}
+          PROXMOX_NODE: ${{ vars.PROXMOX_NODE || '' }}
+          PROXMOX_TEMPLATE: ${{ vars.PROXMOX_TEMPLATE || 'ubuntu-2404-cloudinit' }}
+          PROXMOX_STORAGE: ${{ vars.PROXMOX_STORAGE || 'local-lvm' }}
+          # Two NICs: net0 on the public bridge for SSH, net1 on the LAN bridge for everything the
+          # cluster does. PROXMOX_LAN_CIDR is what create.yml uses to tell the two DHCP leases
+          # apart, so an unset value fails the run up front rather than mis-assigning addresses.
+          PROXMOX_BRIDGE_PUBLIC: ${{ vars.PROXMOX_BRIDGE_PUBLIC || 'vmbr_public' }}
+          PROXMOX_BRIDGE_LAN: ${{ vars.PROXMOX_BRIDGE_LAN || 'vmbr_lan' }}
+          PROXMOX_LAN_CIDR: ${{ vars.PROXMOX_LAN_CIDR || '' }}
+          PROXMOX_SNIPPET_STORAGE: ${{ vars.PROXMOX_SNIPPET_STORAGE || 'local' }}
+          PROXMOX_VMID_BASE: ${{ vars.PROXMOX_VMID_BASE || '9000' }}
+          PROXMOX_SSH_USER: ${{ vars.PROXMOX_SSH_USER || 'root' }}
         run: |
           echo "kubernetes_version=${KUBERNETES_VERSION}" >> $GITHUB_ENV
           echo "kubernetes_package_version=${KUBERNETES_PACKAGE_VERSION}" >> $GITHUB_ENV
@@ -137,6 +169,19 @@ jobs:
           echo "AUTOGLUE_ZONE_ID=${AUTOGLUE_ZONE_ID}" >> $GITHUB_ENV
           echo "AUTOGLUE_CLUSTER_ID=${AUTOGLUE_CLUSTER_ID}" >> $GITHUB_ENV
           echo "HCLOUD_TOKEN=${HCLOUD_TOKEN}" >> $GITHUB_ENV
+          echo "PROXMOX_HOST=${PROXMOX_HOST}" >> $GITHUB_ENV
+          echo "PROXMOX_USER=${PROXMOX_USER}" >> $GITHUB_ENV
+          echo "PROXMOX_TOKEN_ID=${PROXMOX_TOKEN_ID}" >> $GITHUB_ENV
+          echo "PROXMOX_TOKEN_SECRET=${PROXMOX_TOKEN_SECRET}" >> $GITHUB_ENV
+          echo "PROXMOX_NODE=${PROXMOX_NODE}" >> $GITHUB_ENV
+          echo "PROXMOX_TEMPLATE=${PROXMOX_TEMPLATE}" >> $GITHUB_ENV
+          echo "PROXMOX_STORAGE=${PROXMOX_STORAGE}" >> $GITHUB_ENV
+          echo "PROXMOX_BRIDGE_PUBLIC=${PROXMOX_BRIDGE_PUBLIC}" >> $GITHUB_ENV
+          echo "PROXMOX_BRIDGE_LAN=${PROXMOX_BRIDGE_LAN}" >> $GITHUB_ENV
+          echo "PROXMOX_LAN_CIDR=${PROXMOX_LAN_CIDR}" >> $GITHUB_ENV
+          echo "PROXMOX_SNIPPET_STORAGE=${PROXMOX_SNIPPET_STORAGE}" >> $GITHUB_ENV
+          echo "PROXMOX_VMID_BASE=${PROXMOX_VMID_BASE}" >> $GITHUB_ENV
+          echo "PROXMOX_SSH_USER=${PROXMOX_SSH_USER}" >> $GITHUB_ENV
 
       - name: Create /opt/gluekube directory and download Kubernetes release key
         run: |
@@ -164,6 +209,23 @@ jobs:
           chmod 600 molecule/rotate-master-nodes/keys/vm_node
           molecule test -s rotate-master-nodes
       
+      # test-cluster is the Proxmox scenario. Besides the throwaway key for the test VMs it needs
+      # a key for the PVE host itself: the Proxmox API's storage upload endpoint does not accept
+      # snippets, so create.yml writes the cloud-init files to the hypervisor over SSH.
+      - name: Install the Proxmox host SSH key
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.scenario == 'all' || github.event.inputs.scenario == 'test-cluster'
+        env:
+          PROXMOX_SSH_KEY: ${{ secrets.PROXMOX_SSH_KEY || '' }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${PROXMOX_SSH_KEY}" > ~/.ssh/proxmox_host
+          chmod 600 ~/.ssh/proxmox_host
+          echo "PROXMOX_SSH_KEY_FILE=$HOME/.ssh/proxmox_host" >> $GITHUB_ENV
+          # create.yml delegates to the PVE host, and ansible.cfg's host-key setting is inert
+          # (it spells the env var name, not the ini key), so seed the known_hosts instead of
+          # relying on ANSIBLE_HOST_KEY_CHECKING.
+          ssh-keyscan -H "${PROXMOX_HOST}" >> ~/.ssh/known_hosts 2>/dev/null || true
+
       - name: Run Molecule Test - test-cluster
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.scenario == 'all' || github.event.inputs.scenario == 'test-cluster'
         working-directory: ansible

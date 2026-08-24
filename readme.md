@@ -12,8 +12,9 @@ described below.
 for system level, you need to do:
 
 - install ansible
-- `pip install jmespath netaddr` — jmespath backs the `json_query` used when labelling nodes,
-  netaddr backs the CIDR overlap check in `playbooks/preflight.yaml`
+- `pip install jmespath netaddr proxmoxer requests` — jmespath backs the `json_query` used when
+  labelling nodes, netaddr backs the CIDR overlap check in `playbooks/preflight.yaml`, and
+  proxmoxer + requests back the `community.proxmox` modules that `molecule/test-cluster` uses
 - install the ansible collections, pinned in `ansible/requirements.yml` (CI installs from the
   same file, so keep the two in step):
 
@@ -24,6 +25,7 @@ ansible-galaxy collection install -r ansible/requirements.yml
 ansible.posix                            2.2.2
 ansible.utils                            6.0.3
 community.general                        13.2.0
+community.proxmox                        2.0.0
 hetzner.hcloud                           6.11.0
 kubernetes.core                          5.4.4
 
@@ -76,8 +78,9 @@ In the hosted flow you do not run either by hand: AutoGlue provisions the nodes 
 `platform.json` next to this Makefile, and `parser.py` turns it into `ansible/inventory/hosts.yaml`
 and `.env` (`make .env`).
 
-If you want throwaway Hetzner VMs to try things on, the molecule scenarios under
-`ansible/molecule/` build and destroy a whole cluster — see
+If you want throwaway VMs to try things on, the molecule scenarios under `ansible/molecule/`
+build and destroy a whole cluster — `test-cluster` on Proxmox, `scale-cluster` and
+`rotate-master-nodes` on Hetzner. See
 [ansible/molecule/readme.md](ansible/molecule/readme.md).
 
 # Install Kubernetes

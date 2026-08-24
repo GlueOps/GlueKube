@@ -1,51 +1,83 @@
 ---
-- name: Destroy Hetzner VMs and Firewall
+# Tears down what create.yml built on Proxmox.
+#
+# There is no network or standalone firewall object to remove: the scenario runs on an existing
+# flat bridge, and the firewall rules are attached at level: vm, so deleting the VM takes its
+# rules and its firewall options with it.
+- name: Destroy Proxmox VMs
   hosts: localhost
   gather_facts: true
   vars:
     num_master_nodes: 3
     num_worker_nodes: 3
+
+    pve_node: "{{ lookup('env', 'PROXMOX_NODE') }}"
+    pve_snippet_dir: "{{ lookup('env', 'PROXMOX_SNIPPET_DIR') | default('/var/lib/vz/snippets', true) }}"
+    # Must match create.yml. The vmids are derived, not recorded, which is the whole reason this
+    # playbook needs no state file handed to it.
+    pve_vmid_base: "{{ lookup('env', 'PROXMOX_VMID_BASE') | default('9000', true) | int }}"
+
+    pve_ssh_host: "{{ lookup('env', 'PROXMOX_SSH_HOST') | default(lookup('env', 'PROXMOX_HOST'), true) }}"
+    pve_ssh_user: "{{ lookup('env', 'PROXMOX_SSH_USER') | default('root', true) }}"
+    pve_ssh_key_file: "{{ lookup('env', 'PROXMOX_SSH_KEY_FILE') }}"
+
+    snippet_prefix: molecule-test-cluster
+
   tasks:
-    - name: Delete Master Nodes
-      hetzner.hcloud.server:
-        name: "master-node-{{ item + 1 }}"
-        state: absent
-        api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
+    - name: Build the master node list
+      ansible.builtin.set_fact:
+        cluster_nodes: >-
+          {{ cluster_nodes | default([])
+             + [{'name': 'master-node-' ~ (item + 1),
+                 'vmid': (pve_vmid_base | int) + item + 1,
+                 'role': 'master'}] }}
       loop: "{{ range(0, num_master_nodes) | list }}"
-      register: delete_master_nodes
-    
-    - name: Delete Worker Nodes
-      hetzner.hcloud.server:
-        name: "worker-node-{{ item + 1 }}"
-        state: absent
-        api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
+
+    - name: Add the worker nodes to the list
+      ansible.builtin.set_fact:
+        cluster_nodes: >-
+          {{ cluster_nodes
+             + [{'name': 'worker-node-' ~ (item + 1),
+                 'vmid': (pve_vmid_base | int) + 10 + item + 1,
+                 'role': 'worker'}] }}
       loop: "{{ range(0, num_worker_nodes) | list }}"
-      register: delete_worker_nodes
 
-
-    - name: Delete Firewall
-      hetzner.hcloud.firewall:
-        name: my-firewall
+    # force stops a running VM first -- without it the module returns changed=false with
+    # "Stop it before deletion or use force=true", which is every VM in a normal run. purge drops
+    # the vmid from backup/replication/HA config too, which matters here because the next run
+    # reuses exactly these vmids. Deleting a vmid that is already gone is a no-op, so a second
+    # destroy is harmless.
+    - name: Delete the nodes
+      community.proxmox.proxmox_kvm:
+        node: "{{ pve_node }}"
+        vmid: "{{ item.vmid }}"
+        name: "{{ item.name }}"
         state: absent
-        api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
-      register: delete_firewall
+        force: true
+        purge: true
+        timeout: 300
+      loop: "{{ cluster_nodes }}"
+      loop_control:
+        label: "{{ item.name }} ({{ item.vmid }})"
+      register: delete_nodes
 
-    - name: Delete Hetzner Network Subnet
-      hetzner.hcloud.subnetwork:
-        network: "test-molecule-network"
-        network_zone: "eu-central"
-        ip_range: "10.1.0.0/24"
-        api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
-        type: cloud
-        state: absent
-      register: subnet
+    - name: Register the Proxmox host for the snippet cleanup
+      ansible.builtin.add_host:
+        name: pve_host
+        ansible_host: "{{ pve_ssh_host }}"
+        ansible_user: "{{ pve_ssh_user }}"
+        ansible_ssh_private_key_file: "{{ pve_ssh_key_file | default(omit, true) }}"
+        ansible_python_interpreter: /usr/bin/python3
+      changed_when: false
 
-    - name: Delete Hetzner Network
-      hetzner.hcloud.network:
-        name: test-molecule-network
-        api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
+    - name: Remove the cloud-init snippets from the Proxmox host
+      ansible.builtin.file:
+        path: "{{ pve_snippet_dir }}/{{ snippet_prefix }}-{{ item.name }}.yaml"
         state: absent
-      register: network
+      delegate_to: pve_host
+      loop: "{{ cluster_nodes }}"
+      loop_control:
+        label: "{{ item.name }}"
 
     # The domain and record created in create.yml. Deleted record-first, and 404 is accepted so a
     # partially-completed create, or a second destroy, is a no-op rather than a failure.

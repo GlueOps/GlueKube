@@ -1,9 +1,25 @@
 #cloud-config
+# Rendered once per node by create.yml and uploaded to the Proxmox host as
+# <snippet storage>:snippets/molecule-test-cluster-<node_name>.yaml, then attached with
+# `cicustom: user=...`.
+#
+# IMPORTANT: cicustom user= REPLACES the user-data Proxmox generates -- it does not merge with
+# it. Everything qm would normally inject (hostname, ciuser, cipassword, sshkeys) is gone unless
+# it is in this file. That is why `hostname` is here and why the file is rendered per node
+# instead of once: without it all six VMs boot with the template's hostname, they register as one
+# node, and tests/test_cluster_healthy.yaml fails its "every inventory node is present" assert.
+#
+# ipconfig0 is a separate cloud-init file (network-config), so DHCP is still configured by
+# Proxmox and must NOT be repeated here.
+hostname: {{ node_name }}
+manage_etc_hosts: true
 package_reboot_if_required: true
 package_update: true
 package_upgrade: true
 packages:
   - curl
+  # create.yml reads the node addresses back out of the guest agent -- without this the whole
+  # inventory never gets built.
   - qemu-guest-agent
 ssh_pwauth: false
 users:
@@ -19,13 +35,20 @@ write_files:
       net.bridge.bridge-nf-call-ip6tables  = 1
       net.ipv4.ip_forward                  = 1
     path: /etc/sysctl.d/k8s.conf
-  - content: |
-      eth0
-    path: /etc/glueops/public-interface
-    permissions: "0644"
 mounts:
   - [ swap, null ]
 runcmd:
   - sudo sysctl --system
   - sudo systemctl enable --now qemu-guest-agent
-  - sudo systemctl disable --now unattended-upgrades.service apt-daily.timer apt-daily-upgrade.timer apt-daily.service apt      
+  # roles/master/tasks/apply-calico-firewall.yaml reads this to build the Calico HostEndpoint's
+  # interfaceName for nodes labelled use-as-loadbalancer. It used to be the literal "eth0", which
+  # is a Hetzner-ism -- a virtio NIC on Proxmox comes up as ens18. Derive it from the default
+  # route instead so the file is right on any provider.
+  #
+  # These nodes have two DHCP NICs, so this resolves to net0 (the public bridge) only as long as
+  # the LAN bridge's DHCP scope offers no router option. Two default routes make `head -n1`
+  # nondeterministic -- see "Proxmox prerequisites" in ansible/molecule/readme.md.
+  - mkdir -p /etc/glueops
+  - ip route show default | awk '{print $5}' | head -n1 > /etc/glueops/public-interface
+  - chmod 0644 /etc/glueops/public-interface
+  - sudo systemctl disable --now unattended-upgrades.service apt-daily.timer apt-daily-upgrade.timer apt-daily.service apt-news.service

@@ -17,7 +17,10 @@ RUN apt-get update && apt-get upgrade -y && \
     apt-get install -y build-essential && \
     # Install ansible and jmespath using pip for Python 3.12
     # Use --no-cache-dir to keep the image slim
-    pip install --no-cache-dir ansible jmespath && \
+    # proxmoxer + requests back the community.proxmox modules used by
+    # ansible/molecule/test-cluster; netaddr backs the ansible.utils ipaddr filters in
+    # playbooks/preflight.yaml.
+    pip install --no-cache-dir ansible jmespath netaddr proxmoxer requests && \
     apt-get install openssh-client -y && \
     apt-get install jq curl -y
 

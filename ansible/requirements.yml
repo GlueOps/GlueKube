@@ -26,6 +26,18 @@ collections:
     version: "6.0.3"
   - name: community.general
     version: "13.2.0"
+  # The proxmox modules used by molecule/test-cluster. They are NOT in community.general any
+  # more: on the 13.2.0 pinned above, community.general.proxmox* are redirect-only stubs that
+  # emit a deprecation warning and are scheduled for removal in community.general 15.0.0. Always
+  # write the community.proxmox.* FQCN. proxmox_firewall needs >= 1.4.0.
+  #
+  # Needs the proxmoxer and requests python packages on the controller as well (Dockerfile and
+  # the molecule workflow install them), and ansible-core >= 2.17 -- which in practice means
+  # python >= 3.11, since ansible-core 2.18 dropped 3.10. Both CI jobs pin python 3.14.
+  - name: community.proxmox
+    version: "2.0.0"
+  # Still used by molecule/scale-cluster and molecule/rotate-master-nodes, which remain on
+  # Hetzner. Only test-cluster was converted to Proxmox.
   - name: hetzner.hcloud
     version: "6.11.0"
   - name: kubernetes.core
