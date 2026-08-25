@@ -252,6 +252,42 @@
       loop_control:
         label: "{{ item.name }}"
 
+    # The write above went to a filesystem over SSH; this asks the API whether the node that will
+    # run the VMs can actually resolve those files as volumes. They are not the same question:
+    # `local` is node-local storage, so a snippet written on one node is invisible to a VM on
+    # another, and the VMs then fail to START -- after all six have been built -- with
+    # "volume ... does not exist" and nothing pointing at why.
+    - name: Read the snippet volumes the node can see
+      ansible.builtin.uri:
+        url: "{{ pve_api_url }}/nodes/{{ pve_node }}/storage/{{ pve_snippet_storage }}/content?content=snippets"
+        method: GET
+        headers: "{{ pve_auth_header }}"
+        validate_certs: "{{ pve_validate_certs }}"
+        return_content: true
+      register: snippet_volumes
+
+    - name: The node can see every snippet
+      ansible.builtin.assert:
+        that:
+          - expected_volids | difference(seen_volids) | length == 0
+        fail_msg: >-
+          Node {{ pve_node }} cannot see {{ expected_volids | difference(seen_volids) | join(', ') }}.
+          They were written to {{ pve_snippet_dir }} on {{ pve_ssh_host }}, and that host reported
+          the directory already present. {{ pve_snippet_storage }} on {{ pve_node }} currently
+          holds: {{ seen_volids | join(', ') | default('nothing', true) }}.
+          A directory storage is node-local, so the usual cause is PROXMOX_HOST (or
+          PROXMOX_SSH_HOST) being a different node from PROXMOX_NODE={{ pve_node }} -- point them
+          at the same machine. Otherwise {{ pve_snippet_storage }}'s path on this node is not
+          {{ pve_snippet_dir | dirname }}; set PROXMOX_SNIPPET_DIR to the real one.
+        quiet: true
+      vars:
+        seen_volids: "{{ snippet_volumes.json.data | map(attribute='volid') | list }}"
+        expected_volids: >-
+          {{ cluster_nodes
+             | map(attribute='name')
+             | map('regex_replace', '^(.*)$', pve_snippet_storage ~ ':snippets/' ~ snippet_prefix ~ '-\1.yaml')
+             | list }}
+
     # Idempotent the same way hetzner.hcloud.server was, just keyed on the vmid rather than the
     # name: proxmox_kvm returns changed=false when the vmid already exists. So a create re-run
     # after a partial failure picks up where it left off. It also means a *stale* VM on one of our
