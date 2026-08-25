@@ -70,7 +70,6 @@ calico_network_calico_cidr = require(platform_data, 'metadata', 'calico_network_
 network_service_cidr = require(platform_data, 'metadata', 'network_service_cidr')
 autoglue_org_key = require(platform_data, 'org_key')
 autoglue_org_secret = require(platform_data, 'org_secret')
-autoglue_org_id = require(platform_data, 'org_id')
 autoglue_cluster_id = require(platform_data, 'id')
 autoglue_record_id = require(platform_data, 'control_plane_record_set', 'id')
 autoglue_base_url = require(platform_data, 'base_url')
@@ -153,7 +152,6 @@ with open(env_output_path, 'w') as f:
 
     f.write(f"AUTOGLUE_ORG_KEY={autoglue_org_key}\n")
     f.write(f"AUTOGLUE_ORG_SECRET={autoglue_org_secret}\n")
-    f.write(f"AUTOGLUE_ORG_ID={autoglue_org_id}\n")
     f.write(f"AUTOGLUE_CLUSTER_ID={autoglue_cluster_id}\n")
     f.write(f"AUTOGLUE_RECORD_ID={autoglue_record_id}\n")
     f.write(f"AUTOGLUE_BASE_URL={autoglue_base_url}\n")

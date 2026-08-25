@@ -67,10 +67,9 @@
           - autoglue_base_url | default('', true) | length > 0
           - autoglue_org_key | default('', true) | length > 0
           - autoglue_org_secret | default('', true) | length > 0
-          - autoglue_org_id | default('', true) | length > 0
           - autoglue_record_id | default('', true) | length > 0
         fail_msg: >-
-          One of autoglue_base_url, autoglue_org_key, autoglue_org_secret, autoglue_org_id or
+          One of autoglue_base_url, autoglue_org_key, autoglue_org_secret
           autoglue_record_id is empty on {{ inventory_hostname }}. Scale and rotation update the
           ctrp A record through the AutoGlue API and cannot do it without all five.
         quiet: true

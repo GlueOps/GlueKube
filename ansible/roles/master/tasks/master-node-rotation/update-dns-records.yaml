@@ -32,7 +32,6 @@
       x-org-key: "{{ autoglue_org_key }}"
       x-org-secret: "{{ autoglue_org_secret }}"
       content-type: application/json
-      x-org-id: "{{ autoglue_org_id }}"
     body_format: json
     body:
       name: ctrp
