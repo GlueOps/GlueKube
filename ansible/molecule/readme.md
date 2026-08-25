@@ -113,7 +113,9 @@ export PROXMOX_IMPORT_FROM="local:import/noble-server-cloudimg-amd64.qcow2"
 # and its images. create.yml grows it to this.
 export PROXMOX_DISK_SIZE="40G"
 
-# target storage for the node disks and the cloud-init drives. create.yml asserts it exists on
+# target storage for the node disks, the cloud-init drives and the EFI disks. the nodes boot
+# UEFI (q35 + OVMF), the same as the Terraform module, so each gets a 4MB efidisk0 with Secure
+# Boot left off. this storage therefore has to accept qcow2. create.yml asserts it exists on
 # the node and lists what does, so a wrong value fails before anything is built.
 export PROXMOX_STORAGE="local"
 
@@ -125,6 +127,13 @@ export PROXMOX_STORAGE="local"
 #                        the ctrp record resolves to. this is the inventory's `ip`. unfiltered.
 export PROXMOX_BRIDGE_PUBLIC="vmbr_public"
 export PROXMOX_BRIDGE_LAN="vmbr_lan"
+
+# VLAN tags for those two bridges, matching what the Terraform module does: the LAN bridge is
+# VLAN-aware and DHCP is on 101, the public one is untagged. empty means the NIC gets no tag.
+# an untagged NIC on a VLAN-aware bridge takes no lease, and that only shows up much later as
+# "the guest agent never reported an address".
+export PROXMOX_BRIDGE_PUBLIC_VLAN=""
+export PROXMOX_BRIDGE_LAN_VLAN="101"
 
 # REQUIRED. the subnet the LAN bridge hands out. the guest agent reports both addresses in one
 # list with no hint which NIC each came from, so this is the only thing that tells them apart:

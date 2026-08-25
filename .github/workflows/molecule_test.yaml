@@ -161,6 +161,10 @@ jobs:
           # apart, so an unset value fails the run up front rather than mis-assigning addresses.
           PROXMOX_BRIDGE_PUBLIC: ${{ vars.PROXMOX_BRIDGE_PUBLIC || secrets.PROXMOX_BRIDGE_PUBLIC || 'vmbr_public' }}
           PROXMOX_BRIDGE_LAN: ${{ vars.PROXMOX_BRIDGE_LAN || secrets.PROXMOX_BRIDGE_LAN || 'vmbr_lan' }}
+          # VLAN tags on those bridges. The LAN bridge is VLAN-aware and serves DHCP on 101; the
+          # public one is untagged, and an empty value means no tag is set at all.
+          PROXMOX_BRIDGE_PUBLIC_VLAN: ${{ vars.PROXMOX_BRIDGE_PUBLIC_VLAN || secrets.PROXMOX_BRIDGE_PUBLIC_VLAN || '' }}
+          PROXMOX_BRIDGE_LAN_VLAN: ${{ vars.PROXMOX_BRIDGE_LAN_VLAN || secrets.PROXMOX_BRIDGE_LAN_VLAN || '101' }}
           PROXMOX_LAN_CIDR: ${{ vars.PROXMOX_LAN_CIDR || secrets.PROXMOX_LAN_CIDR || '' }}
           PROXMOX_SNIPPET_STORAGE: ${{ vars.PROXMOX_SNIPPET_STORAGE || secrets.PROXMOX_SNIPPET_STORAGE || 'local' }}
           PROXMOX_VMID_BASE: ${{ vars.PROXMOX_VMID_BASE || secrets.PROXMOX_VMID_BASE || '9000' }}
@@ -196,6 +200,8 @@ jobs:
           echo "PROXMOX_STORAGE=${PROXMOX_STORAGE}" >> $GITHUB_ENV
           echo "PROXMOX_BRIDGE_PUBLIC=${PROXMOX_BRIDGE_PUBLIC}" >> $GITHUB_ENV
           echo "PROXMOX_BRIDGE_LAN=${PROXMOX_BRIDGE_LAN}" >> $GITHUB_ENV
+          echo "PROXMOX_BRIDGE_PUBLIC_VLAN=${PROXMOX_BRIDGE_PUBLIC_VLAN}" >> $GITHUB_ENV
+          echo "PROXMOX_BRIDGE_LAN_VLAN=${PROXMOX_BRIDGE_LAN_VLAN}" >> $GITHUB_ENV
           echo "PROXMOX_LAN_CIDR=${PROXMOX_LAN_CIDR}" >> $GITHUB_ENV
           echo "PROXMOX_SNIPPET_STORAGE=${PROXMOX_SNIPPET_STORAGE}" >> $GITHUB_ENV
           echo "PROXMOX_VMID_BASE=${PROXMOX_VMID_BASE}" >> $GITHUB_ENV

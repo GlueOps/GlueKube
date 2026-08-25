@@ -56,6 +56,12 @@
     # Calico VXLAN -- and is what lands in the inventory's `ip`. Both take a DHCP lease.
     pve_bridge_public: "{{ lookup('env', 'PROXMOX_BRIDGE_PUBLIC') | default('vmbr_public', true) }}"
     pve_bridge_lan: "{{ lookup('env', 'PROXMOX_BRIDGE_LAN') | default('vmbr_lan', true) }}"
+    # VLAN tags, matching the Terraform module: the LAN bridge is VLAN-aware and DHCP lives on
+    # tag 101, the public bridge is untagged. Empty means no tag at all -- an untagged NIC on a
+    # VLAN-aware bridge gets no lease, and the failure surfaces much later as "the guest agent
+    # never reported an address", so these are worth getting right up front.
+    pve_bridge_public_vlan: "{{ lookup('env', 'PROXMOX_BRIDGE_PUBLIC_VLAN') }}"
+    pve_bridge_lan_vlan: "{{ lookup('env', 'PROXMOX_BRIDGE_LAN_VLAN') | default('101', true) }}"
     # Required, and the only thing that tells the two leases apart: the guest agent reports both
     # addresses in one list with nothing to say which NIC they came from.
     pve_lan_cidr: "{{ lookup('env', 'PROXMOX_LAN_CIDR') }}"
@@ -292,6 +298,17 @@
         memory: "{{ pve_memory | int }}"
         ostype: l26
         scsihw: virtio-scsi-single
+        # UEFI, replicating the Terraform module: q35 + OVMF with its own EFI disk. The efidisk
+        # is not optional under OVMF -- without it the firmware has nowhere to persist its boot
+        # entries. pre_enrolled_keys=0 leaves Secure Boot off, which is what the stock cloud
+        # image expects; the module rejects efidisk0 unless bios is ovmf.
+        machine: q35
+        bios: ovmf
+        efidisk0:
+          storage: "{{ pve_storage }}"
+          format: qcow2
+          efitype: 4m
+          pre_enrolled_keys: 0
         # "1", not "enabled": the module runs this through ansible's boolean() and only
         # converts recognised booleans to the 1/0 the API wants. Anything else is passed through
         # verbatim, so `agent: enabled` reaches PVE as agent=enabled -- which it parses as
@@ -310,8 +327,8 @@
         net:
           # Neither NIC carries firewall=1: the per-VM ruleset this scenario used to build has
           # been taken out for now, and the flag without a ruleset only costs a lookup.
-          net0: "virtio,bridge={{ pve_bridge_public }}"
-          net1: "virtio,bridge={{ pve_bridge_lan }}"
+          net0: "virtio,bridge={{ pve_bridge_public }}{{ public_tag }}"
+          net1: "virtio,bridge={{ pve_bridge_lan }}{{ lan_tag }}"
         # cicustom below replaces only user-data, so Proxmox still builds network-config from
         # these two. That is also why the snippet must not configure networking itself.
         ipconfig:
@@ -319,6 +336,9 @@
           ipconfig1: "ip=dhcp"
         cicustom: "user={{ pve_snippet_storage }}:snippets/{{ snippet_prefix }}-{{ item.name }}.yaml"
         timeout: 600
+      vars:
+        public_tag: "{{ ',tag=' ~ pve_bridge_public_vlan if pve_bridge_public_vlan | length > 0 else '' }}"
+        lan_tag: "{{ ',tag=' ~ pve_bridge_lan_vlan if pve_bridge_lan_vlan | length > 0 else '' }}"
       loop: "{{ cluster_nodes }}"
       loop_control:
         label: "{{ item.name }} ({{ item.vmid }})"
