@@ -78,7 +78,8 @@ export AUTOGLUE_CLUSTER_ID=empty
 export HCLOUD_TOKEN=""
 
 # optional: CIDRs allowed to SSH into the test nodes. defaults to this machine's public
-# address, discovered at create time. used by every scenario.
+# address, discovered at create time. used by the Hetzner scenarios; test-cluster ignores it
+# now that its firewall rules are gone.
 export MOLECULE_SSH_SOURCE_CIDRS=""
 
 # optional: Hetzner location for the test VMs. defaults to hel1.
@@ -119,7 +120,7 @@ export PROXMOX_STORAGE="local"
 # each node gets two NICs, and BOTH bridges have to serve DHCP -- create.yml reads the addresses
 # back out of the qemu guest agent.
 #   net0, public bridge: the address molecule SSHes to. this is the inventory's ansible_host, and
-#                        the only NIC with a firewall on it (SSH from your address, nothing else).
+#                        no filtering is applied to it -- see the note under "prerequisites".
 #   net1, LAN bridge:    the address the cluster runs on -- kubelet, etcd, Calico VXLAN, and what
 #                        the ctrp record resolves to. this is the inventory's `ip`. unfiltered.
 export PROXMOX_BRIDGE_PUBLIC="vmbr_public"
@@ -188,19 +189,14 @@ can:
   outbound path nondeterministic, and `/etc/glueops/public-interface` — derived from the default
   route in `cloudinit/cloud-init.yaml.j2` — stops reliably naming the public NIC. Hand out an
   address and a netmask on `$PROXMOX_BRIDGE_LAN`, nothing else.
-- **the datacenter firewall switched on.** The scenario attaches its rules at `level: vm`, and
-  those do nothing while the datacenter firewall is off — the nodes would sit on a public address
-  with no filtering at all, so `create.yml` asserts on it. Only `net0` carries `firewall=1`, so
-  the ruleset governs the public NIC alone and is just SSH from `$MOLECULE_SSH_SOURCE_CIDRS`;
-  `net1` is deliberately unfiltered, which is how the cluster protocols get through without a
-  single rule. Anything else on `$PROXMOX_BRIDGE_LAN` can therefore reach etcd and the kubelet —
-  fine for a throwaway cluster on a private bridge, worth knowing before you put one elsewhere. Enabling it is deliberately left to a
-  human: it applies a default-DROP input policy across the whole cluster and can lock you out of
-  unrelated VMs and of the PVE host itself. Read your default policies first, then
-  `pvesh set /cluster/firewall/options --enable 1`.
-
-The firewall rules themselves live on the VM, so `destroy.yml` has no firewall teardown to do —
-deleting a VM takes its rules with it.
+> **The test-cluster nodes are unfiltered.** The per-VM firewall this scenario used to build —
+> `firewall=1` on `net0`, a default-DROP input policy and an SSH-only ruleset — has been removed
+> for now, and neither NIC carries the flag. The nodes therefore sit on `$PROXMOX_BRIDGE_PUBLIC`
+> with nothing in front of them, so run this only on a bridge you are willing to expose. Restoring
+> it is a revert of the commit that took it out; the datacenter firewall has to be on for any of
+> it to take effect, which is a one-time
+> `pvesh set /cluster/firewall/options --enable 1` — read your default policies first, since it
+> applies a default-DROP input policy cluster-wide and can lock you out of the PVE host itself.
 
 `domain_name` is required — `kubeadm-stacked-config.yaml.j2` puts `kube-api.$domain_name` in the
 apiserver certSANs and `authentication-configuration.yaml.j2` builds the Dex issuer from it.

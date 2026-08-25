@@ -1,9 +1,8 @@
 ---
 # Tears down what create.yml built on Proxmox.
 #
-# There is no network or standalone firewall object to remove: the scenario runs on an existing
-# flat bridge, and the firewall rules are attached at level: vm, so deleting the VM takes its
-# rules and its firewall options with it.
+# There is no network or firewall object to remove: the scenario runs on an existing flat bridge,
+# and create.yml no longer builds a per-VM ruleset.
 - name: Destroy Proxmox VMs
   hosts: localhost
   gather_facts: true

@@ -21,11 +21,10 @@
 #   - a storage with the "snippets" content type ($PROXMOX_SNIPPET_STORAGE)
 #   - SSH access to the PVE host. The API's storage upload endpoint does not accept snippets, so
 #     the cloud-init files have to be written to the hypervisor directly.
-#   - the datacenter firewall switched on (asserted below, never set here)
 #   - two bridges with DHCP on each: $PROXMOX_BRIDGE_PUBLIC carries net0, the address molecule
-#     SSHes to and the only NIC that is firewalled; $PROXMOX_BRIDGE_LAN carries net1, which is
+#     SSHes to; $PROXMOX_BRIDGE_LAN carries net1, which is
 #     what the cluster itself runs on. $PROXMOX_LAN_CIDR is what tells the two leases apart.
-- name: Create Proxmox VMs and their firewall rules
+- name: Create Proxmox VMs
   hosts: localhost
   gather_facts: true
   vars:
@@ -52,8 +51,8 @@
     # and it is what the Terraform module targets too. The preflight below lists what is actually
     # on the node if this is wrong.
     pve_storage: "{{ lookup('env', 'PROXMOX_STORAGE') | default('local', true) }}"
-    # Two NICs. net0 on the public bridge is what molecule SSHes to and the only one that is
-    # firewalled; net1 on the LAN bridge carries everything the cluster does -- kubelet, etcd,
+    # Two NICs. net0 on the public bridge is what molecule SSHes to;
+    # net1 on the LAN bridge carries everything the cluster does -- kubelet, etcd,
     # Calico VXLAN -- and is what lands in the inventory's `ip`. Both take a DHCP lease.
     pve_bridge_public: "{{ lookup('env', 'PROXMOX_BRIDGE_PUBLIC') | default('vmbr_public', true) }}"
     pve_bridge_lan: "{{ lookup('env', 'PROXMOX_BRIDGE_LAN') | default('vmbr_lan', true) }}"
@@ -186,19 +185,6 @@
       vars:
         import_volids: "{{ import_volumes.json.data | map(attribute='volid') | list }}"
 
-    # The per-VM rules below only take effect if the datacenter firewall is on. Enabling it is
-    # deliberately NOT done here: it applies a default-DROP input policy across the whole cluster
-    # and can lock you out of unrelated VMs and of the PVE host itself. Assert and let a human do
-    # it once.
-    - name: Read the datacenter firewall options
-      ansible.builtin.uri:
-        url: "{{ pve_api_url }}/cluster/firewall/options"
-        method: GET
-        headers: "{{ pve_auth_header }}"
-        validate_certs: "{{ pve_validate_certs }}"
-        return_content: true
-      register: cluster_firewall
-
     # One list, used by every loop below and rebuilt identically in destroy.yml.
     - name: Build the master node list
       ansible.builtin.set_fact:
@@ -296,7 +282,7 @@
     # Everything is set in this ONE call on purpose. proxmox_kvm silently DROPS net, virtio, ide,
     # sata and scsi from an `update: true` call unless update_unsafe is also set -- so configuring
     # the NICs in a second pass, the way the clone-based version did, left the nodes with no net1
-    # and no firewall=1 on net0, which is what makes the per-VM rules below apply at all.
+    # and no net1 at all.
     - name: Create each node from the cloud image
       community.proxmox.proxmox_kvm:
         node: "{{ pve_node }}"
@@ -322,10 +308,9 @@
           ide2: "{{ pve_storage }}:cloudinit"
         boot: order=virtio0
         net:
-          net0: "virtio,bridge={{ pve_bridge_public }},firewall=1"
-          # No firewall=1 here on purpose. PVE only filters interfaces carrying the flag, so the
-          # LAN stays open no matter what policy_in the VM firewall is set to -- which is what
-          # lets etcd, the kubelet and Calico talk without a single rule.
+          # Neither NIC carries firewall=1: the per-VM ruleset this scenario used to build has
+          # been taken out for now, and the flag without a ruleset only costs a lookup.
+          net0: "virtio,bridge={{ pve_bridge_public }}"
           net1: "virtio,bridge={{ pve_bridge_lan }}"
         # cicustom below replaces only user-data, so Proxmox still builds network-config from
         # these two. That is also why the snippet must not configure networking itself.
@@ -457,79 +442,6 @@
           Either PROXMOX_LAN_CIDR does not describe what {{ pve_bridge_lan }} hands out -- compare
           it against `ip -4 addr` on a node -- or that bridge has no DHCP server on it.
         quiet: true
-
-    # Same logic the Hetzner scenario used, and still meaningful: these nodes carry public
-    # addresses, so SSH has to be scoped to whatever is running molecule.
-    - name: Discover the public address molecule connects from
-      ansible.builtin.uri:
-        url: https://api.ipify.org?format=json
-        return_content: true
-      register: controller_public_ip
-      when: lookup('env', 'MOLECULE_SSH_SOURCE_CIDRS') | length == 0
-
-    - name: Set the CIDRs allowed to SSH into the test nodes
-      ansible.builtin.set_fact:
-        ssh_source_cidrs: >-
-          {{ lookup('env', 'MOLECULE_SSH_SOURCE_CIDRS') | split(',') | map('trim') | select | list
-             if lookup('env', 'MOLECULE_SSH_SOURCE_CIDRS') | length > 0
-             else [controller_public_ip.json.ip ~ '/32'] }}
-
-    # Two things differ from the Hetzner firewall and both shape the tasks below:
-    #   - a PVE rule's `source` is a single string, not a list, so one rule per CIDR
-    #   - rules are position-indexed, and `pos` is required
-    #
-    # level: vm means the rules live on the VM and are deleted with it, so destroy.yml has no
-    # firewall teardown to do. Only net0 carries firewall=1, so this ruleset governs the public
-    # NIC alone -- SSH is the only thing that has to reach a node from off-box, because every
-    # cluster protocol rides the unfiltered LAN NIC.
-    - name: Start the ruleset with SSH from the controller
-      ansible.builtin.set_fact:
-        fw_rules: >-
-          {{ fw_rules | default([])
-             + [{'type': 'in', 'action': 'ACCEPT', 'proto': 'tcp', 'dport': '22',
-                 'source': item, 'enable': true, 'comment': 'molecule controller'}] }}
-      loop: "{{ ssh_source_cidrs }}"
-
-    # No node-to-node rule. The Hetzner scenarios need one because Calico autodetects with
-    # firstFound and lands on their public NIC; here inventory/group_vars/masters.yaml pins
-    # nodeAddressAutodetectionV4 to PROXMOX_LAN_CIDR, so VXLAN never touches net0.
-    - name: Number the rules
-      ansible.builtin.set_fact:
-        vm_firewall_rules: "{{ vm_firewall_rules | default([]) + [fw_rules[item] | combine({'pos': item})] }}"
-      loop: "{{ range(0, fw_rules | length) | list }}"
-      loop_control:
-        label: "{{ item }}"
-
-    # There is no VM-level firewall-options module in community.proxmox, so this one goes through
-    # the API directly. dhcp: 1 is not optional -- the nodes hold a DHCP lease, and a default-DROP
-    # input policy without it drops the renewal and the node falls off the network mid-run.
-    - name: Enable the firewall on each VM
-      ansible.builtin.uri:
-        url: "{{ pve_api_url }}/nodes/{{ pve_node }}/qemu/{{ item.vmid }}/firewall/options"
-        method: PUT
-        headers: "{{ pve_auth_header }}"
-        validate_certs: "{{ pve_validate_certs }}"
-        body_format: form-urlencoded
-        body:
-          enable: 1
-          dhcp: 1
-          policy_in: DROP
-          policy_out: ACCEPT
-        status_code: [200]
-      loop: "{{ cluster_nodes }}"
-      loop_control:
-        label: "{{ item.name }}"
-
-    - name: Apply the firewall rules to each VM
-      community.proxmox.proxmox_firewall:
-        level: vm
-        vmid: "{{ item.vmid }}"
-        state: present
-        update: true
-        rules: "{{ vm_firewall_rules }}"
-      loop: "{{ cluster_nodes }}"
-      loop_control:
-        label: "{{ item.name }}"
 
     - name: Wait for SSH on every node
       ansible.builtin.wait_for:
