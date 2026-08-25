@@ -101,11 +101,16 @@ export PROXMOX_VALIDATE_CERTS="true"
 # the node the six VMs are built on. required.
 export PROXMOX_NODE=""
 
-# the Ubuntu 24.04 cloud-init template to clone, by name or by vmid. it MUST have a cloud-init
-# drive -- without one, cicustom and ipconfig0 are accepted and then silently ignored, and nothing
-# works. create.yml checks the name against the cluster before it builds anything and lists the
-# templates it did find, so a wrong value costs one API call rather than a confusing clone error.
-export PROXMOX_TEMPLATE="ubuntu-2404-cloudinit"
+# the Ubuntu 24.04 cloud image the nodes are built from. there is NO template to clone: the VMs
+# are created straight from this import volume, the same way the Terraform module provisions them,
+# and the cloud-init drive is attached by create.yml as ide2. the volume has to be on a storage's
+# "import" content type. create.yml checks it exists before building anything and lists what it
+# did find, so a wrong value costs one API call.
+export PROXMOX_IMPORT_FROM="local:import/noble-server-cloudimg-amd64.qcow2"
+
+# the imported disk starts at the image's own virtual size (~3.5G), which does not fit a kubelet
+# and its images. create.yml grows it to this.
+export PROXMOX_DISK_SIZE="40G"
 
 # target storage for the full clones.
 export PROXMOX_STORAGE="local-lvm"

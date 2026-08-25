@@ -14,8 +14,10 @@
 # fallback and rebuild the token header from the same variables.
 #
 # Prerequisites on the cluster, none of which this playbook creates:
-#   - an Ubuntu 24.04 cloud-init template ($PROXMOX_TEMPLATE) that has a cloud-init drive.
-#     Without the drive, cicustom and ipconfig0 are accepted and then silently ignored.
+#   - an Ubuntu 24.04 cloud image on a storage's "import" content type ($PROXMOX_IMPORT_FROM).
+#     The nodes are built from it directly; there is no template to clone. The cloud-init drive
+#     is attached here (ide2) -- without one, cicustom and ipconfig0 are accepted and then
+#     silently ignored.
 #   - a storage with the "snippets" content type ($PROXMOX_SNIPPET_STORAGE)
 #   - SSH access to the PVE host. The API's storage upload endpoint does not accept snippets, so
 #     the cloud-init files have to be written to the hypervisor directly.
@@ -35,8 +37,17 @@
     # unset variable, which is DEFINED but falsy, so the default never fires. The boolean form
     # below also replaces empty values. (Same trap the old HCLOUD_LOCATION line documented.)
     pve_node: "{{ lookup('env', 'PROXMOX_NODE') }}"
-    pve_template: "{{ lookup('env', 'PROXMOX_TEMPLATE') | default('ubuntu-2404-cloudinit', true) }}"
-    pve_template_is_vmid: "{{ pve_template is match('^[0-9]+$') }}"
+    # The nodes are built straight from an imported cloud image rather than cloned from a
+    # template: this cluster keeps no templates, and the image is already on the storage's
+    # "import" content type, which is what the Terraform module here provisions from too.
+    pve_import_from: >-
+      {{ lookup('env', 'PROXMOX_IMPORT_FROM')
+         | default('local:import/noble-server-cloudimg-amd64.qcow2', true) }}
+    # import-from gives the disk the image's own virtual size (~3.5G for the Ubuntu cloud image),
+    # which does not fit a kubelet plus images. Grown to this after create.
+    pve_disk_size: "{{ lookup('env', 'PROXMOX_DISK_SIZE') | default('40G', true) }}"
+    # Storage the import volume itself lives on, taken from the volid's prefix.
+    pve_import_storage: "{{ pve_import_from.split(':')[0] }}"
     pve_storage: "{{ lookup('env', 'PROXMOX_STORAGE') | default('local-lvm', true) }}"
     # Two NICs. net0 on the public bridge is what molecule SSHes to and the only one that is
     # firewalled; net1 on the LAN bridge carries everything the cluster does -- kubelet, etcd,
@@ -88,41 +99,53 @@
           the CIDR, beats building all six and then finding no address can be classified.
         quiet: true
 
-    # proxmox_kvm answers a bad template with "VM with name = x does not exist in cluster" and
-    # nothing else, which leaves you guessing at the name on a cluster you may not be able to see.
-    # Resolve it here and put the actual candidates in the failure message. This also runs before
-    # the snippets are written, so a typo costs nothing on the hypervisor.
-    - name: Read the cluster's VM list
+    # Both of these fail with the candidates listed rather than letting the create call answer
+    # with a bare "storage does not exist" or an import error, and both run before anything is
+    # written to the hypervisor, so a wrong value costs two API calls.
+    - name: Read the node's storage list
       ansible.builtin.uri:
-        url: "{{ pve_api_url }}/cluster/resources?type=vm"
+        url: "{{ pve_api_url }}/nodes/{{ pve_node }}/storage"
         method: GET
         headers: "{{ pve_auth_header }}"
         validate_certs: "{{ pve_validate_certs }}"
         return_content: true
-      register: cluster_vms
+      register: node_storage
 
-    - name: The configured template exists
+    - name: The configured storages exist
       ansible.builtin.assert:
         that:
-          - >-
-            (pve_template_is_vmid | bool)
-            | ternary(pve_template | int in (pve_templates | map(attribute='vmid') | list),
-                      pve_template in (pve_templates | map(attribute='name') | list))
+          - pve_storage in storage_names
+          - pve_import_storage in storage_names
+          - pve_snippet_storage in storage_names
         fail_msg: >-
-          PROXMOX_TEMPLATE={{ pve_template }} is not a template on this cluster.
-          Templates found: {{ pve_templates
-            | map(attribute='name') | zip(pve_templates | map(attribute='vmid'))
-            | map('join', ' / vmid ') | list | join(', ') | default('none', true) }}.
-          Set PROXMOX_TEMPLATE to one of those names, or to its vmid. It must be an Ubuntu 24.04
-          cloud-init template WITH a cloud-init drive -- without the drive, cicustom and ipconfig0
-          are accepted and then silently ignored.
+          One of PROXMOX_STORAGE={{ pve_storage }}, the import volume's storage
+          ({{ pve_import_storage }}) or PROXMOX_SNIPPET_STORAGE={{ pve_snippet_storage }} is not
+          on node {{ pve_node }}. Storages found: {{ storage_names | join(', ') }}.
         quiet: true
       vars:
-        pve_templates: >-
-          {{ cluster_vms.json.data
-             | selectattr('template', 'defined')
-             | selectattr('template', 'equalto', 1)
-             | list }}
+        storage_names: "{{ node_storage.json.data | map(attribute='storage') | list }}"
+
+    - name: Read the import volumes
+      ansible.builtin.uri:
+        url: "{{ pve_api_url }}/nodes/{{ pve_node }}/storage/{{ pve_import_storage }}/content?content=import"
+        method: GET
+        headers: "{{ pve_auth_header }}"
+        validate_certs: "{{ pve_validate_certs }}"
+        return_content: true
+      register: import_volumes
+
+    - name: The cloud image to import exists
+      ansible.builtin.assert:
+        that:
+          - pve_import_from in import_volids
+        fail_msg: >-
+          PROXMOX_IMPORT_FROM={{ pve_import_from }} is not an import volume on
+          {{ pve_import_storage }}. Found: {{ import_volids | join(', ') | default('none', true) }}.
+          Upload an Ubuntu 24.04 cloud image to that storage's "import" content type, or point
+          PROXMOX_IMPORT_FROM at one of the above.
+        quiet: true
+      vars:
+        import_volids: "{{ import_volumes.json.data | map(attribute='volid') | list }}"
 
     # The per-VM rules below only take effect if the datacenter firewall is on. Enabling it is
     # deliberately NOT done here: it applies a default-DROP input policy across the whole cluster
@@ -191,42 +214,38 @@
         label: "{{ item.name }}"
 
     # Idempotent the same way hetzner.hcloud.server was, just keyed on the vmid rather than the
-    # name: proxmox_kvm's clone returns changed=false when newid already exists. So a create
-    # re-run after a partial failure picks up where it left off. It also means a *stale* VM on one
-    # of our vmids is silently adopted -- see the warning at the top of ansible/molecule/readme.md.
-    - name: Clone the template into each node
-      community.proxmox.proxmox_kvm:
-        node: "{{ pve_node }}"
-        # `clone` is a name lookup. A numeric PROXMOX_TEMPLATE is taken as the source vmid
-        # instead -- the module needs `clone` set either way to enter clone mode, but ignores
-        # its value once `vmid` is given.
-        clone: "{{ pve_template }}"
-        vmid: "{{ pve_template if pve_template_is_vmid else omit }}"
-        newid: "{{ item.vmid }}"
-        name: "{{ item.name }}"
-        storage: "{{ pve_storage }}"
-        full: true
-        timeout: 300
-      loop: "{{ cluster_nodes }}"
-      loop_control:
-        label: "{{ item.name }} ({{ item.vmid }})"
-
-    # A separate call from the clone: proxmox_kvm will not clone and configure in one pass.
-    # firewall=1 on the NIC is what makes the per-VM rules further down apply at all.
-    - name: Configure hardware and cloud-init on each node
+    # name: proxmox_kvm returns changed=false when the vmid already exists. So a create re-run
+    # after a partial failure picks up where it left off. It also means a *stale* VM on one of our
+    # vmids is silently adopted -- see the warning at the top of ansible/molecule/readme.md.
+    #
+    # Everything is set in this ONE call on purpose. proxmox_kvm silently DROPS net, virtio, ide,
+    # sata and scsi from an `update: true` call unless update_unsafe is also set -- so configuring
+    # the NICs in a second pass, the way the clone-based version did, left the nodes with no net1
+    # and no firewall=1 on net0, which is what makes the per-VM rules below apply at all.
+    - name: Create each node from the cloud image
       community.proxmox.proxmox_kvm:
         node: "{{ pve_node }}"
         vmid: "{{ item.vmid }}"
         name: "{{ item.name }}"
-        update: true
         cores: "{{ pve_cores | int }}"
         memory: "{{ pve_memory | int }}"
+        ostype: l26
+        scsihw: virtio-scsi-single
         # "1", not "enabled": the module runs this through ansible's boolean() and only
         # converts recognised booleans to the 1/0 the API wants. Anything else is passed through
         # verbatim, so `agent: enabled` reaches PVE as agent=enabled -- which it parses as
         # enabled=enabled and rejects.
         agent: "1"
         onboot: false
+        # ":0" is the size: with import-from the disk is created from the image's own virtual
+        # size, so the number is ignored. Grown to pve_disk_size by the next task.
+        virtio:
+          virtio0: "{{ pve_storage }}:0,import-from={{ pve_import_from }},iothread=1,discard=on"
+        # The cloud-init drive. Without it cicustom and ipconfig0 are accepted and then silently
+        # ignored, and nothing works -- the same trap the template had to avoid.
+        ide:
+          ide2: "{{ pve_storage }}:cloudinit"
+        boot: order=virtio0
         net:
           net0: "virtio,bridge={{ pve_bridge_public }},firewall=1"
           # No firewall=1 here on purpose. PVE only filters interfaces carrying the flag, so the
@@ -239,9 +258,21 @@
           ipconfig0: "ip=dhcp"
           ipconfig1: "ip=dhcp"
         cicustom: "user={{ pve_snippet_storage }}:snippets/{{ snippet_prefix }}-{{ item.name }}.yaml"
+        timeout: 600
       loop: "{{ cluster_nodes }}"
       loop_control:
-        label: "{{ item.name }}"
+        label: "{{ item.name }} ({{ item.vmid }})"
+
+    # No-op when the disk is already at size, so a re-run stays idempotent.
+    - name: Grow the root disk
+      community.proxmox.proxmox_disk:
+        vmid: "{{ item.vmid }}"
+        disk: virtio0
+        size: "{{ pve_disk_size }}"
+        state: resized
+      loop: "{{ cluster_nodes }}"
+      loop_control:
+        label: "{{ item.name }} ({{ pve_disk_size }})"
 
     - name: Start each node
       community.proxmox.proxmox_kvm:
@@ -335,7 +366,7 @@
           No address outside {{ pve_lan_cidr }} came back for
           {{ cluster_nodes | map(attribute='name') | difference(node_public_addresses | default({}) | list) | sort }}.
           Either the qemu-guest-agent never answered -- so cloud-init did not run; check that
-          {{ pve_template }} has a cloud-init drive, and `qm cloudinit dump <vmid> user` -- or
+          ide2 carries the cloud-init drive, and `qm cloudinit dump <vmid> user` -- or
           {{ pve_bridge_public }} handed out no lease.
         quiet: true
 

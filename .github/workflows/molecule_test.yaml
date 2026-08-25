@@ -146,7 +146,9 @@ jobs:
           # self-signed certificate needs this set to false.
           PROXMOX_VALIDATE_CERTS: ${{ vars.PROXMOX_VALIDATE_CERTS || secrets.PROXMOX_VALIDATE_CERTS || 'true' }}
           PROXMOX_NODE: ${{ vars.PROXMOX_NODE || secrets.PROXMOX_NODE || '' }}
-          PROXMOX_TEMPLATE: ${{ vars.PROXMOX_TEMPLATE || secrets.PROXMOX_TEMPLATE || 'ubuntu-2404-cloudinit' }}
+          # The cloud image the nodes are built from -- there is no template on this cluster.
+          PROXMOX_IMPORT_FROM: ${{ vars.PROXMOX_IMPORT_FROM || secrets.PROXMOX_IMPORT_FROM || 'local:import/noble-server-cloudimg-amd64.qcow2' }}
+          PROXMOX_DISK_SIZE: ${{ vars.PROXMOX_DISK_SIZE || secrets.PROXMOX_DISK_SIZE || '40G' }}
           PROXMOX_STORAGE: ${{ vars.PROXMOX_STORAGE || secrets.PROXMOX_STORAGE || 'local-lvm' }}
           # Two NICs: net0 on the public bridge for SSH, net1 on the LAN bridge for everything the
           # cluster does. PROXMOX_LAN_CIDR is what create.yml uses to tell the two DHCP leases
@@ -183,7 +185,8 @@ jobs:
           echo "PROXMOX_TOKEN_SECRET=${PROXMOX_TOKEN_SECRET}" >> $GITHUB_ENV
           echo "PROXMOX_VALIDATE_CERTS=${PROXMOX_VALIDATE_CERTS}" >> $GITHUB_ENV
           echo "PROXMOX_NODE=${PROXMOX_NODE}" >> $GITHUB_ENV
-          echo "PROXMOX_TEMPLATE=${PROXMOX_TEMPLATE}" >> $GITHUB_ENV
+          echo "PROXMOX_IMPORT_FROM=${PROXMOX_IMPORT_FROM}" >> $GITHUB_ENV
+          echo "PROXMOX_DISK_SIZE=${PROXMOX_DISK_SIZE}" >> $GITHUB_ENV
           echo "PROXMOX_STORAGE=${PROXMOX_STORAGE}" >> $GITHUB_ENV
           echo "PROXMOX_BRIDGE_PUBLIC=${PROXMOX_BRIDGE_PUBLIC}" >> $GITHUB_ENV
           echo "PROXMOX_BRIDGE_LAN=${PROXMOX_BRIDGE_LAN}" >> $GITHUB_ENV
