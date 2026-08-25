@@ -133,22 +133,30 @@ jobs:
           # test-cluster builds on Proxmox instead. PROXMOX_HOST/USER/TOKEN_ID/TOKEN_SECRET are
           # the names community.proxmox reads from the environment on its own, which is why no
           # module in create.yml passes api_* parameters.
+          #
+          # The non-secret settings below read `vars` first and fall back to `secrets`: the two
+          # are separate namespaces, so a value stored in the wrong one expands to the empty
+          # string with no warning and create.yml's assert fires for a name that is plainly set
+          # in the UI (#486). Taking both means either place works.
           PROXMOX_HOST: ${{ secrets.PROXMOX_HOST || '' }}
           PROXMOX_USER: ${{ secrets.PROXMOX_USER || 'root@pam' }}
           PROXMOX_TOKEN_ID: ${{ secrets.PROXMOX_TOKEN_ID || '' }}
           PROXMOX_TOKEN_SECRET: ${{ secrets.PROXMOX_TOKEN_SECRET || '' }}
-          PROXMOX_NODE: ${{ vars.PROXMOX_NODE || '' }}
-          PROXMOX_TEMPLATE: ${{ vars.PROXMOX_TEMPLATE || 'ubuntu-2404-cloudinit' }}
-          PROXMOX_STORAGE: ${{ vars.PROXMOX_STORAGE || 'local-lvm' }}
+          # Read by create.yml's two uri calls; defaults to true, so a PVE host with a
+          # self-signed certificate needs this set to false.
+          PROXMOX_VALIDATE_CERTS: ${{ vars.PROXMOX_VALIDATE_CERTS || secrets.PROXMOX_VALIDATE_CERTS || 'true' }}
+          PROXMOX_NODE: ${{ vars.PROXMOX_NODE || secrets.PROXMOX_NODE || '' }}
+          PROXMOX_TEMPLATE: ${{ vars.PROXMOX_TEMPLATE || secrets.PROXMOX_TEMPLATE || 'ubuntu-2404-cloudinit' }}
+          PROXMOX_STORAGE: ${{ vars.PROXMOX_STORAGE || secrets.PROXMOX_STORAGE || 'local-lvm' }}
           # Two NICs: net0 on the public bridge for SSH, net1 on the LAN bridge for everything the
           # cluster does. PROXMOX_LAN_CIDR is what create.yml uses to tell the two DHCP leases
           # apart, so an unset value fails the run up front rather than mis-assigning addresses.
-          PROXMOX_BRIDGE_PUBLIC: ${{ vars.PROXMOX_BRIDGE_PUBLIC || 'vmbr_public' }}
-          PROXMOX_BRIDGE_LAN: ${{ vars.PROXMOX_BRIDGE_LAN || 'vmbr_lan' }}
-          PROXMOX_LAN_CIDR: ${{ vars.PROXMOX_LAN_CIDR || '' }}
-          PROXMOX_SNIPPET_STORAGE: ${{ vars.PROXMOX_SNIPPET_STORAGE || 'local' }}
-          PROXMOX_VMID_BASE: ${{ vars.PROXMOX_VMID_BASE || '9000' }}
-          PROXMOX_SSH_USER: ${{ vars.PROXMOX_SSH_USER || 'root' }}
+          PROXMOX_BRIDGE_PUBLIC: ${{ vars.PROXMOX_BRIDGE_PUBLIC || secrets.PROXMOX_BRIDGE_PUBLIC || 'vmbr_public' }}
+          PROXMOX_BRIDGE_LAN: ${{ vars.PROXMOX_BRIDGE_LAN || secrets.PROXMOX_BRIDGE_LAN || 'vmbr_lan' }}
+          PROXMOX_LAN_CIDR: ${{ vars.PROXMOX_LAN_CIDR || secrets.PROXMOX_LAN_CIDR || '' }}
+          PROXMOX_SNIPPET_STORAGE: ${{ vars.PROXMOX_SNIPPET_STORAGE || secrets.PROXMOX_SNIPPET_STORAGE || 'local' }}
+          PROXMOX_VMID_BASE: ${{ vars.PROXMOX_VMID_BASE || secrets.PROXMOX_VMID_BASE || '9000' }}
+          PROXMOX_SSH_USER: ${{ vars.PROXMOX_SSH_USER || secrets.PROXMOX_SSH_USER || 'root' }}
         run: |
           echo "kubernetes_version=${KUBERNETES_VERSION}" >> $GITHUB_ENV
           echo "kubernetes_package_version=${KUBERNETES_PACKAGE_VERSION}" >> $GITHUB_ENV
@@ -173,6 +181,7 @@ jobs:
           echo "PROXMOX_USER=${PROXMOX_USER}" >> $GITHUB_ENV
           echo "PROXMOX_TOKEN_ID=${PROXMOX_TOKEN_ID}" >> $GITHUB_ENV
           echo "PROXMOX_TOKEN_SECRET=${PROXMOX_TOKEN_SECRET}" >> $GITHUB_ENV
+          echo "PROXMOX_VALIDATE_CERTS=${PROXMOX_VALIDATE_CERTS}" >> $GITHUB_ENV
           echo "PROXMOX_NODE=${PROXMOX_NODE}" >> $GITHUB_ENV
           echo "PROXMOX_TEMPLATE=${PROXMOX_TEMPLATE}" >> $GITHUB_ENV
           echo "PROXMOX_STORAGE=${PROXMOX_STORAGE}" >> $GITHUB_ENV

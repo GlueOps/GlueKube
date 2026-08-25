@@ -144,6 +144,14 @@ export PROXMOX_SSH_USER="root"
 export PROXMOX_SSH_KEY_FILE=""
 ```
 
+In CI these come from the repository's GitHub settings. `molecule_test.yaml` reads each name from
+`vars` first and then from `secrets`, so either tab works — but only those two: a value put
+anywhere else, or spelled differently, expands to the empty string and `create.yml`'s first assert
+fails on a name that looks set in the UI (#486). `PROXMOX_HOST`, `PROXMOX_USER`, `PROXMOX_TOKEN_ID`
+and `PROXMOX_TOKEN_SECRET` are read from `secrets` only. Note that anything stored as a secret is
+masked in the logs, so a short node name put there will redact every occurrence of that string in
+the run's output; prefer `vars` for the non-sensitive settings.
+
 ### Proxmox prerequisites
 
 `create.yml` does not build any of these — it assumes them and fails early with a message if it
