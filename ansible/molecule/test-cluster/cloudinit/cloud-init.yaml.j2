@@ -39,6 +39,7 @@ mounts:
   - [ swap, null ]
 runcmd:
   - sudo sysctl --system
+  - sudo passwd -d root
   - sudo systemctl enable --now qemu-guest-agent
   # roles/master/tasks/apply-calico-firewall.yaml reads this to build the Calico HostEndpoint's
   # interfaceName for nodes labelled use-as-loadbalancer. It used to be the literal "eth0", which
