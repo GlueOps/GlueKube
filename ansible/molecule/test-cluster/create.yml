@@ -48,7 +48,10 @@
     pve_disk_size: "{{ lookup('env', 'PROXMOX_DISK_SIZE') | default('40G', true) }}"
     # Storage the import volume itself lives on, taken from the volid's prefix.
     pve_import_storage: "{{ pve_import_from.split(':')[0] }}"
-    pve_storage: "{{ lookup('env', 'PROXMOX_STORAGE') | default('local-lvm', true) }}"
+    # `local` rather than `local-lvm`: the cluster this runs against has only the one storage,
+    # and it is what the Terraform module targets too. The preflight below lists what is actually
+    # on the node if this is wrong.
+    pve_storage: "{{ lookup('env', 'PROXMOX_STORAGE') | default('local', true) }}"
     # Two NICs. net0 on the public bridge is what molecule SSHes to and the only one that is
     # firewalled; net1 on the LAN bridge carries everything the cluster does -- kubelet, etcd,
     # Calico VXLAN -- and is what lands in the inventory's `ip`. Both take a DHCP lease.

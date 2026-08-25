@@ -112,8 +112,9 @@ export PROXMOX_IMPORT_FROM="local:import/noble-server-cloudimg-amd64.qcow2"
 # and its images. create.yml grows it to this.
 export PROXMOX_DISK_SIZE="40G"
 
-# target storage for the full clones.
-export PROXMOX_STORAGE="local-lvm"
+# target storage for the node disks and the cloud-init drives. create.yml asserts it exists on
+# the node and lists what does, so a wrong value fails before anything is built.
+export PROXMOX_STORAGE="local"
 
 # each node gets two NICs, and BOTH bridges have to serve DHCP -- create.yml reads the addresses
 # back out of the qemu guest agent.

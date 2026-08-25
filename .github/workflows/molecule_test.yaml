@@ -149,7 +149,7 @@ jobs:
           # The cloud image the nodes are built from -- there is no template on this cluster.
           PROXMOX_IMPORT_FROM: ${{ vars.PROXMOX_IMPORT_FROM || secrets.PROXMOX_IMPORT_FROM || 'local:import/noble-server-cloudimg-amd64.qcow2' }}
           PROXMOX_DISK_SIZE: ${{ vars.PROXMOX_DISK_SIZE || secrets.PROXMOX_DISK_SIZE || '40G' }}
-          PROXMOX_STORAGE: ${{ vars.PROXMOX_STORAGE || secrets.PROXMOX_STORAGE || 'local-lvm' }}
+          PROXMOX_STORAGE: ${{ vars.PROXMOX_STORAGE || secrets.PROXMOX_STORAGE || 'local' }}
           # Two NICs: net0 on the public bridge for SSH, net1 on the LAN bridge for everything the
           # cluster does. PROXMOX_LAN_CIDR is what create.yml uses to tell the two DHCP leases
           # apart, so an unset value fails the run up front rather than mis-assigning addresses.
