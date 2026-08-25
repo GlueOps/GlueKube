@@ -61,7 +61,10 @@
     # addresses in one list with nothing to say which NIC they came from.
     pve_lan_cidr: "{{ lookup('env', 'PROXMOX_LAN_CIDR') }}"
     pve_snippet_storage: "{{ lookup('env', 'PROXMOX_SNIPPET_STORAGE') | default('local', true) }}"
-    pve_snippet_dir: "{{ lookup('env', 'PROXMOX_SNIPPET_DIR') | default('/var/lib/vz/snippets', true) }}"
+    # Not defaulted to /var/lib/vz/snippets any more: that is only right when the storage happens
+    # to be PVE's stock `local`. Resolved from the storage's own configured path below; this stays
+    # as an override for the case where the API path is not what the hypervisor filesystem sees.
+    pve_snippet_dir_override: "{{ lookup('env', 'PROXMOX_SNIPPET_DIR') }}"
     pve_cores: "{{ lookup('env', 'PROXMOX_CORES') | default('4', true) }}"
     pve_memory: "{{ lookup('env', 'PROXMOX_MEMORY') | default('8192', true) }}"
     # Masters take base+1..3, workers base+11..13. Deterministic so destroy.yml needs no state
@@ -127,6 +130,39 @@
         quiet: true
       vars:
         storage_names: "{{ node_storage.json.data | map(attribute='storage') | list }}"
+
+    # cicustom takes a VOLUME id (storage:snippets/file), not a path, and PVE only resolves one
+    # if the storage carries the "snippets" content type. Without it the file is written to the
+    # hypervisor happily and then every VM refuses to start with "volume ... does not exist" --
+    # which is what happened before this check existed, six times over, after the VMs were built.
+    - name: Read the snippet storage's configuration
+      ansible.builtin.uri:
+        url: "{{ pve_api_url }}/storage/{{ pve_snippet_storage }}"
+        method: GET
+        headers: "{{ pve_auth_header }}"
+        validate_certs: "{{ pve_validate_certs }}"
+        return_content: true
+      register: snippet_storage_cfg
+
+    - name: The snippet storage accepts snippets
+      ansible.builtin.assert:
+        that:
+          - "'snippets' in (snippet_storage_cfg.json.data.content | default('') | split(','))"
+        fail_msg: >-
+          Storage {{ pve_snippet_storage }} does not have the "snippets" content type, so
+          cicustom cannot reference the cloud-init files. It currently allows:
+          {{ snippet_storage_cfg.json.data.content | default('nothing') }}. Add it once with
+          `pvesm set {{ pve_snippet_storage }} --content
+          {{ snippet_storage_cfg.json.data.content | default('') }},snippets`.
+        quiet: true
+
+    # The API reports where the storage keeps its files; the snippets live in a subdirectory of
+    # it. Deriving this beats assuming /var/lib/vz.
+    - name: Resolve the snippet directory
+      ansible.builtin.set_fact:
+        pve_snippet_dir: >-
+          {{ pve_snippet_dir_override
+             | default((snippet_storage_cfg.json.data.path | default('/var/lib/vz')) ~ '/snippets', true) }}
 
     - name: Read the import volumes
       ansible.builtin.uri:

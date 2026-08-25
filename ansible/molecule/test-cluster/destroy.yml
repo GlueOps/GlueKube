@@ -12,7 +12,23 @@
     num_worker_nodes: 3
 
     pve_node: "{{ lookup('env', 'PROXMOX_NODE') }}"
-    pve_snippet_dir: "{{ lookup('env', 'PROXMOX_SNIPPET_DIR') | default('/var/lib/vz/snippets', true) }}"
+    # Resolved from the storage config the same way create.yml does it, rather than assuming
+    # PVE's stock /var/lib/vz -- otherwise a cluster whose storage lives elsewhere gets its
+    # snippets left behind on every run.
+    pve_snippet_storage: "{{ lookup('env', 'PROXMOX_SNIPPET_STORAGE') | default('local', true) }}"
+    pve_snippet_dir_override: "{{ lookup('env', 'PROXMOX_SNIPPET_DIR') }}"
+
+    # Only used to read the storage's path; the proxmox modules below authenticate from the
+    # environment on their own, the same as in create.yml.
+    pve_api_host: "{{ lookup('env', 'PROXMOX_HOST') }}"
+    pve_api_port: "{{ lookup('env', 'PROXMOX_PORT') | default('8006', true) }}"
+    pve_api_user: "{{ lookup('env', 'PROXMOX_USER') | default('root@pam', true) }}"
+    pve_token_id: "{{ lookup('env', 'PROXMOX_TOKEN_ID') }}"
+    pve_token_secret: "{{ lookup('env', 'PROXMOX_TOKEN_SECRET') }}"
+    pve_validate_certs: "{{ lookup('env', 'PROXMOX_VALIDATE_CERTS') | default('true', true) | bool }}"
+    pve_api_url: "https://{{ pve_api_host }}:{{ pve_api_port }}/api2/json"
+    pve_auth_header:
+      Authorization: "PVEAPIToken={{ pve_api_user }}!{{ pve_token_id }}={{ pve_token_secret }}"
     # Must match create.yml. The vmids are derived, not recorded, which is the whole reason this
     # playbook needs no state file handed to it.
     pve_vmid_base: "{{ lookup('env', 'PROXMOX_VMID_BASE') | default('9000', true) | int }}"
@@ -69,6 +85,25 @@
         ansible_ssh_private_key_file: "{{ pve_ssh_key_file | default(omit, true) }}"
         ansible_python_interpreter: /usr/bin/python3
       changed_when: false
+
+    # Never fatal: destroy has to keep going and delete the VMs even if the API is unreachable,
+    # so a failure here just leaves the fallback path in place.
+    - name: Read the snippet storage's configuration
+      ansible.builtin.uri:
+        url: "{{ pve_api_url }}/storage/{{ pve_snippet_storage }}"
+        method: GET
+        headers: "{{ pve_auth_header }}"
+        validate_certs: "{{ pve_validate_certs }}"
+        return_content: true
+      register: snippet_storage_cfg
+      failed_when: false
+
+    - name: Resolve the snippet directory
+      ansible.builtin.set_fact:
+        pve_snippet_dir: >-
+          {{ pve_snippet_dir_override
+             | default(((snippet_storage_cfg.json | default({})).data | default({})).path
+                       | default('/var/lib/vz', true) ~ '/snippets', true) }}
 
     - name: Remove the cloud-init snippets from the Proxmox host
       ansible.builtin.file:
