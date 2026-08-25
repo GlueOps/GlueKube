@@ -226,14 +226,49 @@ jobs:
         env:
           PROXMOX_SSH_KEY: ${{ secrets.PROXMOX_SSH_KEY || '' }}
         run: |
+          set -euo pipefail
           mkdir -p ~/.ssh
-          printf '%s\n' "${PROXMOX_SSH_KEY}" > ~/.ssh/proxmox_host
-          chmod 600 ~/.ssh/proxmox_host
-          echo "PROXMOX_SSH_KEY_FILE=$HOME/.ssh/proxmox_host" >> $GITHUB_ENV
+          KEY=~/.ssh/proxmox_host
+
+          if [ -z "${PROXMOX_SSH_KEY}" ]; then
+            echo "::error::PROXMOX_SSH_KEY is empty. create.yml writes the cloud-init snippets to"
+            echo "::error::the PVE host over SSH -- the API's upload endpoint does not take snippets."
+            exit 1
+          fi
+
+          # The secret is accepted either as the PEM itself or base64-encoded. Base64 is the
+          # reliable form: a PEM pasted into a field that eats newlines, or saved from an editor
+          # with CRLF endings, produces a file ssh rejects with "error in libcrypto" and then
+          # silently falls back to password auth (#486).
+          if printf '%s' "${PROXMOX_SSH_KEY}" | tr -d '[:space:]' | base64 -d > "$KEY" 2>/dev/null \
+             && grep -q -- "-----BEGIN" "$KEY"; then
+            echo "PROXMOX_SSH_KEY decoded from base64."
+          else
+            printf '%s' "${PROXMOX_SSH_KEY}" | tr -d '\r' > "$KEY"
+            # OpenSSH requires the final newline; without it the last base64 line is truncated.
+            if [ -n "$(tail -c1 "$KEY")" ]; then printf '\n' >> "$KEY"; fi
+          fi
+          chmod 600 "$KEY"
+
+          # Fail here with the reason rather than 100 lines later as an UNREACHABLE host whose
+          # message blames publickey auth. -P '' distinguishes a malformed key from an encrypted
+          # one: CI cannot type a passphrase, so a passphrased key is just as unusable.
+          if ! ssh-keygen -y -P '' -f "$KEY" > "$KEY.pub" 2>/tmp/keyerr; then
+            echo "::error::PROXMOX_SSH_KEY is not a usable private key:"
+            sed 's/^/::error::  /' /tmp/keyerr
+            echo "::error::Store it base64-encoded -- \`base64 -w0 < id_ed25519\` -- and make sure it"
+            echo "::error::has no passphrase. A passphrased key cannot be used unattended."
+            exit 1
+          fi
+          # Public half only; safe to print, and it is what has to be in the PVE host's
+          # authorized_keys for the user in PROXMOX_SSH_USER.
+          echo "Proxmox host key loaded: $(cat "$KEY.pub")"
+
+          echo "PROXMOX_SSH_KEY_FILE=$KEY" >> $GITHUB_ENV
           # create.yml delegates to the PVE host, and ansible.cfg's host-key setting is inert
           # (it spells the env var name, not the ini key), so seed the known_hosts instead of
           # relying on ANSIBLE_HOST_KEY_CHECKING.
-          ssh-keyscan -H "${PROXMOX_HOST}" >> ~/.ssh/known_hosts 2>/dev/null || true
+          ssh-keyscan -H "${PROXMOX_HOST:-}" >> ~/.ssh/known_hosts 2>/dev/null || true
 
       - name: Run Molecule Test - test-cluster
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.scenario == 'all' || github.event.inputs.scenario == 'test-cluster'

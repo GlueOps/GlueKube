@@ -152,6 +152,21 @@ and `PROXMOX_TOKEN_SECRET` are read from `secrets` only. Note that anything stor
 masked in the logs, so a short node name put there will redact every occurrence of that string in
 the run's output; prefer `vars` for the non-sensitive settings.
 
+`PROXMOX_SSH_KEY` is the private key for the PVE host, and it is the one secret whose formatting
+matters: OpenSSH rejects a PEM that has lost its line breaks or picked up CRLF endings with
+`Load key ...: error in libcrypto`, then quietly falls back to password auth and surfaces as
+`Permission denied (publickey,password)` — a message that points at the wrong problem. Store it
+base64-encoded to sidestep that entirely:
+
+```bash
+base64 -w0 < ~/.ssh/id_ed25519      # paste the single line into the secret
+```
+
+The workflow accepts the raw PEM too, and now verifies either form with `ssh-keygen -y` before
+molecule runs, so a bad key fails in the "Install the Proxmox host SSH key" step with the actual
+reason. The key must have no passphrase, and its public half must be in `~/.ssh/authorized_keys`
+for `$PROXMOX_SSH_USER` on the PVE host — that step prints the public key so you can compare.
+
 ### Proxmox prerequisites
 
 `create.yml` does not build any of these — it assumes them and fails early with a message if it
