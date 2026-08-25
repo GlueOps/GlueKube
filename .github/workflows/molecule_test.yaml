@@ -168,6 +168,8 @@ jobs:
           PROXMOX_LAN_CIDR: ${{ vars.PROXMOX_LAN_CIDR || secrets.PROXMOX_LAN_CIDR || '' }}
           PROXMOX_SNIPPET_STORAGE: ${{ vars.PROXMOX_SNIPPET_STORAGE || secrets.PROXMOX_SNIPPET_STORAGE || 'local' }}
           PROXMOX_VMID_BASE: ${{ vars.PROXMOX_VMID_BASE || secrets.PROXMOX_VMID_BASE || '9000' }}
+          # Comma-separated; tags every VM the scenario builds so a leaked one is easy to find.
+          PROXMOX_TAGS: ${{ vars.PROXMOX_TAGS || secrets.PROXMOX_TAGS || 'qa-gluekube-molecule' }}
           PROXMOX_SSH_USER: ${{ vars.PROXMOX_SSH_USER || secrets.PROXMOX_SSH_USER || 'root' }}
         run: |
           echo "kubernetes_version=${KUBERNETES_VERSION}" >> $GITHUB_ENV
@@ -205,6 +207,7 @@ jobs:
           echo "PROXMOX_LAN_CIDR=${PROXMOX_LAN_CIDR}" >> $GITHUB_ENV
           echo "PROXMOX_SNIPPET_STORAGE=${PROXMOX_SNIPPET_STORAGE}" >> $GITHUB_ENV
           echo "PROXMOX_VMID_BASE=${PROXMOX_VMID_BASE}" >> $GITHUB_ENV
+          echo "PROXMOX_TAGS=${PROXMOX_TAGS}" >> $GITHUB_ENV
           echo "PROXMOX_SSH_USER=${PROXMOX_SSH_USER}" >> $GITHUB_ENV
 
       - name: Create /opt/gluekube directory and download Kubernetes release key

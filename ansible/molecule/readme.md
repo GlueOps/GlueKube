@@ -146,6 +146,11 @@ export PROXMOX_LAN_CIDR="10.10.0.0/16"
 export PROXMOX_SNIPPET_STORAGE="local"
 export PROXMOX_SNIPPET_DIR="/var/lib/vz/snippets"
 
+# tags applied to every VM the scenario builds, comma-separated. the vmid range already
+# identifies them, but a tag is what makes a leaked node findable: `qm list` plus the tag column
+# in the PVE UI, without having to remember the range.
+export PROXMOX_TAGS="qa-gluekube-molecule"
+
 # vmids: masters base+1..3, workers base+11..13. must be free, and must not be VMs you care
 # about -- destroy.yml deletes them.
 export PROXMOX_VMID_BASE="9000"

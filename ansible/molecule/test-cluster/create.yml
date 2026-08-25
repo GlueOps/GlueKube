@@ -70,6 +70,10 @@
     # to be PVE's stock `local`. Resolved from the storage's own configured path below; this stays
     # as an override for the case where the API path is not what the hypervisor filesystem sees.
     pve_snippet_dir_override: "{{ lookup('env', 'PROXMOX_SNIPPET_DIR') }}"
+    # Tags on every VM this scenario builds. The vmid range already identifies them, but a tag is
+    # what makes them findable in the PVE UI and greppable in `qm list` -- useful when a cancelled
+    # run leaks the six, since destroy.yml only ever runs from molecule.
+    pve_tags: "{{ lookup('env', 'PROXMOX_TAGS') | default('qa-gluekube-molecule', true) }}"
     pve_cores: "{{ lookup('env', 'PROXMOX_CORES') | default('4', true) }}"
     pve_memory: "{{ lookup('env', 'PROXMOX_MEMORY') | default('8192', true) }}"
     # Masters take base+1..3, workers base+11..13. Deterministic so destroy.yml needs no state
@@ -304,6 +308,7 @@
         # image expects; the module rejects efidisk0 unless bios is ovmf.
         machine: q35
         bios: ovmf
+        tags: "{{ pve_tags | split(',') | map('trim') | select | list }}"
         efidisk0:
           storage: "{{ pve_storage }}"
           format: qcow2
