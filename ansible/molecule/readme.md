@@ -101,8 +101,10 @@ export PROXMOX_VALIDATE_CERTS="true"
 # the node the six VMs are built on. required.
 export PROXMOX_NODE=""
 
-# the Ubuntu 24.04 cloud-init template to clone. it MUST have a cloud-init drive -- without one,
-# cicustom and ipconfig0 are accepted and then silently ignored, and nothing works.
+# the Ubuntu 24.04 cloud-init template to clone, by name or by vmid. it MUST have a cloud-init
+# drive -- without one, cicustom and ipconfig0 are accepted and then silently ignored, and nothing
+# works. create.yml checks the name against the cluster before it builds anything and lists the
+# templates it did find, so a wrong value costs one API call rather than a confusing clone error.
 export PROXMOX_TEMPLATE="ubuntu-2404-cloudinit"
 
 # target storage for the full clones.

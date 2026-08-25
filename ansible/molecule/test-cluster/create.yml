@@ -36,6 +36,7 @@
     # below also replaces empty values. (Same trap the old HCLOUD_LOCATION line documented.)
     pve_node: "{{ lookup('env', 'PROXMOX_NODE') }}"
     pve_template: "{{ lookup('env', 'PROXMOX_TEMPLATE') | default('ubuntu-2404-cloudinit', true) }}"
+    pve_template_is_vmid: "{{ pve_template is match('^[0-9]+$') }}"
     pve_storage: "{{ lookup('env', 'PROXMOX_STORAGE') | default('local-lvm', true) }}"
     # Two NICs. net0 on the public bridge is what molecule SSHes to and the only one that is
     # firewalled; net1 on the LAN bridge carries everything the cluster does -- kubelet, etcd,
@@ -86,6 +87,42 @@
           module with "api_host is required" after some of the six VMs already exist -- and, for
           the CIDR, beats building all six and then finding no address can be classified.
         quiet: true
+
+    # proxmox_kvm answers a bad template with "VM with name = x does not exist in cluster" and
+    # nothing else, which leaves you guessing at the name on a cluster you may not be able to see.
+    # Resolve it here and put the actual candidates in the failure message. This also runs before
+    # the snippets are written, so a typo costs nothing on the hypervisor.
+    - name: Read the cluster's VM list
+      ansible.builtin.uri:
+        url: "{{ pve_api_url }}/cluster/resources?type=vm"
+        method: GET
+        headers: "{{ pve_auth_header }}"
+        validate_certs: "{{ pve_validate_certs }}"
+        return_content: true
+      register: cluster_vms
+
+    - name: The configured template exists
+      ansible.builtin.assert:
+        that:
+          - >-
+            (pve_template_is_vmid | bool)
+            | ternary(pve_template | int in (pve_templates | map(attribute='vmid') | list),
+                      pve_template in (pve_templates | map(attribute='name') | list))
+        fail_msg: >-
+          PROXMOX_TEMPLATE={{ pve_template }} is not a template on this cluster.
+          Templates found: {{ pve_templates
+            | map(attribute='name') | zip(pve_templates | map(attribute='vmid'))
+            | map('join', ' / vmid ') | list | join(', ') | default('none', true) }}.
+          Set PROXMOX_TEMPLATE to one of those names, or to its vmid. It must be an Ubuntu 24.04
+          cloud-init template WITH a cloud-init drive -- without the drive, cicustom and ipconfig0
+          are accepted and then silently ignored.
+        quiet: true
+      vars:
+        pve_templates: >-
+          {{ cluster_vms.json.data
+             | selectattr('template', 'defined')
+             | selectattr('template', 'equalto', 1)
+             | list }}
 
     # The per-VM rules below only take effect if the datacenter firewall is on. Enabling it is
     # deliberately NOT done here: it applies a default-DROP input policy across the whole cluster
@@ -160,7 +197,11 @@
     - name: Clone the template into each node
       community.proxmox.proxmox_kvm:
         node: "{{ pve_node }}"
+        # `clone` is a name lookup. A numeric PROXMOX_TEMPLATE is taken as the source vmid
+        # instead -- the module needs `clone` set either way to enter clone mode, but ignores
+        # its value once `vmid` is given.
         clone: "{{ pve_template }}"
+        vmid: "{{ pve_template if pve_template_is_vmid else omit }}"
         newid: "{{ item.vmid }}"
         name: "{{ item.name }}"
         storage: "{{ pve_storage }}"
