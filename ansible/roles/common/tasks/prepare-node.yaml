@@ -148,16 +148,16 @@
 
 - name: Generate containerd default configuration
   ansible.builtin.command: containerd config default
-  register: containerd_config
+  register: common_containerd_config
   changed_when: false          # reading defaults changes nothing
 
 
 - name: Write containerd config with SystemdCgroup enabled
   ansible.builtin.copy:
-    content: "{{ containerd_config.stdout | regex_replace('SystemdCgroup = false', 'SystemdCgroup = true') }}"
+    content: "{{ common_containerd_config.stdout | regex_replace('SystemdCgroup = false', 'SystemdCgroup = true') }}"
     dest: /etc/containerd/config.toml
     mode: "0644"
-  register: containerd_config_file
+  register: common_containerd_config_file
 
 # Restarted inline rather than through a notified handler. The master rotation path includes
 # this file with delegate_to the new node, and handlers do not inherit delegation: the restart
@@ -172,7 +172,7 @@
   ansible.builtin.systemd:
     name: containerd
     enabled: true
-    state: "{{ 'restarted' if containerd_config_file is changed else 'started' }}"
+    state: "{{ 'restarted' if common_containerd_config_file is changed else 'started' }}"
     daemon_reload: true
 
 - name: Copy Kubernetes GPG key
@@ -257,7 +257,7 @@
     allow_unauthenticated: true
     allow_change_held_packages: true
     allow_downgrade: true
-  register: kubelet_packages
+  register: common_kubelet_packages
   tags: kubernetes_component_kubelet
 
 - name: Hold kubelet and kubectl at the pinned version
@@ -276,6 +276,6 @@
   ansible.builtin.systemd_service:
     name: kubelet
     enabled: true
-    state: "{{ 'restarted' if (kubelet_packages is defined and kubelet_packages is changed) else 'started' }}"
+    state: "{{ 'restarted' if (common_kubelet_packages is defined and common_kubelet_packages is changed) else 'started' }}"
     daemon_reload: true
   tags: kubernetes_component_kubelet

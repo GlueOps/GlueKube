@@ -2,10 +2,10 @@ apiVersion: kubeadm.k8s.io/v1beta4
 kind: JoinConfiguration
 discovery:
   bootstrapToken:
-    token: "{{ hostvars[orchestrator_node]['join_token'].stdout }}"
+    token: "{{ hostvars[orchestrator_node]['common_join_token'].stdout }}"
     apiServerEndpoint: "{{ loadbalancer_apiserver }}:6443"
     caCertHashes:
-      - "sha256:{{ hostvars[orchestrator_node]['join_hash'].stdout }}"
+      - "sha256:{{ hostvars[orchestrator_node]['common_join_hash'].stdout }}"
 nodeRegistration:
   kubeletExtraArgs:
     - name: "node-ip"

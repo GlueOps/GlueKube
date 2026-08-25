@@ -42,7 +42,7 @@
       kubectl get nodes -o json | jq -r '.items[].metadata.name' | sort \
         | tee /opt/kubernetes/current_nodes_list
     executable: /bin/bash
-  register: current_nodes_list
+  register: common_current_nodes_list
   changed_when: false
 
 # Without this an empty kubectl result reads as "the cluster holds nothing", which makes every
@@ -50,7 +50,7 @@
 # a removal.
 - name: Refuse to diff against an empty cluster
   ansible.builtin.assert:
-    that: current_nodes_list.stdout_lines | length > 0
+    that: common_current_nodes_list.stdout_lines | length > 0
     fail_msg: >-
       kubectl returned no nodes - refusing to compute a node diff.
 
