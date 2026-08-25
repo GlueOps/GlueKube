@@ -26,8 +26,14 @@ env:
 #
 # cancel-in-progress must stay false: cancelling a molecule run mid-flight skips `destroy` and
 # leaks six VMs.
+#
+# Keyed on the event, not just the workflow: pull_request runs skip the molecule job entirely
+# (see its `if:`), so they build nothing and do not need serialising against the dispatches that
+# do. Sharing one group also made them evict each other -- GitHub keeps a single pending run per
+# group, so a push that triggered the PR run cancelled the workflow_dispatch queued a moment
+# earlier, before a single step of it had run.
 concurrency:
-  group: molecule-${{ github.workflow }}
+  group: molecule-${{ github.workflow }}-${{ github.event_name }}
   cancel-in-progress: false
 
 jobs:
