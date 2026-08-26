@@ -101,11 +101,21 @@
     cmd: gpg --dearmor -o /etc/apt/keyrings/docker.gpg < /tmp/docker.asc && chmod a+r /etc/apt/keyrings/docker.gpg
     creates: /etc/apt/keyrings/docker.gpg
 
+# ansible_distribution_release, not ansible_lsb.codename (#478). The lsb_* facts come from
+# `lsb_release`, which is not installed here and is absent from minimal cloud images -- including
+# the Ubuntu 24.04 image the molecule scenarios build from -- so this aborted node preparation
+# with an undefined-attribute error on exactly the images it is meant to support.
+# ansible_distribution_release carries the same codename and is read from /etc/os-release, which
+# every supported image has.
+#
+# The URL stays pinned to .../linux/ubuntu: Ubuntu is the only distribution this repo supports,
+# and playbooks/preflight.yaml now asserts that up front rather than letting a Debian host get an
+# Ubuntu repository and fail later in apt.
 - name: Add Docker repository
   ansible.builtin.apt_repository:
     repo: >-
       deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg]
-      https://download.docker.com/linux/ubuntu {{ ansible_lsb.codename }} stable
+      https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable
     filename: docker
     state: present
 

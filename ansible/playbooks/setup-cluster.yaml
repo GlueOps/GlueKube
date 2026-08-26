@@ -4,12 +4,18 @@
 - name: Preflight
   ansible.builtin.import_playbook: preflight.yaml
 
-- hosts: masters
+- name: Build the control plane
+  hosts: masters
   become: true
   roles:
     - master
 
-- hosts: 
+# masters as well as workers: the worker role is what installs the kubelet-side pieces every
+# node needs, control plane included. Its own main.yaml gates the node preparation on
+# `inventory_hostname in groups['workers']`, so a master passing through here only picks up the
+# join tasks.
+- name: Join the worker nodes
+  hosts:
     - workers
     - masters
   become: true

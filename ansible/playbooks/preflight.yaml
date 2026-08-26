@@ -25,6 +25,26 @@
     # "v1.34.5" -> "1.34". Used for the version floor and for the apt pin cross-check.
     k8s_major_minor: "{{ kubernetes_version | regex_replace('^v', '') | regex_replace('^([0-9]+)\\.([0-9]+).*$', '\\1.\\2') }}"
   tasks:
+    # The repo is Ubuntu-only and several places assume it: roles/common/tasks/prepare-node.yaml
+    # pins the Docker apt line to .../linux/ubuntu and builds it from the distribution codename,
+    # and the Kubernetes repository is a deb. Asserting it here turns "apt could not find
+    # docker-ce" or a 404 on an Ubuntu codename that Debian does not have into one clear message
+    # before any node is touched (#478).
+    - name: The node runs a supported distribution
+      ansible.builtin.assert:
+        that:
+          - ansible_distribution == 'Ubuntu'
+          - ansible_distribution_release | default('', true) | length > 0
+        fail_msg: >-
+          {{ inventory_hostname }} runs
+          {{ ansible_distribution | default('an unknown distribution') }}
+          {{ ansible_distribution_version | default('') }}, and GlueKube supports Ubuntu only --
+          roles/common/tasks/prepare-node.yaml adds the Docker repository for
+          https://download.docker.com/linux/ubuntu and needs a codename that exists there.
+          An empty release means /etc/os-release carries no VERSION_CODENAME, which no supported
+          Ubuntu image does.
+        quiet: true
+
     # default('', true) rather than plain default(): these variables are lookup('env', ...), so
     # an unset one is *defined and empty*, which plain default() would happily pass through.
     - name: Cluster-wide variables are set

@@ -22,12 +22,23 @@
   with_items: "{{ nodes_to_remove | default([]) }}"
   when: nodes_to_remove | length > 0
 
-# The name used to claim this was gated on the node being a control plane. It is not: the `when`
-# below is a hostname regex, so a control-plane node named anything other than master-node-*
-# skips etcd member removal and leaves a phantom member counting toward quorum. The name now
-# says what the code does; replacing the regex with `item in groups['masters']` is the fix and
-# is still open (#475).
-- name: Remove etcd member (nodes named master-node-* only)
+# Gated on nothing but etcd's own membership (#475).
+#
+# This used to carry `when: item is search("master-node-*")`, so a control-plane node named
+# anything else skipped removal and left a phantom member counting toward quorum -- a two-member
+# cluster that has lost quorum while reporting three.
+#
+# The obvious repair, `item in groups['masters']`, is WRONG here and would be a worse bug:
+# nodes_to_remove is by definition what the cluster has and the inventory does NOT name
+# (compare-node.yaml), so a node being scaled down is already absent from groups['masters'] and
+# the condition would be false for exactly the nodes this has to act on -- silently skipping
+# every removal.
+#
+# The etcd member list is the authority on which nodes are members, and the script already
+# consults it: the `if [ -z "$ETCD_MEMBER_ID" ]` guard below exits 0 when the name matches no
+# member. A worker therefore no-ops on its own, which is what the hostname regex was reaching
+# for, and a control-plane node is removed whatever it is called.
+- name: Remove the node's etcd member if it has one
   ansible.builtin.shell: |
     set -o pipefail
     export ETCDCTL_API=3
@@ -53,7 +64,5 @@
   args:
     executable: /bin/bash
   with_items: "{{ nodes_to_remove | default([]) }}"
-  when: 
-    - inventory_hostname == orchestrator_node and nodes_to_remove | length > 0
-    - item is search("master-node-*")
+  when: inventory_hostname == orchestrator_node and nodes_to_remove | length > 0
   
