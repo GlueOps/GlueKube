@@ -5,33 +5,38 @@
 - name: Preflight
   ansible.builtin.import_playbook: preflight.yaml
 
-- name: Upgrade cluster
-  hosts: masters[0]
+- name: Elect the orchestrator
+  ansible.builtin.import_playbook: elect-orchestrator.yaml
+
+# This play used to be `hosts: masters[0]` with every task gated on
+# `when: inventory_hostname == orchestrator_node`, which was not merely positional -- it was a
+# hole. The two conditions only agree when the elected orchestrator happens to BE masters[0]:
+# whenever it is not, this play matched one host and skipped all of its tasks, while the play
+# below skips the orchestrator by design (`!= orchestrator_node`). The result was an upgrade that
+# ran to completion having never upgraded the node holding the cluster together, leaving it on
+# the old version behind an already-upgraded control plane (#430).
+#
+# `hosts: orchestrator` makes the host pattern and the intent the same thing, so the per-task
+# `when` gates are gone: this play now runs on exactly the node they were trying to select.
+- name: Upgrade the orchestrator control-plane node first
+  hosts: orchestrator
   become: true
   tasks:
-    - name: Select the orchestrator node
-      ansible.builtin.include_role:
-        name: master
-        tasks_from: select-orchestrator.yaml
-
-    - name: Upgrade kubeadm on the first control plane
+    - name: Upgrade kubeadm on the orchestrator
       ansible.builtin.include_role:
         name: common
         tasks_from: upgrade-kubeadm.yaml
-      when: inventory_hostname == orchestrator_node
 
-    - name: Upgrade First Control plane
+    - name: Run kubeadm upgrade apply on the orchestrator
       ansible.builtin.include_role:
         name: master
         tasks_from: first-node-upgrade.yaml
       tags: upgrade
-      when: inventory_hostname == orchestrator_node
 
-    - name: Upgrade kubelet and kubectl on the first control plane
+    - name: Upgrade kubelet and kubectl on the orchestrator
       ansible.builtin.include_role:
         name: common
         tasks_from: upgrade-kubelet.yaml
-      when: inventory_hostname == orchestrator_node
 
 
 - name: Upgrade Master Nodes Sequentially

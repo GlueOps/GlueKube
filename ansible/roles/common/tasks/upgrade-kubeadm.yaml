@@ -1,7 +1,7 @@
 ---
 # Point the node at the apt repo for the target Kubernetes minor and move kubeadm onto the pinned
-# version. Shared by every play in upgrade-cluster.yaml -- masters[0], the remaining masters and
-# the workers all run the identical steps (#474).
+# version. Shared by every play in upgrade-cluster.yaml -- the orchestrator, the remaining
+# masters and the workers all run the identical steps (#474).
 #
 # This used to be two files. roles/worker/tasks/upgrade-kubeadm.yaml was never actually reachable:
 # the worker play included `name: master, tasks_from: upgrade-kubeadm.yaml`, so the only copy

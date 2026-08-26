@@ -1,0 +1,59 @@
+---
+# Elects the control-plane node this run reads its state from, and publishes it as the
+# `orchestrator` group so a play can target it with `hosts: orchestrator`.
+#
+# Why a group rather than just the fact (#430): `hosts:` is a play-level host pattern, resolved
+# before any task in the play runs, so it cannot read a fact that a task sets. `hosts: masters[0]`
+# was the workaround, and it is the half of #430 that roles/master/tasks/select-orchestrator.yaml
+# could not fix -- that file elects an orchestrator for tasks, but a play still had to name its
+# hosts positionally. Pinning them to index 0 means every management operation in this repo stops
+# working when that one node is down or outside --limit, even though the cluster itself is healthy
+# and serving. add_host is what bridges the two: it runs as a task, so it can use the fact, and it
+# writes a group the *following* plays can pattern-match on.
+#
+# Import this ahead of any play that uses `hosts: orchestrator`.
+
+# hosts: all rather than masters, deliberately. Under `--limit worker-node-5` the masters group is
+# empty, a `hosts: masters` play is skipped silently, no group is published, and every downstream
+# `hosts: orchestrator` play is skipped too -- a run that does nothing and reports success. `all`
+# still matches the limited workers, so this assertion actually fires and says why.
+- name: Check that a control-plane node is in this run
+  hosts: all
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+    - name: At least one control-plane node is in this run
+      ansible.builtin.assert:
+        that:
+          - groups['masters'] | default([]) | intersect(ansible_play_hosts_all) | length > 0
+        fail_msg: >-
+          No control-plane node is in this run, but the node diff, the join token and every
+          delegated kubectl call are read from one. The inventory names
+          {{ groups['masters'] | default([]) | length }} master(s) and this run has
+          {{ ansible_play_hosts_all | length }} host(s):
+          {{ ansible_play_hosts_all | sort | join(', ') }}.
+          Drop the --limit, or widen it to include a healthy control-plane node.
+        quiet: true
+      run_once: true
+
+- name: Elect the orchestrator
+  hosts: masters
+  gather_facts: false
+  become: true
+  tasks:
+    # Reuses the existing election rather than repeating it: the probe is gated on
+    # `orchestrator_node is not defined`, so a later play that includes the same file reuses this
+    # result instead of re-probing, and the orchestrator cannot flap mid-run.
+    - name: Select the orchestrator node
+      ansible.builtin.include_role:
+        name: master
+        tasks_from: select-orchestrator.yaml
+
+    # add_host on a host that already exists adds it to the group and leaves its inventory vars
+    # -- ansible_host, ansible_user, the key file -- untouched.
+    - name: Publish the elected node as the orchestrator group
+      ansible.builtin.add_host:
+        name: "{{ orchestrator_node }}"
+        groups: orchestrator
+      run_once: true
+      changed_when: false

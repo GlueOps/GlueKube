@@ -2,8 +2,14 @@
 # One-off migration for clusters where local-path-provisioner was installed with
 # `kubectl apply -f .../deploy/local-path-storage.yaml` instead of the Helm chart.
 # Safe to re-run: it detects what is already in place and skips what is done.
+# No preflight import here: this is a one-off migration that needs a working cluster, not the
+# full environment validation an install or upgrade does. It does need a control-plane node to run
+# kubectl on, and elect-orchestrator.yaml carries its own --limit guard (#430).
+- name: Elect the orchestrator
+  ansible.builtin.import_playbook: elect-orchestrator.yaml
+
 - name: Migrate local-path-provisioner to the Helm chart
-  hosts: masters[0]
+  hosts: orchestrator
   become: true
   environment:
     KUBECONFIG: /etc/kubernetes/admin.conf
