@@ -230,7 +230,6 @@
           content-type: application/json
           x-org-key: "{{ lookup('env', 'AUTOGLUE_ORG_KEY') }}"
           x-org-secret: "{{ lookup('env', 'AUTOGLUE_ORG_SECRET') }}"
-          x-org-id: "{{ lookup('env', 'AUTOGLUE_ORG_ID') }}"
         body_format: json
         body:
           credential_id: "{{ lookup('env', 'AUTOGLUE_CREDENTIAL_ID') }}"
@@ -257,7 +256,6 @@
           content-type: application/json
           x-org-key: "{{ lookup('env', 'AUTOGLUE_ORG_KEY') }}"
           x-org-secret: "{{ lookup('env', 'AUTOGLUE_ORG_SECRET') }}"
-          x-org-id: "{{ lookup('env', 'AUTOGLUE_ORG_ID') }}"
         body_format: json
         body:
           name: ctrp

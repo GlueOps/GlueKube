@@ -60,7 +60,6 @@ export AUTOGLUE_BASE_URL=""
 
 export AUTOGLUE_ORG_KEY=""
 export AUTOGLUE_ORG_SECRET=""
-export AUTOGLUE_ORG_ID=""
 
 # create.yml creates the DNS domain and the ctrp A record, and destroy.yml deletes both.
 # these two drive that; the calls authenticate with the x-org-key/x-org-secret pair above.
@@ -262,7 +261,4 @@ Two things worth knowing:
 - **The domain create is not idempotent.** If a run dies between creating the domain and reaching
   `destroy`, the next run's `POST /dns/domains` will hit the leftover. Delete it in AutoGlue
   before re-running.
-- **`AUTOGLUE_ORG_ID` has to be set.** The calls send it as `x-org-id`, the workflow sets it from
-  a secret and `parser.py` now writes it from `platform.json`'s `org_id` (#467). Preflight fails
-  the run if it is empty, so a scenario with the secret unset stops at converge rather than
-  halfway through a DNS update.
+

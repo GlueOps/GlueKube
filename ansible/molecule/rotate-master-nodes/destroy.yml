@@ -67,7 +67,6 @@
           accept: application/json
           x-org-key: "{{ lookup('env', 'AUTOGLUE_ORG_KEY') }}"
           x-org-secret: "{{ lookup('env', 'AUTOGLUE_ORG_SECRET') }}"
-          x-org-id: "{{ lookup('env', 'AUTOGLUE_ORG_ID') }}"
         status_code: [200, 202, 204, 404]
       when:
         - autoglue_ids_file.stat.exists
@@ -81,7 +80,6 @@
           accept: application/json
           x-org-key: "{{ lookup('env', 'AUTOGLUE_ORG_KEY') }}"
           x-org-secret: "{{ lookup('env', 'AUTOGLUE_ORG_SECRET') }}"
-          x-org-id: "{{ lookup('env', 'AUTOGLUE_ORG_ID') }}"
         status_code: [200, 202, 204, 404]
       when:
         - autoglue_ids_file.stat.exists

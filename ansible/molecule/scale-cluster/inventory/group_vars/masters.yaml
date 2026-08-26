@@ -17,7 +17,6 @@ etcd_secret_namespace: "glueops-core-kube-prometheus-stack"
 autoglue_base_url: "{{ lookup('env', 'AUTOGLUE_BASE_URL') | default('https://autoglue.glueopshosted.rocks', true) }}"
 autoglue_org_key: "{{ lookup('env', 'AUTOGLUE_ORG_KEY') }}"
 autoglue_org_secret: "{{ lookup('env', 'AUTOGLUE_ORG_SECRET') }}"
-autoglue_org_id: "{{ lookup('env', 'AUTOGLUE_ORG_ID') }}"
 # The record create.yml made, read from the file it drops in the scenario directory. Molecule
 # exports MOLECULE_SCENARIO_DIRECTORY to every playbook it runs, so this resolves the same way
 # from converge, from a side_effect and from verify. Falls back to $AUTOGLUE_RECORD_ID for a run

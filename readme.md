@@ -132,9 +132,6 @@ export AUTOGLUE_BASE_URL= AUTOGLUE_ORG_KEY= AUTOGLUE_ORG_SECRET=
 export AUTOGLUE_ORG_ID= AUTOGLUE_RECORD_ID= AUTOGLUE_CLUSTER_ID=empty
 ```
 
-`AUTOGLUE_ORG_ID` is sent as the `x-org-id` header on every AutoGlue DNS call. `parser.py` writes
-it from `platform.json`'s `org_id`, and CI sets it from a secret — before that it had no producer
-at all outside CI, so the header went out empty (#467). Preflight refuses to run without it.
 
 in the container these come from `.env`, which `parser.py` writes from `platform.json`. the four
 version variables above are the exception: `parser.py` only writes them when `platform.json`
