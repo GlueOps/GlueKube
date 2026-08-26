@@ -75,6 +75,13 @@
     # run leaks the six, since destroy.yml only ever runs from molecule.
     pve_tags: "{{ lookup('env', 'PROXMOX_TAGS') | default('qa-gluekube-molecule', true) }}"
     pve_cores: "{{ lookup('env', 'PROXMOX_CORES') | default('4', true) }}"
+    # NOT optional, and not a performance knob. Proxmox defaults a new VM to `kvm64`, which
+    # advertises only x86-64-v1 -- no SSE4.2, no POPCNT. Calico's binaries from v3.29 are built
+    # with GOAMD64=v2, so calico-typha and calico-node abort at startup with
+    #   "this program can only run on amd64 processors with v2 microarchitecture support"
+    # and the daemonset never reaches ready. Matches `cpu = "x86-64-v2-AES"` in the Terraform
+    # module. A named model rather than `host` so the VMs stay migratable across a mixed cluster.
+    pve_cpu: "{{ lookup('env', 'PROXMOX_CPU') | default('x86-64-v2-AES', true) }}"
     pve_memory: "{{ lookup('env', 'PROXMOX_MEMORY') | default('8192', true) }}"
     # Masters take base+1..3, workers base+11..13. Deterministic so destroy.yml needs no state
     # file -- and so a collision with a pre-existing VM is a collision with a *known* range.
@@ -299,6 +306,7 @@
         vmid: "{{ item.vmid }}"
         name: "{{ item.name }}"
         cores: "{{ pve_cores | int }}"
+        cpu: "{{ pve_cpu }}"
         memory: "{{ pve_memory | int }}"
         ostype: l26
         scsihw: virtio-scsi-single
@@ -330,8 +338,6 @@
           ide2: "{{ pve_storage }}:cloudinit"
         boot: order=virtio0
         net:
-          # Neither NIC carries firewall=1: the per-VM ruleset this scenario used to build has
-          # been taken out for now, and the flag without a ruleset only costs a lookup.
           net0: "virtio,bridge={{ pve_bridge_public }}{{ public_tag }}"
           net1: "virtio,bridge={{ pve_bridge_lan }}{{ lan_tag }}"
         # cicustom below replaces only user-data, so Proxmox still builds network-config from

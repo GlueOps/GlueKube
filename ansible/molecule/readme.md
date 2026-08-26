@@ -118,6 +118,13 @@ export PROXMOX_DISK_SIZE="40G"
 # the node and lists what does, so a wrong value fails before anything is built.
 export PROXMOX_STORAGE="local"
 
+# the guest CPU model. Proxmox defaults a new VM to `kvm64`, which only advertises x86-64-v1.
+# Calico's binaries from v3.29 are built with GOAMD64=v2, so on kvm64 calico-typha and
+# calico-node abort at startup with "this program can only run on amd64 processors with v2
+# microarchitecture support" and the daemonset never goes ready. anything v2 or better works;
+# this matches the Terraform module. use "host" only on a single-host cluster.
+export PROXMOX_CPU="x86-64-v2-AES"
+
 # each node gets two NICs, and BOTH bridges have to serve DHCP -- create.yml reads the addresses
 # back out of the qemu guest agent.
 #   net0, public bridge: the address molecule SSHes to. this is the inventory's ansible_host, and

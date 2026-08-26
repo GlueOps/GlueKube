@@ -155,6 +155,9 @@ jobs:
           PROXMOX_IMPORT_FROM: ${{ vars.PROXMOX_IMPORT_FROM || secrets.PROXMOX_IMPORT_FROM || 'local:import/noble-server-cloudimg-amd64.qcow2' }}
           PROXMOX_DISK_SIZE: ${{ vars.PROXMOX_DISK_SIZE || secrets.PROXMOX_DISK_SIZE || '40G' }}
           PROXMOX_STORAGE: ${{ vars.PROXMOX_STORAGE || secrets.PROXMOX_STORAGE || 'local' }}
+          # Must advertise x86-64-v2 or better: Calico's binaries are built with GOAMD64=v2
+          # and abort on the `kvm64` model Proxmox otherwise defaults to.
+          PROXMOX_CPU: ${{ vars.PROXMOX_CPU || secrets.PROXMOX_CPU || 'x86-64-v2-AES' }}
           # Two NICs: net0 on the public bridge for SSH, net1 on the LAN bridge for everything the
           # cluster does. PROXMOX_LAN_CIDR is what create.yml uses to tell the two DHCP leases
           # apart, so an unset value fails the run up front rather than mis-assigning addresses.
@@ -198,6 +201,7 @@ jobs:
           echo "PROXMOX_IMPORT_FROM=${PROXMOX_IMPORT_FROM}" >> $GITHUB_ENV
           echo "PROXMOX_DISK_SIZE=${PROXMOX_DISK_SIZE}" >> $GITHUB_ENV
           echo "PROXMOX_STORAGE=${PROXMOX_STORAGE}" >> $GITHUB_ENV
+          echo "PROXMOX_CPU=${PROXMOX_CPU}" >> $GITHUB_ENV
           echo "PROXMOX_BRIDGE_PUBLIC=${PROXMOX_BRIDGE_PUBLIC}" >> $GITHUB_ENV
           echo "PROXMOX_BRIDGE_LAN=${PROXMOX_BRIDGE_LAN}" >> $GITHUB_ENV
           echo "PROXMOX_BRIDGE_PUBLIC_VLAN=${PROXMOX_BRIDGE_PUBLIC_VLAN}" >> $GITHUB_ENV
