@@ -14,7 +14,10 @@
   ansible.builtin.shell: |
     set -euo pipefail
     export KUBECONFIG=/etc/kubernetes/admin.conf
-    kubectl get nodes -o json | jq -c '[.items[].metadata.name] | sort'
+    # Local apiserver and a bounded request, like the rest of the rotation: this list is what the
+    # whole plan is derived from, so it stalling is worse than it failing.
+    kubectl --server https://127.0.0.1:6443 --request-timeout=30s \
+      get nodes -o json | jq -c '[.items[].metadata.name] | sort'
   args:
     executable: /bin/bash
   register: nodes_to_remove

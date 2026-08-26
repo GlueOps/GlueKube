@@ -1,18 +1,4 @@
 ---
-# Everything a node needs before it can run `kubeadm join`, for masters and workers alike (#474).
-# This was two files -- 322 and 256 lines, 134 of them differing -- that implemented the same
-# steps five different ways. Where they disagreed, the master implementation is the one kept,
-# because in every case it was the copy a bug fix had already landed in:
-#
-#   Docker GPG key   master's get_url + gpg --dearmor, not ansible.builtin.apt_key (deprecated)
-#   containerd start master's inline restart, not notify + flush_handlers (see the comment below)
-#   kubelet start    same, and only when the package actually moved
-#   tags             the granular kubernetes_component_kubeadm / _kubelet vocabulary
-#
-# What stays with the roles is the package tail each one needs: jq/helm/k9s/etcd-client for a
-# control plane, nfs-common/wireguard for a worker. Nothing between here and those tails uses
-# them, so they install after this file rather than inside it.
-
 - name: Disable swap immediately
   ansible.builtin.command: swapoff -a
   changed_when: false
@@ -101,16 +87,7 @@
     cmd: gpg --dearmor -o /etc/apt/keyrings/docker.gpg < /tmp/docker.asc && chmod a+r /etc/apt/keyrings/docker.gpg
     creates: /etc/apt/keyrings/docker.gpg
 
-# ansible_distribution_release, not ansible_lsb.codename (#478). The lsb_* facts come from
-# `lsb_release`, which is not installed here and is absent from minimal cloud images -- including
-# the Ubuntu 24.04 image the molecule scenarios build from -- so this aborted node preparation
-# with an undefined-attribute error on exactly the images it is meant to support.
-# ansible_distribution_release carries the same codename and is read from /etc/os-release, which
-# every supported image has.
-#
-# The URL stays pinned to .../linux/ubuntu: Ubuntu is the only distribution this repo supports,
-# and playbooks/preflight.yaml now asserts that up front rather than letting a Debian host get an
-# Ubuntu repository and fail later in apt.
+
 - name: Add Docker repository
   ansible.builtin.apt_repository:
     repo: >-

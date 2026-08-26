@@ -4,7 +4,10 @@
     cmd: |
       set -euo pipefail
       export KUBECONFIG=/etc/kubernetes/admin.conf
-      kubectl get nodes -l node-role.kubernetes.io/control-plane -o jsonpath='{range .items[*]}{.metadata.name}={.status.addresses[?(@.type=="InternalIP")].address}{"\n"}{end}'
+      # Local apiserver, not the kubeconfig's ctrp name: this reads the node list that becomes the
+      # new DNS record, and it runs while that record is mid-update.
+      kubectl --server https://127.0.0.1:6443 --request-timeout=30s \
+        get nodes -l node-role.kubernetes.io/control-plane -o jsonpath='{range .items[*]}{.metadata.name}={.status.addresses[?(@.type=="InternalIP")].address}{"\n"}{end}'
     executable: /bin/bash
   register: kubectl_node_ips
   changed_when: false

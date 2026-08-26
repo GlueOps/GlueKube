@@ -1,10 +1,4 @@
 ---
-# NO `platforms:` block, deliberately -- see test-cluster and scale-cluster, which never had one.
-# With driver `default` the hosts come from inventory/hosts.yaml, which create.yml writes; molecule
-# nonetheless merges any platform names into the inventory it generates, so a leftover placeholder
-# entry becomes a real host with no address. It stays invisible until a play targets `all` --
-# playbooks/preflight.yaml (#466) does -- and then converge dies with
-# "Could not resolve hostname instance-1".
 driver:
   name: default
 

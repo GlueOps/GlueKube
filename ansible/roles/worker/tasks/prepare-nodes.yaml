@@ -1,23 +1,9 @@
 ---
-# Worker node preparation: the shared body (#474) plus the packages a worker needs.
-#
-# The containerd and kubelet restarts that used to be notified handlers now happen inline in the
-# shared file, so the two `meta: flush_handlers` tasks that forced them to run before kubeadm
-# join are gone with them -- there is nothing left pending to flush.
 
 - name: Prepare the node
   ansible.builtin.import_tasks: ../../common/tasks/prepare-node.yaml
 
-# nfs-common is what lets a pod mount an NFS PersistentVolume; the kubelet shells out to
-# mount.nfs on the node, so it has to be present here rather than in a container image.
 - name: Install the worker storage dependencies
   ansible.builtin.apt:
     name: nfs-common
     state: present
-
-# install wireguard
-- name: Install wireguard
-  ansible.builtin.apt:
-    name: wireguard
-    state: present
-  tags: install_wireguard

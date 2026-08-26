@@ -35,10 +35,13 @@
       ansible.builtin.include_tasks: master-node-rotation/join-nodes.yaml
   delegate_to: "{{ node_to_add }}"
 
+# Pinned to the local apiserver for the same reason remove-single-master.yaml is: the kubeconfig's
+# server is the ctrp name, and during a rotation that record is mid-update.
 - name: Wait for new master to be ready
   ansible.builtin.shell: |
     export KUBECONFIG=/etc/kubernetes/admin.conf
-    kubectl wait --for=condition=Ready node/{{ node_to_add }} --timeout=120s
+    kubectl --server https://127.0.0.1:6443 --request-timeout=30s \
+      wait --for=condition=Ready node/{{ node_to_add }} --timeout=120s
   delegate_to: "{{ execution_host | default(orchestrator_node) }}"
   register: node_ready
   retries: 5
