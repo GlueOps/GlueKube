@@ -1,7 +1,8 @@
 #cloud-config
-# Rendered once per node by create.yml and uploaded to the Proxmox host as
-# <snippet storage>:snippets/molecule-test-cluster-<node_name>.yaml, then attached with
-# `cicustom: user=...`.
+# Shared by all three molecule scenarios. Rendered once per node by
+# common/proxmox-provision.yml and uploaded to the Proxmox host as
+# <snippet storage>:snippets/<snippet_prefix>-<node_name>.yaml, then attached with
+# `cicustom: user=...`. A scenario that needs its own can set `cloudinit_template` to a path.
 #
 # IMPORTANT: cicustom user= REPLACES the user-data Proxmox generates -- it does not merge with
 # it. Everything qm would normally inject (hostname, ciuser, cipassword, sshkeys) is gone unless

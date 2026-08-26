@@ -19,13 +19,13 @@ env:
   ANSIBLE_ROLES_PATH: ${{ github.workspace }}/ansible/roles
 
 # Every scenario reuses fixed resource identities and PATCHes the same AUTOGLUE_RECORD_ID, and
-# both providers' create steps are idempotent on that identity -- so two concurrent runs adopt and
-# then destroy each other's VMs. On scale-cluster and rotate-master-nodes that identity is the
-# Hetzner names (test-molecule-network, my-firewall, master-node-N, worker-node-N); on test-cluster
-# it is the Proxmox vmid range starting at PROXMOX_VMID_BASE. Queue them instead (#461).
+# create is idempotent on that identity -- so two concurrent runs adopt and then destroy each
+# other's VMs. That identity is the Proxmox vmid range each scenario owns: PROXMOX_VMID_BASE plus
+# the scenario's own offset (0 / 100 / 200), which keeps the three apart from each other but not
+# from a second run of themselves. Queue them instead (#461).
 #
 # cancel-in-progress must stay false: cancelling a molecule run mid-flight skips `destroy` and
-# leaks six VMs.
+# leaks every VM it built.
 #
 # Keyed on the event, not just the workflow: pull_request runs skip the molecule job entirely
 # (see its `if:`), so they build nothing and do not need serialising against the dispatches that
@@ -78,9 +78,10 @@ jobs:
 
   molecule:
     name: Molecule Tests
-    # Molecule builds six VMs -- Proxmox for test-cluster, Hetzner for the other two -- and needs
-    # the PROXMOX_* / HCLOUD_TOKEN credentials plus the AutoGlue secrets, which GitHub does not
-    # expose to pull requests from forks. PRs get the lint job only.
+    # Molecule builds every scenario's VMs on Proxmox -- six for test-cluster and scale-cluster,
+    # ten for rotate-master-nodes -- and needs the PROXMOX_* credentials plus the AutoGlue
+    # secrets, which GitHub does not expose to pull requests from forks. PRs get the lint job
+    # only.
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
 
@@ -133,16 +134,6 @@ jobs:
           AUTOGLUE_CREDENTIAL_ID: ${{ secrets.AUTOGLUE_CREDENTIAL_ID || '' }}
           AUTOGLUE_ZONE_ID: ${{ secrets.AUTOGLUE_ZONE_ID || '' }}
           AUTOGLUE_CLUSTER_ID: 'empty'
-          # scale-cluster and rotate-master-nodes are still on Hetzner.
-          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN || '' }}
-          # test-cluster builds on Proxmox instead. PROXMOX_HOST/USER/TOKEN_ID/TOKEN_SECRET are
-          # the names community.proxmox reads from the environment on its own, which is why no
-          # module in create.yml passes api_* parameters.
-          #
-          # The non-secret settings below read `vars` first and fall back to `secrets`: the two
-          # are separate namespaces, so a value stored in the wrong one expands to the empty
-          # string with no warning and create.yml's assert fires for a name that is plainly set
-          # in the UI (#486). Taking both means either place works.
           PROXMOX_HOST: ${{ secrets.PROXMOX_HOST || '' }}
           PROXMOX_USER: ${{ secrets.PROXMOX_USER || 'root@pam' }}
           PROXMOX_TOKEN_ID: ${{ secrets.PROXMOX_TOKEN_ID || '' }}
@@ -191,7 +182,6 @@ jobs:
           echo "AUTOGLUE_CREDENTIAL_ID=${AUTOGLUE_CREDENTIAL_ID}" >> $GITHUB_ENV
           echo "AUTOGLUE_ZONE_ID=${AUTOGLUE_ZONE_ID}" >> $GITHUB_ENV
           echo "AUTOGLUE_CLUSTER_ID=${AUTOGLUE_CLUSTER_ID}" >> $GITHUB_ENV
-          echo "HCLOUD_TOKEN=${HCLOUD_TOKEN}" >> $GITHUB_ENV
           echo "PROXMOX_HOST=${PROXMOX_HOST}" >> $GITHUB_ENV
           echo "PROXMOX_USER=${PROXMOX_USER}" >> $GITHUB_ENV
           echo "PROXMOX_TOKEN_ID=${PROXMOX_TOKEN_ID}" >> $GITHUB_ENV
@@ -220,29 +210,13 @@ jobs:
 
       
 
-      - name: Run Molecule Test - scale-cluster
-        if: github.event_name != 'workflow_dispatch' || github.event.inputs.scenario == 'all' || github.event.inputs.scenario == 'scale-cluster'
-        working-directory: ansible
-        run: |
-          mkdir -p molecule/scale-cluster/keys/
-          ssh-keygen -t rsa -b 4096 -f molecule/scale-cluster/keys/vm_node -N "" -C "molecule-test-key"
-          chmod 600 molecule/scale-cluster/keys/vm_node
-          molecule test -s scale-cluster
-      
-      - name: Run Molecule Test - rotate-master-nodes
-        if: github.event_name != 'workflow_dispatch' || github.event.inputs.scenario == 'all' || github.event.inputs.scenario == 'rotate-master-nodes'
-        working-directory: ansible
-        run: |
-          mkdir -p molecule/rotate-master-nodes/keys/
-          ssh-keygen -t rsa -b 4096 -f molecule/rotate-master-nodes/keys/vm_node -N "" -C "molecule-test-key"
-          chmod 600 molecule/rotate-master-nodes/keys/vm_node
-          molecule test -s rotate-master-nodes
-      
-      # test-cluster is the Proxmox scenario. Besides the throwaway key for the test VMs it needs
-      # a key for the PVE host itself: the Proxmox API's storage upload endpoint does not accept
-      # snippets, so create.yml writes the cloud-init files to the hypervisor over SSH.
+      # All three scenarios build their VMs on Proxmox. Besides the throwaway key for the test
+      # VMs they each need a key for the PVE host itself: the Proxmox API's storage upload
+      # endpoint does not accept snippets, so create.yml writes the cloud-init files to the
+      # hypervisor over SSH. Installed once, before the first scenario runs -- it used to sit
+      # between rotate-master-nodes and test-cluster, which was fine only while test-cluster was
+      # the sole Proxmox scenario.
       - name: Install the Proxmox host SSH key
-        if: github.event_name != 'workflow_dispatch' || github.event.inputs.scenario == 'all' || github.event.inputs.scenario == 'test-cluster'
         env:
           PROXMOX_SSH_KEY: ${{ secrets.PROXMOX_SSH_KEY || '' }}
         run: |
@@ -290,6 +264,25 @@ jobs:
           # relying on ANSIBLE_HOST_KEY_CHECKING.
           ssh-keyscan -H "${PROXMOX_HOST:-}" >> ~/.ssh/known_hosts 2>/dev/null || true
 
+
+      - name: Run Molecule Test - scale-cluster
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.scenario == 'all' || github.event.inputs.scenario == 'scale-cluster'
+        working-directory: ansible
+        run: |
+          mkdir -p molecule/scale-cluster/keys/
+          ssh-keygen -t rsa -b 4096 -f molecule/scale-cluster/keys/vm_node -N "" -C "molecule-test-key"
+          chmod 600 molecule/scale-cluster/keys/vm_node
+          molecule test -s scale-cluster
+      
+      - name: Run Molecule Test - rotate-master-nodes
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.scenario == 'all' || github.event.inputs.scenario == 'rotate-master-nodes'
+        working-directory: ansible
+        run: |
+          mkdir -p molecule/rotate-master-nodes/keys/
+          ssh-keygen -t rsa -b 4096 -f molecule/rotate-master-nodes/keys/vm_node -N "" -C "molecule-test-key"
+          chmod 600 molecule/rotate-master-nodes/keys/vm_node
+          molecule test -s rotate-master-nodes
+      
       - name: Run Molecule Test - test-cluster
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.scenario == 'all' || github.event.inputs.scenario == 'test-cluster'
         working-directory: ansible

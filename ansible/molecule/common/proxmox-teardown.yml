@@ -1,0 +1,85 @@
+---
+# Removes what proxmox-provision.yml built. Imported by every scenario's destroy.yml with
+#   ansible.builtin.import_tasks: ../common/proxmox-teardown.yml
+# after `vars_files: [../common/proxmox-vars.yml]`.
+#
+# Required from the importing play: num_master_nodes, num_worker_nodes, snippet_prefix and
+# pve_vmid_offset -- the SAME values create.yml used. The vmids are derived rather than recorded,
+# which is the whole reason this playbook needs no state file handed to it, and it is also why a
+# scenario that changes its node counts must change them in both files.
+#
+# There is no network or firewall object to remove: the scenarios run on existing flat bridges
+# and build no per-VM ruleset.
+
+- name: Build the master node list
+  ansible.builtin.set_fact:
+    cluster_nodes: >-
+      {{ cluster_nodes | default([])
+         + [{'name': 'master-node-' ~ (item + 1),
+             'vmid': (pve_vmid_base | int) + item + 1,
+             'role': 'master'}] }}
+  loop: "{{ range(0, num_master_nodes) | list }}"
+
+- name: Add the worker nodes to the list
+  ansible.builtin.set_fact:
+    cluster_nodes: >-
+      {{ cluster_nodes
+         + [{'name': 'worker-node-' ~ (item + 1),
+             'vmid': (pve_vmid_base | int) + 10 + item + 1,
+             'role': 'worker'}] }}
+  loop: "{{ range(0, num_worker_nodes) | list }}"
+
+# force stops a running VM first -- without it the module returns changed=false with "Stop it
+# before deletion or use force=true", which is every VM in a normal run. purge drops the vmid
+# from backup/replication/HA config too, which matters here because the next run reuses exactly
+# these vmids. Deleting a vmid that is already gone is a no-op, so a second destroy is harmless.
+- name: Delete the nodes
+  community.proxmox.proxmox_kvm:
+    node: "{{ pve_node }}"
+    vmid: "{{ item.vmid }}"
+    name: "{{ item.name }}"
+    state: absent
+    force: true
+    purge: true
+    timeout: 300
+  loop: "{{ cluster_nodes }}"
+  loop_control:
+    label: "{{ item.name }} ({{ item.vmid }})"
+  register: delete_nodes
+
+- name: Register the Proxmox host for the snippet cleanup
+  ansible.builtin.add_host:
+    name: pve_host
+    ansible_host: "{{ pve_ssh_host }}"
+    ansible_user: "{{ pve_ssh_user }}"
+    ansible_ssh_private_key_file: "{{ pve_ssh_key_file | default(omit, true) }}"
+    ansible_python_interpreter: /usr/bin/python3
+  changed_when: false
+
+# Never fatal: destroy has to keep going and delete the VMs even if the API is unreachable, so a
+# failure here just leaves the fallback path in place.
+- name: Read the snippet storage's configuration
+  ansible.builtin.uri:
+    url: "{{ pve_api_url }}/storage/{{ pve_snippet_storage }}"
+    method: GET
+    headers: "{{ pve_auth_header }}"
+    validate_certs: "{{ pve_validate_certs }}"
+    return_content: true
+  register: snippet_storage_cfg
+  failed_when: false
+
+- name: Resolve the snippet directory
+  ansible.builtin.set_fact:
+    pve_snippet_dir: >-
+      {{ pve_snippet_dir_override
+         | default(((snippet_storage_cfg.json | default({})).data | default({})).path
+                   | default('/var/lib/vz', true) ~ '/snippets', true) }}
+
+- name: Remove the cloud-init snippets from the Proxmox host
+  ansible.builtin.file:
+    path: "{{ pve_snippet_dir }}/{{ snippet_prefix }}-{{ item.name }}.yaml"
+    state: absent
+  delegate_to: pve_host
+  loop: "{{ cluster_nodes }}"
+  loop_control:
+    label: "{{ item.name }}"

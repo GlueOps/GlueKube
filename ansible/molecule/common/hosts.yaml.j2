@@ -1,0 +1,47 @@
+{#
+  The inventory every scenario writes, in one template.
+
+  scale-cluster alone wrote five near-identical copies of this by hand, differing only in which
+  slice of the node list each group got; rotate-master-nodes wrote three. They are now all one
+  template task with two vars:
+
+    inv_masters   list of {name, vmid, role} for the masters this file should contain
+    inv_workers   the same for the workers
+
+  Both are slices of master_nodes_list / worker_nodes_list, which proxmox-provision.yml sets.
+
+  ansible_host is the public address molecule connects over; ip is the LAN address every cluster
+  component binds to -- etcd_initial_cluster, the kubelet and the ctrp record all read it. Same
+  split the Hetzner scenarios had (public ipv4_address vs private_networks_info[0].ip).
+#}
+all:
+  children:
+    masters:
+      hosts:
+{% for node in inv_masters %}
+        {{ node.name }}:
+          ansible_host: {{ node_public_addresses[node.name] }}
+          ip: {{ node_lan_addresses[node.name] }}
+          ansible_user: cluster
+          ansible_ssh_private_key_file: keys/vm_node
+          extra:
+            taints:
+              - node-role.kubernetes.io/control-plane:NoSchedule-
+{% endfor %}
+{% if inv_masters | length == 0 %}
+        {}
+{% endif %}
+    workers:
+      hosts:
+{% for node in inv_workers %}
+        {{ node.name }}:
+          ansible_host: {{ node_public_addresses[node.name] }}
+          ip: {{ node_lan_addresses[node.name] }}
+          ansible_user: cluster
+          ansible_ssh_private_key_file: keys/vm_node
+          extra:
+            taints: []
+{% endfor %}
+{% if inv_workers | length == 0 %}
+        {}
+{% endif %}

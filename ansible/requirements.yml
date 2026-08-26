@@ -36,9 +36,7 @@ collections:
   # python >= 3.11, since ansible-core 2.18 dropped 3.10. Both CI jobs pin python 3.14.
   - name: community.proxmox
     version: "2.0.0"
-  # Still used by molecule/scale-cluster and molecule/rotate-master-nodes, which remain on
-  # Hetzner. Only test-cluster was converted to Proxmox.
-  - name: hetzner.hcloud
-    version: "6.11.0"
+  # No longer used by anything: all three molecule scenarios build on Proxmox. Kept pinned so a
+  # scenario can be pointed back at Hetzner without re-resolving a version -- drop it, and the
   - name: kubernetes.core
     version: "5.4.4"

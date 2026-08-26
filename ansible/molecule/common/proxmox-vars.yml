@@ -1,0 +1,90 @@
+---
+# Every Proxmox setting the molecule scenarios share, in one place.
+#
+# Loaded with `vars_files: [../common/proxmox-vars.yml]` by all three scenarios' create.yml and
+# destroy.yml. What is NOT here is what genuinely differs per scenario, and those stay as play
+# vars in the scenario itself:
+#
+#   num_master_nodes / num_worker_nodes   how big the cluster starts
+#   snippet_prefix                        namespaces the cloud-init files on the hypervisor
+#   pve_vmid_offset                       keeps the three scenarios' vmid ranges disjoint
+#
+# `default('x')` alone does not work for any of the lookups below: lookup('env', ...) returns ""
+# for an unset variable, which is DEFINED but falsy, so the default never fires. The boolean form
+# -- default('x', true) -- also replaces empty values. (Same trap the old HCLOUD_LOCATION line
+# documented.)
+pve_node: "{{ lookup('env', 'PROXMOX_NODE') }}"
+
+# The nodes are built straight from an imported cloud image rather than cloned from a template:
+# this cluster keeps no templates, and the image is already on the storage's "import" content
+# type, which is what the Terraform module here provisions from too.
+pve_import_from: >-
+  {{ lookup('env', 'PROXMOX_IMPORT_FROM')
+     | default('local:import/noble-server-cloudimg-amd64.qcow2', true) }}
+# import-from gives the disk the image's own virtual size (~3.5G for the Ubuntu cloud image),
+# which does not fit a kubelet plus images. Grown to this after create.
+pve_disk_size: "{{ lookup('env', 'PROXMOX_DISK_SIZE') | default('40G', true) }}"
+# Storage the import volume itself lives on, taken from the volid's prefix.
+pve_import_storage: "{{ pve_import_from.split(':')[0] }}"
+# `local` rather than `local-lvm`: the cluster this runs against has only the one storage, and it
+# is what the Terraform module targets too. The preflight lists what is actually on the node if
+# this is wrong.
+pve_storage: "{{ lookup('env', 'PROXMOX_STORAGE') | default('local', true) }}"
+
+# Two NICs. net0 on the public bridge is what molecule SSHes to; net1 on the LAN bridge carries
+# everything the cluster does -- kubelet, etcd, Calico VXLAN -- and is what lands in the
+# inventory's `ip`. Both take a DHCP lease.
+pve_bridge_public: "{{ lookup('env', 'PROXMOX_BRIDGE_PUBLIC') | default('vmbr_public', true) }}"
+pve_bridge_lan: "{{ lookup('env', 'PROXMOX_BRIDGE_LAN') | default('vmbr_lan', true) }}"
+# VLAN tags, matching the Terraform module: the LAN bridge is VLAN-aware and DHCP lives on tag
+# 101, the public bridge is untagged. Empty means no tag at all -- an untagged NIC on a
+# VLAN-aware bridge gets no lease, and the failure surfaces much later as "the guest agent never
+# reported an address", so these are worth getting right up front.
+pve_bridge_public_vlan: "{{ lookup('env', 'PROXMOX_BRIDGE_PUBLIC_VLAN') }}"
+pve_bridge_lan_vlan: "{{ lookup('env', 'PROXMOX_BRIDGE_LAN_VLAN') | default('101', true) }}"
+# Required, and the only thing that tells the two leases apart: the guest agent reports both
+# addresses in one list with nothing to say which NIC they came from.
+pve_lan_cidr: "{{ lookup('env', 'PROXMOX_LAN_CIDR') }}"
+
+pve_snippet_storage: "{{ lookup('env', 'PROXMOX_SNIPPET_STORAGE') | default('local', true) }}"
+# Not defaulted to /var/lib/vz/snippets: that is only right when the storage happens to be PVE's
+# stock `local`. Resolved from the storage's own configured path instead; this stays as an
+# override for the case where the API path is not what the hypervisor filesystem sees.
+pve_snippet_dir_override: "{{ lookup('env', 'PROXMOX_SNIPPET_DIR') }}"
+
+# Tags on every VM the scenarios build. proxmox-provision.yml appends the scenario's
+# snippet_prefix as a second tag, so a leaked VM says which scenario leaked it.
+pve_tags: "{{ lookup('env', 'PROXMOX_TAGS') | default('qa-gluekube-molecule', true) }}"
+
+pve_cores: "{{ lookup('env', 'PROXMOX_CORES') | default('4', true) }}"
+# NOT optional, and not a performance knob. Proxmox defaults a new VM to `kvm64`, which
+# advertises only x86-64-v1 -- no SSE4.2, no POPCNT. Calico's binaries from v3.29 are built with
+# GOAMD64=v2, so calico-typha and calico-node abort at startup with
+#   "this program can only run on amd64 processors with v2 microarchitecture support"
+# and the daemonset never reaches ready. Matches `cpu = "x86-64-v2-AES"` in the Terraform module.
+# A named model rather than `host` so the VMs stay migratable across a mixed cluster.
+pve_cpu: "{{ lookup('env', 'PROXMOX_CPU') | default('x86-64-v2-AES', true) }}"
+pve_memory: "{{ lookup('env', 'PROXMOX_MEMORY') | default('8192', true) }}"
+
+# Masters take base+1.., workers base+11.. . Deterministic so destroy.yml needs no state file --
+# and so a collision with a pre-existing VM is a collision with a *known* range. pve_vmid_offset
+# is set per scenario (0 / 100 / 200) so the three never overlap even when one of them leaks.
+pve_vmid_base: >-
+  {{ (lookup('env', 'PROXMOX_VMID_BASE') | default('9000', true) | int)
+     + (pve_vmid_offset | default(0) | int) }}
+
+# Used only by the ansible.builtin.uri calls, which cannot use the collection's env fallbacks.
+pve_api_host: "{{ lookup('env', 'PROXMOX_HOST') }}"
+pve_api_port: "{{ lookup('env', 'PROXMOX_PORT') | default('8006', true) }}"
+pve_api_user: "{{ lookup('env', 'PROXMOX_USER') | default('root@pam', true) }}"
+pve_token_id: "{{ lookup('env', 'PROXMOX_TOKEN_ID') }}"
+pve_token_secret: "{{ lookup('env', 'PROXMOX_TOKEN_SECRET') }}"
+pve_validate_certs: "{{ lookup('env', 'PROXMOX_VALIDATE_CERTS') | default('true', true) | bool }}"
+pve_api_url: "https://{{ pve_api_host }}:{{ pve_api_port }}/api2/json"
+pve_auth_header:
+  Authorization: "PVEAPIToken={{ pve_api_user }}!{{ pve_token_id }}={{ pve_token_secret }}"
+
+# SSH to the hypervisor, for the cloud-init snippets.
+pve_ssh_host: "{{ lookup('env', 'PROXMOX_SSH_HOST') | default(lookup('env', 'PROXMOX_HOST'), true) }}"
+pve_ssh_user: "{{ lookup('env', 'PROXMOX_SSH_USER') | default('root', true) }}"
+pve_ssh_key_file: "{{ lookup('env', 'PROXMOX_SSH_KEY_FILE') }}"

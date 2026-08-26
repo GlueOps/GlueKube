@@ -1,369 +1,97 @@
 ---
-- name: Create Hetzner VMs and Firewall
+# Builds the nodes scale-cluster scales up and down, on Proxmox VE.
+#
+# The provisioning is shared -- see ../common/proxmox-provision.yml. What is specific to this
+# scenario is the five inventories below: every node is BUILT here, but each side effect converges
+# a different subset of them, and the inventory files are how that subset is expressed.
+#
+#   inventory/hosts.yaml            one master, two workers -- the cluster converge starts from
+#   inventory/scale-up-ctrp.yaml    three masters, two workers
+#   inventory/scale-up-worker.yaml  three masters, three workers
+#   inventory/scale-down-worker.yaml  three masters, one worker
+#   inventory/scale-down-ctrp.yaml    one master, three workers
+#
+# Plus the two AutoGlue files destroy.yml and group_vars/masters.yaml read back.
+- name: Create Proxmox VMs
   hosts: localhost
   gather_facts: true
+  vars_files:
+    - ../common/proxmox-vars.yml
   vars:
     num_master_nodes: 3
     num_worker_nodes: 3
     public_key: "{{ lookup('file', 'keys/vm_node.pub') }}"
+    # vmids 9101-9103 (masters) and 9111-9113 (workers) -- disjoint from test-cluster's 9001+
+    # and rotate-master-nodes' 9201+. destroy.yml must carry the same offset.
+    pve_vmid_offset: 100
+    snippet_prefix: molecule-scale-cluster
 
   tasks:
-    - name: Create Hetzner Network
-      hetzner.hcloud.network:
-        name: test-molecule-network
-        ip_range: "10.1.0.0/16"
-        api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
-      register: network
+    - name: Build the nodes on Proxmox
+      ansible.builtin.import_tasks: ../common/proxmox-provision.yml
 
-    - name: Create Hetzner Network Subnet
-      hetzner.hcloud.subnetwork:
-        network: test-molecule-network
-        network_zone: "eu-central"
-        ip_range: "10.1.0.0/24"
-        api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
-        type: cloud
-      register: subnet
-
-    # The test nodes carry a public IPv4 and a Hetzner firewall only filters that public
-    # interface. Everything the cluster itself needs -- etcd, the apiserver behind the ctrp
-    # record, kubelet -- travels over test-molecule-network, so the only traffic that has to
-    # reach a node from outside is SSH from whatever is running molecule.
-    #
-    # Node-to-node still needs the public interface open: calico autodetects with firstFound
-    # and lands on eth0 here, so VXLAN would break if the nodes could not reach each other.
-    # Their addresses do not exist yet -- the firewall has to be created before the servers
-    # that attach to it -- so that rule is added in "Restrict the firewall ..." below, once
-    # master_nodes and worker_nodes are registered.
-    - name: Discover the public address molecule connects from
-      ansible.builtin.uri:
-        url: https://api.ipify.org?format=json
-        return_content: true
-      register: controller_public_ip
-      when: lookup('env', 'MOLECULE_SSH_SOURCE_CIDRS') | length == 0
-
-    - name: Set the CIDRs allowed to SSH into the test nodes
-      ansible.builtin.set_fact:
-        ssh_source_cidrs: >-
-          {{ lookup('env', 'MOLECULE_SSH_SOURCE_CIDRS') | split(',') | map('trim') | select | list
-             if lookup('env', 'MOLECULE_SSH_SOURCE_CIDRS') | length > 0
-             else [controller_public_ip.json.ip ~ '/32'] }}
-
-    - name: Create Firewall
-      hetzner.hcloud.firewall:
-        name: my-firewall
-        rules:
-          - direction: in
-            protocol: tcp
-            port: "22"
-            source_ips: "{{ ssh_source_cidrs }}"
-        api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
-      register: firewall
-
-
-    - name: Create Master Nodes
-      hetzner.hcloud.server:
-        name: "master-node-{{ item + 1 }}"
-        server_type: ccx13
-        image: ubuntu-24.04
-        # `default('hel1')` alone does not work here: lookup('env', ...) returns "" for an unset
-        # variable, which is DEFINED but falsy, so the default never fires. hetzner.hcloud then
-        # calls locations.get_by_name("") -> None and dies with
-        # "'NoneType' object has no attribute 'name'". The boolean form also replaces empty values.
-        location: "{{ lookup('env', 'HCLOUD_LOCATION') | default('hel1', true) }}"
-        enable_ipv4: true
-        enable_ipv6: false
-        firewalls:
-          - my-firewall
-        user_data: "{{ lookup('template', 'cloudinit/cloud-init.yaml.j2')}}"
-        api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
-        private_networks:
-          - test-molecule-network
-      loop: "{{ range(0, num_master_nodes) | list }}"
-      register: master_nodes
-    
-    - name: Create Worker Nodes
-      hetzner.hcloud.server:
-        name: "worker-node-{{ item + 1 }}"
-        server_type: ccx13
-        image: ubuntu-24.04
-        location: "{{ lookup('env', 'HCLOUD_LOCATION') | default('hel1', true) }}"
-        enable_ipv4: true
-        enable_ipv6: false
-        firewalls:
-          - my-firewall
-        user_data: "{{ lookup('template', 'cloudinit/cloud-init.yaml.j2')}}"
-        api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
-        private_networks:
-          - test-molecule-network
-      loop: "{{ range(0, num_worker_nodes) | list }}"
-      register: worker_nodes
-
-    # Now that the nodes exist, replace the bootstrap ruleset: SSH stays scoped to the
-    # controller, and the nodes are allowed to talk to each other over their public
-    # addresses. Nothing else on the internet can reach the cluster.
-    - name: Restrict the firewall to SSH and node-to-node traffic
-      hetzner.hcloud.firewall:
-        name: my-firewall
-        rules:
-          - direction: in
-            protocol: tcp
-            port: "22"
-            source_ips: "{{ ssh_source_cidrs }}"
-          - direction: in
-            protocol: tcp
-            port: "1-65535"
-            source_ips: "{{ node_source_cidrs }}"
-          - direction: in
-            protocol: udp
-            port: "1-65535"
-            source_ips: "{{ node_source_cidrs }}"
-        api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
-      vars:
-        node_source_cidrs: >-
-          {{ (master_nodes.results + worker_nodes.results)
-             | map(attribute='hcloud_server.ipv4_address')
-             | map('regex_replace', '$', '/32') | list }}
-
-
+    # The subset the first converge builds a cluster from. The remaining nodes exist but are not
+    # in this file, so nothing touches them until a side effect converges one of the inventories
+    # below.
     - name: Store default inventory
-      ansible.builtin.copy:
-        content: |
-          all:
-            children:
-              masters:
-                hosts:
-                  {% for node in master_nodes.results[:1] -%}
-                    {{ node.hcloud_server.name }}:
-                      ansible_host: {{ node.hcloud_server.ipv4_address }}
-                      ip: {{ node.hcloud_server.private_networks_info[0].ip }}
-                      ansible_user: cluster
-                      ansible_ssh_private_key_file: keys/vm_node
-                      extra:
-                        taints:
-                          - node-role.kubernetes.io/control-plane:NoSchedule-
-                  {% endfor +%}
-              workers:
-                hosts:
-                  {% for node in worker_nodes.results[:2] -%}
-                    {{ node.hcloud_server.name }}:
-                      ansible_host: {{ node.hcloud_server.ipv4_address }}
-                      ip: {{ node.hcloud_server.private_networks_info[0].ip }}
-                      ansible_user: cluster
-                      ansible_ssh_private_key_file: keys/vm_node
-                      extra:
-                        taints: []
-                  {% endfor +%}
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../common/hosts.yaml.j2"
         dest: "./inventory/hosts.yaml"
         mode: "0644"
-    
-    - name: Store Scale Up control plane inventory
-      ansible.builtin.copy:
-        content: |
-          all:
-            children:
-              masters:
-                hosts:
-                  {% for node in master_nodes.results -%}
-                    {{ node.hcloud_server.name }}:
-                      ansible_host: {{ node.hcloud_server.ipv4_address }}
-                      ip: {{ node.hcloud_server.private_networks_info[0].ip }}
-                      ansible_user: cluster
-                      ansible_ssh_private_key_file: keys/vm_node
-                      extra:
-                        taints:
-                          - node-role.kubernetes.io/control-plane:NoSchedule-
-                  {% endfor +%}
-              workers:
-                hosts:
-                  {% for node in worker_nodes.results[:2] -%}
-                    {{ node.hcloud_server.name }}:
-                      ansible_host: {{ node.hcloud_server.ipv4_address }}
-                      ip: {{ node.hcloud_server.private_networks_info[0].ip }}
-                      ansible_user: cluster
-                      ansible_ssh_private_key_file: keys/vm_node
-                      extra:
-                        taints: []
-                  {% endfor +%}
-                  
+      vars:
+        inv_masters: "{{ master_nodes_list[:1] }}"
+        inv_workers: "{{ worker_nodes_list[:2] }}"
+
+    - name: Store scale up control plane inventory
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../common/hosts.yaml.j2"
         dest: "./inventory/scale-up-ctrp.yaml"
         mode: "0644"
-    - name: Store inventory(for scale up worker node)
-      ansible.builtin.copy:
-        content: |
-          all:
-            children:
-              masters:
-                hosts:
-                  {% for node in master_nodes.results -%}
-                    {{ node.hcloud_server.name }}:
-                      ansible_host: {{ node.hcloud_server.ipv4_address }}
-                      ip: {{ node.hcloud_server.private_networks_info[0].ip }}
-                      ansible_user: cluster
-                      ansible_ssh_private_key_file: keys/vm_node
-                      extra:
-                        taints:
-                          - node-role.kubernetes.io/control-plane:NoSchedule-
-                  {% endfor +%}
-              workers:
-                hosts:
-                  {% for node in worker_nodes.results -%}
-                    {{ node.hcloud_server.name }}:
-                      ansible_host: {{ node.hcloud_server.ipv4_address }}
-                      ip: {{ node.hcloud_server.private_networks_info[0].ip }}
-                      ansible_user: cluster
-                      ansible_ssh_private_key_file: keys/vm_node
-                      extra:
-                        taints: []
-                  {% endfor +%}
-                  
+      vars:
+        inv_masters: "{{ master_nodes_list }}"
+        inv_workers: "{{ worker_nodes_list[:2] }}"
+
+    - name: Store inventory (for scale up worker node)
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../common/hosts.yaml.j2"
         dest: "./inventory/scale-up-worker.yaml"
         mode: "0644"
+      vars:
+        inv_masters: "{{ master_nodes_list }}"
+        inv_workers: "{{ worker_nodes_list }}"
 
-    - name: Store inventory(for scale down worker node)
-      ansible.builtin.copy:
-        content: |
-          all:
-            children:
-              masters:
-                hosts:
-                  {% for node in master_nodes.results -%}
-                    {{ node.hcloud_server.name }}:
-                      ansible_host: {{ node.hcloud_server.ipv4_address }}
-                      ip: {{ node.hcloud_server.private_networks_info[0].ip }}
-                      ansible_user: cluster
-                      ansible_ssh_private_key_file: keys/vm_node
-                      extra:
-                        taints:
-                          - node-role.kubernetes.io/control-plane:NoSchedule-
-                  {% endfor +%}
-              workers:
-                hosts:
-                  {% for node in worker_nodes.results[:1] -%}
-                    {{ node.hcloud_server.name }}:
-                      ansible_host: {{ node.hcloud_server.ipv4_address }}
-                      ip: {{ node.hcloud_server.private_networks_info[0].ip }}
-                      ansible_user: cluster
-                      ansible_ssh_private_key_file: keys/vm_node
-                      extra:
-                        taints: []
-                  {% endfor +%}
-                  
+    - name: Store inventory (for scale down worker node)
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../common/hosts.yaml.j2"
         dest: "./inventory/scale-down-worker.yaml"
         mode: "0644"
+      vars:
+        inv_masters: "{{ master_nodes_list }}"
+        inv_workers: "{{ worker_nodes_list[:1] }}"
 
-    - name: Store inventory(for scale down control plane node)
-      ansible.builtin.copy:
-        content: |
-          all:
-            children:
-              masters:
-                hosts:
-                  {% for node in master_nodes.results[:1] -%}
-                    {{ node.hcloud_server.name }}:
-                      ansible_host: {{ node.hcloud_server.ipv4_address }}
-                      ip: {{ node.hcloud_server.private_networks_info[0].ip }}
-                      ansible_user: cluster
-                      ansible_ssh_private_key_file: keys/vm_node
-                      extra:
-                        taints:
-                          - node-role.kubernetes.io/control-plane:NoSchedule-
-                  {% endfor +%}
-              workers:
-                hosts:
-                  {% for node in worker_nodes.results -%}
-                    {{ node.hcloud_server.name }}:
-                      ansible_host: {{ node.hcloud_server.ipv4_address }}
-                      ip: {{ node.hcloud_server.private_networks_info[0].ip }}
-                      ansible_user: cluster
-                      ansible_ssh_private_key_file: keys/vm_node
-                      extra:
-                        taints: []
-                  {% endfor +%}
-
+    - name: Store inventory (for scale down control plane node)
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../common/hosts.yaml.j2"
         dest: "./inventory/scale-down-ctrp.yaml"
         mode: "0644"
-
+      vars:
+        inv_masters: "{{ master_nodes_list[:1] }}"
+        inv_workers: "{{ worker_nodes_list }}"
 
     # Only the first master exists as an apiserver at this point -- inventory/hosts.yaml above
-    # converges master_nodes.results[:1]. PATCHing all three IPs here pre-satisfied the
+    # converges master_nodes_list[:1]. Pointing the record at all three pre-satisfied the
     # scenario's own assertion: converge ran against two dead A records, and a scale-up that
-    # never touched DNS still looked correct (#464). sync.yaml's update-dns-records task is
-    # what has to move the record when add_control_plane runs.
-    # AutoGlue owns the DNS the apiserver is reached through. The domain and the ctrp record are
-    # both created here rather than assumed to exist, and destroy.yml removes them again, so a
-    # run leaves nothing behind. The ids are written to autoglue-ids.yaml because destroy runs
-    # as a separate playbook and cannot see these registers.
-    - name: Create the DNS domain via AutoGlue API
-      ansible.builtin.uri:
-        url: "{{ lookup('env', 'AUTOGLUE_BASE_URL') }}/api/v1/dns/domains"
-        method: POST
-        headers:
-          accept: application/json
-          content-type: application/json
-          x-org-key: "{{ lookup('env', 'AUTOGLUE_ORG_KEY') }}"
-          x-org-secret: "{{ lookup('env', 'AUTOGLUE_ORG_SECRET') }}"
-        body_format: json
-        body:
-          credential_id: "{{ lookup('env', 'AUTOGLUE_CREDENTIAL_ID') }}"
-          domain_name: "{{ lookup('env', 'domain_name') }}"
-          zone_id: "{{ lookup('env', 'AUTOGLUE_ZONE_ID') }}"
-        status_code: [200, 201]
-      register: autoglue_domain
+    # never touched DNS still looked correct (#464). sync.yaml's update-dns-records task is what
+    # has to move the record when add_control_plane runs.
+    - name: Create the DNS domain and ctrp record
+      ansible.builtin.import_tasks: ../common/autoglue-create.yml
+      vars:
+        autoglue_record_values: >-
+          {{ master_nodes_list[:1] | map(attribute='name') | map('extract', node_lan_addresses) | list }}
 
-    # Fail here with the body in the message rather than three tasks later with an empty URL,
-    # if the response ever stops carrying `id` at the top level.
-    - name: Confirm AutoGlue returned a domain id
-      ansible.builtin.assert:
-        that:
-          - autoglue_domain.json.id is defined
-          - autoglue_domain.json.id | string | length > 0
-        fail_msg: "AutoGlue did not return an id for the domain: {{ autoglue_domain.json }}"
-
-    - name: Create the ctrp A record in the new domain via AutoGlue API
-      ansible.builtin.uri:
-        url: "{{ lookup('env', 'AUTOGLUE_BASE_URL') }}/api/v1/dns/domains/{{ autoglue_domain.json.id }}/records"
-        method: POST
-        headers:
-          accept: application/json
-          content-type: application/json
-          x-org-key: "{{ lookup('env', 'AUTOGLUE_ORG_KEY') }}"
-          x-org-secret: "{{ lookup('env', 'AUTOGLUE_ORG_SECRET') }}"
-        body_format: json
-        body:
-          name: ctrp
-          ttl: 60
-          type: A
-          # only the first master -- the one inventory/hosts.yaml converges
-          values: "{{ master_nodes.results[:1] | map(attribute='hcloud_server') | map(attribute='private_networks_info') | map('first') | map(attribute='ip') | list }}"
-        status_code: [200, 201]
-      register: autoglue_record
-
-    - name: Confirm AutoGlue returned a record id
-      ansible.builtin.assert:
-        that:
-          - autoglue_record.json.id is defined
-          - autoglue_record.json.id | string | length > 0
-        fail_msg: "AutoGlue did not return an id for the record: {{ autoglue_record.json }}"
-
-    - name: Hand the AutoGlue ids to destroy
-      ansible.builtin.copy:
-        content: |
-          ---
-          autoglue_domain_id: "{{ autoglue_domain.json.id }}"
-          autoglue_record_id: "{{ autoglue_record.json.id }}"
-        dest: "./autoglue-ids.yaml"
-        mode: "0644"
-
-    # The same id again, bare, because inventory/group_vars/masters.yaml reads it with
-    # lookup('file') to give the master role an autoglue_record_id that actually exists.
-    # A plain file rather than parsing the YAML above: lookup('file', errors='ignore') returns
-    # None when the file is missing, and from_yaml would then blow up instead of falling back.
-    - name: Hand the record id to the inventory
-      ansible.builtin.copy:
-        content: "{{ autoglue_record.json.id }}"
-        dest: "./autoglue-record-id"
-        mode: "0644"
-
-    - name: wait for 60 seconds to ensure that the nodes are up and running
+    # proxmox-provision.yml already waits for the guest agent and for SSH, so the nodes are up by
+    # here. This is the tail of cloud-init: package_upgrade is still running when SSH opens, and
+    # converging into it means fighting the apt lock.
+    - name: Wait for 60 seconds to let cloud-init finish
       ansible.builtin.pause:
         seconds: 60

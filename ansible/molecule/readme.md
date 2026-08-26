@@ -1,22 +1,42 @@
 ## Which scenario runs where
 
-`test-cluster` builds on **Proxmox**. `scale-cluster` and `rotate-master-nodes` are still on
-**Hetzner**. Both collections are pinned in `ansible/requirements.yml`, and the `.env` below
-carries the credentials for both.
+All three scenarios — `test-cluster`, `scale-cluster` and `rotate-master-nodes` — build on
+**Proxmox**. They share one implementation in `molecule/common/`:
+
+| file | what it is |
+| --- | --- |
+| `common/proxmox-vars.yml` | every `PROXMOX_*` setting, loaded by each scenario's `vars_files` |
+| `common/proxmox-provision.yml` | preflights, VM create, address discovery — imported by every `create.yml` |
+| `common/proxmox-teardown.yml` | the matching delete, imported by every `destroy.yml` |
+| `common/autoglue-create.yml` / `-destroy.yml` | the DNS domain and `ctrp` record |
+| `common/cloud-init.yaml.j2` | the per-node snippet, rendered once per VM |
+| `common/hosts.yaml.j2` | the inventory template every scenario writes through |
+
+A scenario's own `create.yml` is then only the parts that genuinely differ: how many nodes, which
+vmid range, which inventory files, and what `ctrp` resolves to.
 
 ## ⚠️ Do not run a scenario while CI is running one
 
 Every scenario reuses a fixed resource identity, and all three create the same DNS domain,
-`$domain_name`. On Hetzner that identity is the names — network `test-molecule-network`, firewall
-`my-firewall`, servers `master-node-N` / `worker-node-N`; on Proxmox it is the **vmid range**
-starting at `$PROXMOX_VMID_BASE` (masters `base+1..3`, workers `base+11..13`). Both providers'
-create steps are idempotent on that identity, so a second run does not fail: it silently *adopts*
-the first run's VMs and writes their IPs into its own inventory. Whichever run reaches `destroy`
-first deletes the other's VMs, and its DNS teardown removes the domain the other run is still
-using.
+`$domain_name`. That identity is the **vmid range** each scenario owns — `$PROXMOX_VMID_BASE`
+plus a per-scenario offset, masters at `base+1..`, workers at `base+11..`:
 
-Pick a `PROXMOX_VMID_BASE` in a range reserved for molecule. `destroy` deletes those vmids
-outright, so a base that collides with a real VM destroys it.
+| scenario | offset | masters | workers |
+| --- | --- | --- | --- |
+| `test-cluster` | 0 | 9001–9003 | 9011–9013 |
+| `scale-cluster` | 100 | 9101–9103 | 9111–9113 |
+| `rotate-master-nodes` | 200 | 9201–9209 | 9211 |
+
+The offsets keep the three scenarios from colliding with **each other**. They do nothing about a
+second run of the *same* scenario: create is idempotent on the vmid, so it does not fail, it
+silently *adopts* the first run's VMs and writes their IPs into its own inventory. Whichever run
+reaches `destroy` first deletes the other's VMs, and its DNS teardown removes the domain the
+other run is still using.
+
+Pick a `PROXMOX_VMID_BASE` leaving 9000–9211 (at the default) free and reserved for molecule.
+`destroy` deletes those vmids outright, so a base that collides with a real VM destroys it. The
+offsets live in each scenario's `create.yml` *and* `destroy.yml` — change one, change both, or
+destroy will delete the wrong range.
 
 The symptoms are inexplicable SSH failures, or — worse — a green run against a cluster somebody
 else half-built.
@@ -73,19 +93,7 @@ export AUTOGLUE_RECORD_ID=""
 
 export AUTOGLUE_CLUSTER_ID=empty
 
-# HCLOUD TOKEN -- scale-cluster and rotate-master-nodes only
-export HCLOUD_TOKEN=""
-
-# optional: CIDRs allowed to SSH into the test nodes. defaults to this machine's public
-# address, discovered at create time. used by the Hetzner scenarios; test-cluster ignores it
-# now that its firewall rules are gone.
-export MOLECULE_SSH_SOURCE_CIDRS=""
-
-# optional: Hetzner location for the test VMs. defaults to hel1.
-export HCLOUD_LOCATION=""
-
-
-# ---- Proxmox: test-cluster only ----
+# ---- Proxmox: all three scenarios ----
 #
 # community.proxmox reads these four itself, which is why no module in create.yml passes any
 # api_* parameter. PROXMOX_TOKEN_ID is the token name alone, not user@realm!name.
@@ -157,11 +165,16 @@ export PROXMOX_SNIPPET_DIR="/var/lib/vz/snippets"
 # in the PVE UI, without having to remember the range.
 export PROXMOX_TAGS="qa-gluekube-molecule"
 
-# vmids: masters base+1..3, workers base+11..13. must be free, and must not be VMs you care
-# about -- destroy.yml deletes them.
+# the bottom of the vmid range. each scenario adds its own offset on top -- see the table under
+# "Do not run a scenario while CI is running one". everything from base to base+211 must be free,
+# and must not be VMs you care about: destroy.yml deletes them.
 export PROXMOX_VMID_BASE="9000"
 
 # per-node hardware. defaults are roughly a Hetzner ccx13.
+#
+# rotate-master-nodes builds NINE masters plus a worker. at these defaults that is 40 vCPU and
+# 80G of RAM in one scenario -- cheap when the nodes were rented per-hour on Hetzner, less so on
+# a single PVE host. turn these down if the host cannot seat it.
 export PROXMOX_CORES="4"
 export PROXMOX_MEMORY="8192"
 
@@ -207,9 +220,9 @@ can:
 - both bridges, with DHCP on each
 - **no default gateway in the LAN bridge's DHCP scope.** Two default routes make the node's
   outbound path nondeterministic, and `/etc/glueops/public-interface` — derived from the default
-  route in `cloudinit/cloud-init.yaml.j2` — stops reliably naming the public NIC. Hand out an
+  route in `common/cloud-init.yaml.j2` — stops reliably naming the public NIC. Hand out an
   address and a netmask on `$PROXMOX_BRIDGE_LAN`, nothing else.
-> **The test-cluster nodes are unfiltered.** The per-VM firewall this scenario used to build —
+> **The test nodes are unfiltered.** The per-VM firewall `test-cluster` used to build —
 > `firewall=1` on `net0`, a default-DROP input policy and an SSH-only ruleset — has been removed
 > for now, and neither NIC carries the flag. The nodes therefore sit on `$PROXMOX_BRIDGE_PUBLIC`
 > with nothing in front of them, so run this only on a bridge you are willing to expose. Restoring
@@ -246,8 +259,7 @@ zero changed tasks.
 
 `create.yml` creates the AutoGlue DNS domain named by `$domain_name`, then creates the `ctrp` A
 record inside it pointing at the master node addresses. Every scenario uses the private address,
-never the public one: `private_networks_info[0].ip` on Hetzner, the `$PROXMOX_LAN_CIDR` address on
-Proxmox. That is the same value as the inventory's `ip`, which is what the apiserver listens on:
+never the public one — the `$PROXMOX_LAN_CIDR` address. That is the same value as the inventory's `ip`, which is what the apiserver listens on:
 
 ```
 POST /api/v1/dns/domains                        {credential_id, domain_name, zone_id}
