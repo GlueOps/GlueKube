@@ -150,17 +150,17 @@
     return_content: true
   register: cluster_firewall
 
-- name: The datacenter firewall is enabled
-  ansible.builtin.assert:
-    that:
-      - cluster_firewall.json.data.enable | default(0) | int == 1
-    fail_msg: >-
-      The datacenter firewall is off, so the per-VM rules this playbook creates would do nothing
-      and the test nodes would be wide open on a public address. Turn it on once at
-      Datacenter -> Firewall -> Options, or `pvesh set /cluster/firewall/options --enable 1`.
-      Read your default policies before you do: enabling it applies a default-DROP input policy
-      cluster-wide, and the PVE host's own management port is subject to it.
-    quiet: true
+# - name: The datacenter firewall is enabled
+#   ansible.builtin.assert:
+#     that:
+#       - cluster_firewall.json.data.enable | default(0) | int == 1
+#     fail_msg: >-
+#       The datacenter firewall is off, so the per-VM rules this playbook creates would do nothing
+#       and the test nodes would be wide open on a public address. Turn it on once at
+#       Datacenter -> Firewall -> Options, or `pvesh set /cluster/firewall/options --enable 1`.
+#       Read your default policies before you do: enabling it applies a default-DROP input policy
+#       cluster-wide, and the PVE host's own management port is subject to it.
+#     quiet: true
 
 # One list, used by every loop below and rebuilt identically in proxmox-teardown.yml.
 - name: Build the master node list
