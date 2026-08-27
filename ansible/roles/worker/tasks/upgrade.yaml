@@ -7,7 +7,7 @@
 # The patch is re-rendered rather than assumed present: the join-time render is gated on the node
 # not already being in the cluster, so it never re-runs for an existing node (#448).
 - name: Render the per-node kubelet patch
-  ansible.builtin.import_tasks: render-kubelet-patch.yaml
+  ansible.builtin.import_tasks: ../../common/tasks/render-kubelet-patch.yaml
   tags: upgrade
 
 - name: Upgrading {{ inventory_hostname }}

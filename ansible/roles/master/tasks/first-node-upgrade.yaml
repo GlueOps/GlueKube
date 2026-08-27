@@ -32,7 +32,7 @@
 # upgrade nodes pacakages
 
 - name: Render the per-node kubelet patch
-  ansible.builtin.import_tasks: render-kubelet-patch.yaml
+  ansible.builtin.import_tasks: ../../common/tasks/render-kubelet-patch.yaml
   tags: upgrade
 
 - name: making the upgrade

@@ -325,17 +325,27 @@ and `/health` and nothing else — no key data and no write path — so Promethe
 holding an etcd client certificate.
 
 that port is **unauthenticated**, so it must not be reachable from outside the cluster. it binds to
-`0.0.0.0` because kubeadm's `ClusterConfiguration` is replayed verbatim on every control-plane node
-and cannot carry a per-node bind address. if your control-plane nodes have public IPs, block 2381
-at the cloud firewall or host firewall. the molecule scenarios already do this in their `create.yml`.
+`0.0.0.0`, and that is not a choice this repo can make differently: kubeadm uploads
+`ClusterConfiguration` to the `kubeadm-config` ConfigMap and replays it verbatim on every
+control-plane node, so it cannot carry a per-node bind address. **nothing in `ansible/` closes
+2381** — the Calico policy in `calico-global-network-policy.yaml.j2` targets load-balancer
+HostEndpoints only and does not cover masters. if your control-plane nodes have public IPs, block
+2381 at the cloud or host firewall yourself.
+
+the molecule scenarios do close it, and you can read the code rather than take this paragraph's
+word for it: `ansible/molecule/common/proxmox-provision.yml` puts `firewall=1` on the public NIC
+with a default-DROP input policy and a single rule for SSH, and
+`ansible/molecule/common/test-public-ports-closed.yml` fails the `verify` step if 2381, 6443,
+10250 or 30000 answers on a node's public address (#508).
 
 existing clusters pick the listener up the next time the etcd static pod manifest is regenerated,
 i.e. on the next `upgrade-cluster.yaml` run.
 
-until the kube-prometheus-stack serviceMonitor in glueops-core is repointed from
-`https://<node>:2379` to `http://<node>:2381`, the cluster still publishes an `etcd-client-certs`
-secret into the monitoring namespace. see the header of
-`ansible/roles/master/tasks/create-etcd-secret.yaml` for the removal steps.
+the cluster no longer publishes an `etcd-client-certs` secret into the monitoring namespace: the
+task that minted it is gone, because `http://<node>:2381` is all Prometheus needs. the
+kube-prometheus-stack serviceMonitor in glueops-core has to be pointed there — a serviceMonitor
+still scraping `https://<node>:2379` with `etcd-client-certs` will find neither the secret nor a
+reason to hold one.
 
 ## Migrate local-path-provisioner to Helm
 

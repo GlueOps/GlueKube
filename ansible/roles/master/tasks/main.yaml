@@ -29,8 +29,3 @@
   ansible.builtin.import_tasks: install-calico.yaml
   when: inventory_hostname == orchestrator_node and cni_type == "calico"
   tags: install_calico
-
-- name: Create Etcd Secret
-  ansible.builtin.import_tasks: create-etcd-secret.yaml
-  when: inventory_hostname == orchestrator_node
-  tags: create_etcd_secret

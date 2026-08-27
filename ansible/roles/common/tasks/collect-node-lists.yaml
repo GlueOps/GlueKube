@@ -59,3 +59,22 @@
     src: "compare-to-add.py"
     dest: "/opt/kubernetes/compare-to-add.py"
     mode: "0644"
+
+# The cluster's own answer to "which of these nodes are control plane", registered here so both
+# diffs read it from one place (#506). The alternative both callers used to use -- matching the
+# string "master" in the hostname -- silently skipped a control-plane node named `cp-1` and
+# selected a worker named `master-of-puppets` for cordon, drain and removal.
+#
+# Local apiserver and a bounded request, like the rest of the rotation: everything downstream is
+# derived from this list, so it stalling is worse than it failing.
+- name: Register the control-plane nodes the cluster reports
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      export KUBECONFIG=/etc/kubernetes/admin.conf
+      kubectl --server https://127.0.0.1:6443 --request-timeout=30s \
+        get nodes -l node-role.kubernetes.io/control-plane -o json \
+        | jq -c '[.items[].metadata.name] | sort'
+    executable: /bin/bash
+  register: current_control_plane_nodes
+  changed_when: false

@@ -55,14 +55,18 @@ Two things this deliberately does **not** do:
   every member — so a per-node address cannot be expressed there. The per-node alternative is
   kubeadm's `patches` directory, which would also have to be threaded through the join and upgrade
   paths or the flag silently disappears on the next upgrade. 2381 is unauthenticated, so it must be
-  blocked from outside the cluster at the network layer. The molecule scenarios now do this via the
-  firewall change under #437; any public-IP deployment needs the equivalent. This is documented in
-  `readme.md` under "Etcd metrics".
-- **`create-etcd-secret.yaml` is not deleted yet.** Removing it now would blind etcd monitoring,
-  because the glueops-core kube-prometheus-stack serviceMonitor still points at
-  `https://<node>:2379` with `etcd-client-certs`. The file is marked deprecated in its header with
-  the exact removal steps, to be done once that chart is repointed at `http://<node>:2381`.
-  **That chart change is the remaining work and it lives in another repo.**
+  blocked from outside the cluster at the network layer. Nothing in `ansible/` does that -- the
+  Calico policy covers load-balancer HostEndpoints only. The molecule scenarios do, via the
+  per-VM firewall in `molecule/common/proxmox-provision.yml`, and
+  `molecule/common/test-public-ports-closed.yml` fails the run if they stop (#508). Any public-IP
+  deployment needs the equivalent. Documented in `readme.md` under "Etcd metrics".
+- ~~**`create-etcd-secret.yaml` is not deleted yet.**~~ It has since been deleted, along with its
+  import from `roles/master/tasks/main.yaml`. The cluster no longer publishes an
+  `etcd-client-certs` secret, so the glueops-core kube-prometheus-stack serviceMonitor **must** now
+  scrape `http://<node>:2381` — one still pointing at `https://<node>:2379` with
+  `etcd-client-certs` will find no secret. **That chart change is the remaining work and it lives
+  in another repo.** The leftover secret has to be removed by hand on clusters that already have
+  one: `kubectl -n <etcd_secret_namespace> delete secret etcd-client-certs`.
 
 ## #437 — Test VMs are internet-exposed and the published image has no provenance
 
@@ -142,15 +146,18 @@ as the no-kubeadm fallback, plus a line on why the key must be generated locally
 - `git check-ignore --no-index` results as described under #438.
 - `ansible/ansible.log` absent from the working tree.
 
-**Not verified:** the firewall change has never run against Hetzner. If the Calico reasoning above is
-wrong, the failure mode is a CI run that provisions VMs and then fails the cluster-healthy check —
-worth watching the first `test-cluster` run after merge.
+**Not verified:** the firewall was dropped in `66daf5e` and has since been restored on Proxmox in
+`molecule/common/proxmox-provision.yml`, where it now covers all three scenarios rather than
+`test-cluster` alone. It has not yet run green. It needs the datacenter firewall enabled on the PVE
+cluster — provisioning asserts that rather than setting it — so the first symptom of a host that
+has not had `pvesh set /cluster/firewall/options --enable 1` run on it is an early, explicit
+failure in `create`.
 
 ## Still open
 
 - **glueops-core**: repoint the kube-prometheus-stack etcd serviceMonitor from
-  `https://<node>:2379` + `etcd-client-certs` to `http://<node>:2381`. Once merged, delete
-  `ansible/roles/master/tasks/create-etcd-secret.yaml`, drop its import from
-  `roles/master/tasks/main.yaml`, and remove the leftover secret. Nothing else in Epic C is
-  outstanding in this repo.
+  `https://<node>:2379` + `etcd-client-certs` to `http://<node>:2381`. The GlueKube half is already
+  done -- `create-etcd-secret.yaml` and its import are deleted -- so this is now overdue rather
+  than merely pending, and the leftover secret still needs removing per cluster. Nothing else in
+  Epic C is outstanding in this repo.
 - No comment has been posted to #436, #437 or #438.

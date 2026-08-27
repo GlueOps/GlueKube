@@ -8,8 +8,10 @@
 # which is the whole reason this playbook needs no state file handed to it, and it is also why a
 # scenario that changes its node counts must change them in both files.
 #
-# There is no network or firewall object to remove: the scenarios run on existing flat bridges
-# and build no per-VM ruleset.
+# There is no network or firewall object to remove: the scenarios run on existing flat bridges,
+# and the per-VM ruleset provisioning writes lives in the VM's own firewall config, so `state:
+# absent` with purge below takes it with the VM. The datacenter firewall is asserted by
+# provisioning and never set by it, so there is nothing to put back there either.
 
 - name: Build the master node list
   ansible.builtin.set_fact:

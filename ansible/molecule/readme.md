@@ -222,14 +222,26 @@ can:
   outbound path nondeterministic, and `/etc/glueops/public-interface` — derived from the default
   route in `common/cloud-init.yaml.j2` — stops reliably naming the public NIC. Hand out an
   address and a netmask on `$PROXMOX_BRIDGE_LAN`, nothing else.
-> **The test nodes are unfiltered.** The per-VM firewall `test-cluster` used to build —
-> `firewall=1` on `net0`, a default-DROP input policy and an SSH-only ruleset — has been removed
-> for now, and neither NIC carries the flag. The nodes therefore sit on `$PROXMOX_BRIDGE_PUBLIC`
-> with nothing in front of them, so run this only on a bridge you are willing to expose. Restoring
-> it is a revert of the commit that took it out; the datacenter firewall has to be on for any of
-> it to take effect, which is a one-time
-> `pvesh set /cluster/firewall/options --enable 1` — read your default policies first, since it
-> applies a default-DROP input policy cluster-wide and can lock you out of the PVE host itself.
+- **the datacenter firewall switched on.** `common/proxmox-provision.yml` builds a per-VM
+  firewall — `firewall=1` on `net0`, a default-DROP input policy, `policy_out: ACCEPT` and a
+  single inbound rule for TCP 22 — and PVE ignores all of it unless the datacenter firewall is
+  enabled. Provisioning therefore reads `/cluster/firewall/options` and **fails early** if it is
+  off, rather than writing rules that silently do nothing. Turn it on once:
+
+  ```bash
+  pvesh set /cluster/firewall/options --enable 1
+  ```
+
+  Read your default policies before you do — enabling it applies a default-DROP input policy
+  cluster-wide, and the PVE host's own management port is subject to it.
+
+> **What the nodes are exposed on.** `net0` is filtered down to inbound SSH; egress is
+> unrestricted, which the nodes need for apt, the package mirrors and every image pull. `net1` is
+> deliberately **not** flagged, so the whole LAN — kubelet, etcd, Calico VXLAN — is open between
+> nodes without a single rule. The public address therefore answers on 22 and nothing else: not
+> `6443`, not `10250`, not etcd's unauthenticated metrics port `2381`, not the NodePort range.
+> `common/test-public-ports-closed.yml` asserts exactly that on every scenario's `verify`, so
+> the claim cannot rot the way the last one did (#508).
 
 `domain_name` is required — `kubeadm-stacked-config.yaml.j2` puts `kube-api.$domain_name` in the
 apiserver certSANs and `authentication-configuration.yaml.j2` builds the Dex issuer from it.

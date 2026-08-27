@@ -32,9 +32,10 @@
 #   - a storage with the "snippets" content type ($PROXMOX_SNIPPET_STORAGE)
 #   - SSH access to the PVE host. The API's storage upload endpoint does not accept snippets, so
 #     the cloud-init files have to be written to the hypervisor directly.
+#   - the datacenter firewall switched on (asserted below, never set here)
 #   - two bridges with DHCP on each: $PROXMOX_BRIDGE_PUBLIC carries net0, the address molecule
-#     SSHes to; $PROXMOX_BRIDGE_LAN carries net1, which is what the cluster itself runs on.
-#     $PROXMOX_LAN_CIDR is what tells the two leases apart.
+#     SSHes to and the only NIC that is filtered; $PROXMOX_BRIDGE_LAN carries net1, which is what
+#     the cluster itself runs on. $PROXMOX_LAN_CIDR is what tells the two leases apart.
 
 - name: Required Proxmox variables are set
   ansible.builtin.assert:
@@ -131,6 +132,35 @@
     quiet: true
   vars:
     import_volids: "{{ import_volumes.json.data | map(attribute='volid') | list }}"
+
+# The per-VM ruleset further down only takes effect if the datacenter firewall is on. Turning it
+# on is deliberately NOT done here: it is hypervisor-wide state shared with every other VM on the
+# cluster, and enabling it applies a default-DROP input policy that can lock you out of unrelated
+# guests and of the PVE host itself. Assert, and let a human do it once.
+#
+# Asserting rather than warning is the point. Writing rules that silently do nothing is exactly
+# the failure this replaced: the code claimed the nodes were firewalled while 2381, 6443, 10250
+# and every NodePort sat open on a public address (#508, #437).
+- name: Read the datacenter firewall options
+  ansible.builtin.uri:
+    url: "{{ pve_api_url }}/cluster/firewall/options"
+    method: GET
+    headers: "{{ pve_auth_header }}"
+    validate_certs: "{{ pve_validate_certs }}"
+    return_content: true
+  register: cluster_firewall
+
+- name: The datacenter firewall is enabled
+  ansible.builtin.assert:
+    that:
+      - cluster_firewall.json.data.enable | default(0) | int == 1
+    fail_msg: >-
+      The datacenter firewall is off, so the per-VM rules this playbook creates would do nothing
+      and the test nodes would be wide open on a public address. Turn it on once at
+      Datacenter -> Firewall -> Options, or `pvesh set /cluster/firewall/options --enable 1`.
+      Read your default policies before you do: enabling it applies a default-DROP input policy
+      cluster-wide, and the PVE host's own management port is subject to it.
+    quiet: true
 
 # One list, used by every loop below and rebuilt identically in proxmox-teardown.yml.
 - name: Build the master node list
@@ -279,7 +309,12 @@
       ide2: "{{ pve_storage }}:cloudinit"
     boot: order=virtio0
     net:
-      net0: "virtio,bridge={{ pve_bridge_public }}{{ public_tag }}"
+      # firewall=1 is what makes the per-VM ruleset below apply at all -- PVE only filters an
+      # interface carrying the flag, and a policy_in of DROP on a VM whose NICs are all unflagged
+      # filters nothing.
+      net0: "virtio,bridge={{ pve_bridge_public }}{{ public_tag }},firewall=1"
+      # No firewall=1 here on purpose. The LAN stays open whatever policy_in the VM firewall is
+      # set to, which is what lets etcd, the kubelet and Calico VXLAN talk without a single rule.
       net1: "virtio,bridge={{ pve_bridge_lan }}{{ lan_tag }}"
     # cicustom below replaces only user-data, so Proxmox still builds network-config from these
     # two. That is also why the snippet must not configure networking itself.
@@ -305,6 +340,59 @@
   loop: "{{ cluster_nodes }}"
   loop_control:
     label: "{{ item.name }} ({{ pve_disk_size }})"
+
+# Applied before the first boot, not after: a node that comes up unfiltered and is fenced a minute
+# later has still been reachable on a public address for that minute.
+#
+# There is no VM-level firewall-options module in community.proxmox, so this one goes through the
+# API directly. dhcp: 1 is NOT optional -- both NICs hold a DHCP lease, and a default-DROP input
+# policy without it drops the renewal and the node falls off the network mid-run.
+- name: Enable the firewall on each node
+  ansible.builtin.uri:
+    url: "{{ pve_api_url }}/nodes/{{ pve_node }}/qemu/{{ item.vmid }}/firewall/options"
+    method: PUT
+    headers: "{{ pve_auth_header }}"
+    validate_certs: "{{ pve_validate_certs }}"
+    body_format: form-urlencoded
+    body:
+      enable: 1
+      dhcp: 1
+      policy_in: DROP
+      policy_out: ACCEPT
+    status_code: [200]
+  loop: "{{ cluster_nodes }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+# Inbound SSH and nothing else; outbound is unrestricted by the policy_out above, which the nodes
+# need for apt, the package mirrors and every image pull.
+#
+# SSH is the only thing that has to reach a node from off-box: molecule connects over net0 and
+# every cluster protocol rides the unfiltered LAN NIC. That is what closes 2381, 6443, 10250 and
+# the NodePort range on the public address (#508, #437).
+#
+# level: vm puts the rules in the VM's own firewall config, so they are deleted with the VM and
+# proxmox-teardown.yml has no firewall object to clean up. `pos` is required by PVE -- rules are
+# position-indexed, not a set -- and `iface` scopes this to the one filtered NIC, so it keeps
+# saying what it means if net1 ever gains firewall=1.
+- name: Allow inbound SSH on the public NIC of each node
+  community.proxmox.proxmox_firewall:
+    level: vm
+    vmid: "{{ item.vmid }}"
+    state: present
+    update: true
+    rules:
+      - pos: 0
+        type: in
+        action: ACCEPT
+        proto: tcp
+        dport: "22"
+        iface: net0
+        enable: true
+        comment: molecule SSH
+  loop: "{{ cluster_nodes }}"
+  loop_control:
+    label: "{{ item.name }}"
 
 - name: Start each node
   community.proxmox.proxmox_kvm:

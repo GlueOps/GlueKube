@@ -35,7 +35,7 @@
 # kubeadm-join-config.j2 points here; without the file the join silently falls back to the
 # cluster-wide reservations sized from masters[0] (#449).
 - name: Render the per-node kubelet patch
-  ansible.builtin.import_tasks: render-kubelet-patch.yaml
+  ansible.builtin.import_tasks: ../../common/tasks/render-kubelet-patch.yaml
   tags: join_master
   when: inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[orchestrator_node]['current_cluster_nodes'].stdout_lines
 

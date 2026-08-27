@@ -79,14 +79,17 @@ etcd:
         value: "1h"         # Prevent database bloat
       # Metrics/health-only listener for Prometheus. This port serves /metrics and /health and
       # nothing else -- no key data, no write path -- and needs no client certificate, which is
-      # what lets monitoring stop holding an etcd client credential altogether (see the note in
-      # create-etcd-secret.yaml).
+      # what lets monitoring stop holding an etcd client credential altogether.
       #
       # The bind address has to be 0.0.0.0. ClusterConfiguration is cluster-wide: kubeadm uploads
       # it to the kubeadm-config ConfigMap and replays it verbatim on every member, so a per-node
-      # private IP cannot be expressed here. 2381 is unauthenticated and must therefore be blocked
-      # from outside the cluster at the network layer -- the molecule scenarios do this in their
-      # create.yml, and any public-IP deployment needs the equivalent.
+      # private IP cannot be expressed here.
+      #
+      # 2381 is unauthenticated and NOTHING in this repository closes it -- the Calico policy in
+      # calico-global-network-policy.yaml.j2 covers load-balancer HostEndpoints only. Any
+      # deployment whose masters have a public address has to block it at the network layer
+      # itself. The molecule scenarios do (common/proxmox-provision.yml), and
+      # common/test-public-ports-closed.yml fails the run if they stop (#508).
       - name: "listen-metrics-urls"
         value: "http://0.0.0.0:2381"
     serverCertSANs: 

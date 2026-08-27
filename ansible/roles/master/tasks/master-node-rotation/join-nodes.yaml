@@ -26,7 +26,7 @@
 # Same patch the steady-state join renders -- a rotation replaces control-plane hardware, which
 # is exactly the case where the incoming node's size differs from the cluster-wide config (#449).
 - name: Render the per-node kubelet patch
-  ansible.builtin.import_tasks: render-kubelet-patch.yaml
+  ansible.builtin.import_tasks: ../../../common/tasks/render-kubelet-patch.yaml
   tags: join_nodes
 
 

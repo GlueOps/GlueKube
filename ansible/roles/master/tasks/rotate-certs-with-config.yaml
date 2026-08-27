@@ -129,28 +129,45 @@
     mode: "0755"
   tags: rotate-certs-with-config
 
-- name: Force restart of kube-apiserver static pod
-  ansible.builtin.command: "mv /etc/kubernetes/manifests/kube-apiserver.yaml /opt/kubernetes/manifests/kube-apiserver.yaml"
+# Parking the manifest is what restarts the apiserver, and it is the one window in this playbook
+# where a host has no control plane. Two things make that window recoverable by re-running rather
+# than a brick that fails at the same task every time (#426):
+#
+#   block/always -- the restore runs even when the wait below exhausts its retries or the block is
+#   interrupted, so the apiserver comes back on the way out instead of staying down until someone
+#   moves the file back by hand on every master.
+#
+#   creates:/removes: on the park -- a recovery run finds the manifest already in /opt and walks
+#   past the task, instead of failing on an `mv` whose source no longer exists and never reaching
+#   the restore. Either guard alone is enough; both are stated because they describe the two
+#   different states a half-finished run can leave behind.
+- name: Restart the kube-apiserver static pod onto the new certificate
   tags: rotate-certs-with-config
+  block:
+    - name: Force restart of kube-apiserver static pod
+      ansible.builtin.command: "mv /etc/kubernetes/manifests/kube-apiserver.yaml /opt/kubernetes/manifests/kube-apiserver.yaml"
+      args:
+        creates: /opt/kubernetes/manifests/kube-apiserver.yaml
+        removes: /etc/kubernetes/manifests/kube-apiserver.yaml
 
-- name: Wait until old kube-apiserver container is removed
-  ansible.builtin.shell: |
-    set -o pipefail
-    ctr -n k8s.io containers list | grep kube-apiserver || true
-  args:
-    executable: /bin/bash
-  register: old_apiserver_container
-  retries: 18
-  delay: 5
-  until: old_apiserver_container.stdout == ""
-  changed_when: false
-  tags: rotate-certs-with-config
-
-- name: Restore kube-apiserver manifest to recreate static pod
-  ansible.builtin.command: "mv /opt/kubernetes/manifests/kube-apiserver.yaml /etc/kubernetes/manifests/kube-apiserver.yaml"
-  args:
-    removes: /opt/kubernetes/manifests/kube-apiserver.yaml
-  tags: rotate-certs-with-config
+    - name: Wait until old kube-apiserver container is removed
+      ansible.builtin.shell: |
+        set -o pipefail
+        ctr -n k8s.io containers list | grep kube-apiserver || true
+      args:
+        executable: /bin/bash
+      register: old_apiserver_container
+      retries: 18
+      delay: 5
+      until: old_apiserver_container.stdout == ""
+      changed_when: false
+  always:
+    # No condition on this task beyond the file existing: `always` is what makes it run after a
+    # failed wait, and `removes` is what keeps it a no-op when the park itself was skipped.
+    - name: Restore kube-apiserver manifest to recreate static pod
+      ansible.builtin.command: "mv /opt/kubernetes/manifests/kube-apiserver.yaml /etc/kubernetes/manifests/kube-apiserver.yaml"
+      args:
+        removes: /opt/kubernetes/manifests/kube-apiserver.yaml
 
 - name: Verify kube-apiserver static pod container is recreated
   ansible.builtin.shell: |

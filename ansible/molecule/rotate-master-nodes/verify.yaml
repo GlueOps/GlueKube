@@ -4,3 +4,8 @@
 # happily on a half-built cluster (#462) -- and it was not in the test_sequence at all.
 - name: Verify the cluster reached its expected state
   ansible.builtin.import_playbook: tests/test_cluster_healthy.yaml
+
+# The firewall assertion. Shared rather than copied into each tests/ directory -- it reads the
+# inventory and the public addresses, both of which every scenario already has (#508).
+- name: Verify the public NIC is filtered down to SSH
+  ansible.builtin.import_playbook: ../common/test-public-ports-closed.yml

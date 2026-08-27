@@ -31,9 +31,11 @@ pve_import_storage: "{{ pve_import_from.split(':')[0] }}"
 # this is wrong.
 pve_storage: "{{ lookup('env', 'PROXMOX_STORAGE') | default('local', true) }}"
 
-# Two NICs. net0 on the public bridge is what molecule SSHes to; net1 on the LAN bridge carries
-# everything the cluster does -- kubelet, etcd, Calico VXLAN -- and is what lands in the
-# inventory's `ip`. Both take a DHCP lease.
+# Two NICs. net0 on the public bridge is what molecule SSHes to and the only one that is
+# filtered -- it carries firewall=1 and a default-DROP input policy allowing SSH alone. net1 on
+# the LAN bridge carries everything the cluster does -- kubelet, etcd, Calico VXLAN -- is what
+# lands in the inventory's `ip`, and is deliberately unflagged so no rule is needed for any of it.
+# Both take a DHCP lease.
 pve_bridge_public: "{{ lookup('env', 'PROXMOX_BRIDGE_PUBLIC') | default('vmbr_public', true) }}"
 pve_bridge_lan: "{{ lookup('env', 'PROXMOX_BRIDGE_LAN') | default('vmbr_lan', true) }}"
 # VLAN tags, matching the Terraform module: the LAN bridge is VLAN-aware and DHCP lives on tag

@@ -1,190 +1,216 @@
 # GlueKube Ansible review (#486) — what is still unfinished
 
-Assessed **2026-08-19** against `origin/feat/solving_issue_486` @ `756e07c`, which is **16 commits
-ahead of `main` and not merged**. Every "done" below therefore means *done on that branch*, not
-shipped. `main` @ `27a2ae9` still contains none of this work.
+Re-derived **2026-08-27** from the working tree of `feat/solving_issue_486` @ `f22d2f9`
+**plus uncommitted changes**, which is **42 commits ahead of `origin/main`** (`27a2ae9`) and 1
+behind. Every "done" below means *done on this branch*, not shipped.
 
-All 10 epics and all 61 tickets are still **OPEN on GitHub** — nothing has been closed out, so the
-tracker is not a usable status signal. This file is the code-derived status instead.
+> **#510 says this file should be deleted before #211 merges**, on the grounds that a second copy
+> of the status drifts from the tickets and reads as authoritative while being wrong — which is
+> exactly what happened to the 2026-08-19 version of this file. That objection still stands. If it
+> is kept, it has to be re-derived from the code every time the branch moves; the tracker #486 and
+> the tickets remain the source of truth.
+
+Rows marked **⧗ uncommitted** exist only in the working tree.
 
 ## Scoreboard
 
 | Epic | Theme | Done | Partial | Open | Verdict |
 |---|---|---|---|---|---|
 | **B** #424 | Control plane taken down all at once | 5 | 0 | 0 | ✅ **Finished** (1 accepted risk) |
-| **E** #446 | Upgrades have no safety rails | 5 | 1 | 0 | 🟢 Nearly finished — only #447 left |
-| **G** #459 | CI cannot catch regressions | 4 | 1 | 0 | 🟢 Nearly finished |
-| **A** #415 | Sync/scale destroys or skips nodes | 5 | 1 | 2 | 🟡 Two real gaps left |
-| **H** #465 | Variable plumbing, tooling, docs | 5 | 1 | 1 | 🟡 Two gaps left |
-| **I** #473 | Duplication and misleading names | 3 | 2 | 0 | 🟡 Deferred items only |
+| **C** #431 | Credentials static / world-readable | 3 | 0 | 0 | ✅ **Finished** (4 closed won't-do) |
+| **G** #459 | CI cannot catch regressions | 5 | 0 | 0 | ✅ **Finished** |
+| **H** #465 | Variable plumbing, tooling, docs | 6 | 0 | 1 | 🟢 Only #469 left |
+| **E** #446 | Upgrades have no safety rails | 4 | 1 | 1 | 🟢 #447 is the one that matters |
+| **I** #473 | Duplication and misleading names | 3 | 1 | 0 | 🟢 One decision, one deliberate |
+| **A** #415 | Sync/scale destroys or skips nodes | 5 | 2 | 1 | 🟡 #417 and #422 are real |
 | **D** #439 | Re-runs unsafe against a live cluster | 4 | 2 | 0 | 🟡 Two halves left |
-| **C** #431 | Credentials static / world-readable | 1 | 2 | 0 | 🟡 4 of 7 accepted as won't-do |
-| **F** #453 | Nexus mirror, apt signatures | 2 | 0 | 3 | 🟠 Two gated on an unanswered question |
-| **J** #479 | Calico policy and config defects | 1 | 0 | 5 | 🔴 **Largely untouched** |
+| **F** #453 | Nexus mirror, apt signatures | 3 | 0 | 2 | 🟡 Both are code, no longer gated |
+| **J** #479 | Calico policy and config defects | 2 | 0 | 2 | 🟠 #480 is the highest-value bug left |
+| **#505** | New findings from the review of PR #211 | 2 | 0 | 3 | 🟡 Raised against this branch |
 
-**Epic J (#479) is now the one to tackle next.** #448, #449, #450 and #451 were fixed on
-2026-08-19 (see the Epic E table); #447 — the etcd snapshot before `kubeadm upgrade apply` — is
-the only thing left in E, and it is the single highest-value item remaining anywhere.
+**What is actually left is small and specific.** In rough value order: **#480** (every egress
+NetworkPolicy in the cluster is inert), **#447** (no etcd snapshot before `kubeadm upgrade apply`),
+**#422** (departing nodes keep working credentials), **#417** (destructive scale-down runs
+unattended), then the housekeeping.
 
----
-
-## 🟢 Epic E #446 — Upgrades have no safety rails (5 of 6 done)
-
-Four of the five open findings were fixed on **2026-08-19**. What remains is #447, the one that
-matters most: there is still no etcd snapshot taken before the upgrade begins.
-
-| # | Finding | Status | Evidence |
-|---|---|---|---|
-| #447 | No etcd snapshot, no upgrade gate, no version-skew check | **OPEN** | `grep -rn "snapshot save\|skew"` across `roles/` and `playbooks/` returns nothing. `first-node-upgrade.yaml` runs `kubeadm upgrade apply {{ kubernetes_version }} -y` with no backup ahead of it. |
-| #448 | Worker kubelet patches silently discarded at first upgrade | ✅ **DONE** (2026-08-19) | Every kubeadm call that rewrites a kubelet config now re-renders the patch and passes `--patches /etc/kubernetes/patches`: `worker/tasks/upgrade.yaml`, `master/tasks/upgrade.yaml`, `master/tasks/first-node-upgrade.yaml`. The render is shared via `render-kubelet-patch.yaml` in each role, because the join-time render is gated on the node not already being in the cluster and so never re-runs. |
-| #449 | Secondary masters have no kubelet patch mechanism at all | ✅ **DONE** (2026-08-19) | `master/templates/kubeletConfigurationPatch.yaml.j2` added and `patches.directory` added to `master/templates/kubeadm-join-config.j2`; rendered before the join in both `master/tasks/join-nodes.yaml` and `master/tasks/master-node-rotation/join-nodes.yaml`. Its expressions are identical to the ones in `kubeadm-stacked-config.yaml.j2`, so on a homogeneous control plane the patch is a no-op — verified by rendering both at 2 vCPU/4 GiB and 8 vCPU/32 GiB. |
-| #450 | Cert rotation overwrites cluster-wide `ClusterConfiguration` from local state | ✅ **DONE** (2026-08-19) | `rotate-certs-with-config.yaml` now fetches the live ClusterConfiguration, compares the env-derived fields (`kubernetesVersion`, `controlPlaneEndpoint`, `networking`, `certSANs`, apiserver `extraArgs`), prints the difference and fails unless `-e allow_config_change=true`. The upload runs **only** on that opt-in. The comparison is deliberately field-scoped, not whole-document — kubeadm normalises what it stores, so a full equality check would fail every run. |
-| #451 | `AuthenticationConfiguration` pins an apiVersion requiring Kubernetes 1.34 | ✅ **DONE** (2026-08-19) | The template now selects `v1` at ≥1.34 and `v1beta1` below it. The preflight floor dropped from 1.34 to **1.31**, which is the repo's real minimum — it comes from `kubeadm.k8s.io/v1beta4` in `kubeadm-stacked-config.yaml.j2`, not from this file. Stale `1.32.6-1.1` examples in `inventory/group_vars` and all three molecule inventories updated to the actual CI/Dockerfile pin. |
-| #452 | Housekeeping: kubeadm hold asymmetry, kubelet reservation math | **PARTIAL** | Hold asymmetry fixed — `roles/common/tasks/upgrade-kubeadm.yaml:51` and `upgrade-kubelet.yaml:20,26` now hold symmetrically. The reservation math in `kubeadm-stacked-config.yaml.j2:107-123` was not revisited. |
-
-**#447 is what is left, and it is the highest-value item in the whole review**: an etcd snapshot
-is the only thing standing between a failed `kubeadm upgrade apply` and an unrecoverable cluster.
-
-Verification of the four fixes: all touched YAML parses; `ansible-playbook --syntax-check` passes
-on `preflight.yaml`, `upgrade-cluster.yaml`, `rotate-certs-with-config.yaml` and on a probe
-playbook that statically imports every changed task file so the nested `import_tasks` are walked;
-the authn template was rendered at 1.31/1.33/1.34/1.40; the #450 comparison was exercised against
-a kubeadm-normalised ConfigMap (passes), a stale `.env` (fails) and a missing ConfigMap (fails).
-None of this has been run against a live cluster or through molecule.
-
-## 🔴 Epic J #479 — Calico policy and configuration defects (1 of 6 done)
-
-| # | Finding | Status | Evidence |
-|---|---|---|---|
-| #480 | `allow-all-egress` GNP nullifies every Kubernetes egress NetworkPolicy | **OPEN** | `calico-global-network-policy.yaml.j2:26-32` — the policy was *renamed* to `allow-all-egress-lb-nodes` but its `selector` is still `all()`. The name now claims a scope the selector does not implement, which is worse than before: it reads as fixed. |
-| #481 | Merge the two Calico value templates | **OPEN** | `calico.yaml.j2` and `calico-without-firstFound.yaml.j2` are both live, selected at `install-calico.yaml:3` and `:10`. |
-| #482 | `install-calico` only waits for the operator, not Calico | ✅ **DONE** | `install-calico.yaml:54-69` now waits for the `calico-node` daemonset and its rollout. |
-| #483 | LB nodes without a public-interface file are silently skipped | **OPEN** | `apply-calico-firewall.yaml:52-60` — `failed_when: false`, then `selectattr('rc','equalto',0) \| rejectattr('stdout','equalto','')`. A node that fails the read is dropped from the map with no warning and simply never gets a HostEndpoint. |
-| #484 | Felix configuration gated on the WireGuard toggle | **OPEN** | `calico.yaml.j2:93-96` — `defaultFelixConfiguration.enabled` is `{{ calico_node_to_node_encryption \| bool }}`, so turning encryption off also discards `logSeverityScreen`. |
-| #485 | Question: is `email_verified` fail-closed intentional? | **UNANSWERED** | Needs a decision, not code. |
-
-#480 is the one to fix first — it is listed in the tracker's own suggested start order and it means
-every egress NetworkPolicy in the cluster is currently inert.
+Four items are **decisions, not engineering**: #477 (`bump_version.yaml`), #485 (`email_verified`
+fail-closed), #484 (confirm the Felix block is meant to be inert), #510 (this file).
 
 ---
 
-## 🟠 Epic F #453 — Nexus mirror and apt signatures (2 of 5)
+## 🟠 Epic J #479 — Calico policy and configuration defects (2 of 4 actionable)
+
+| # | Finding | Status | Evidence |
+|---|---|---|---|
+| #480 | `allow-all-egress` GNP nullifies every Kubernetes egress NetworkPolicy | **OPEN** | `calico-global-network-policy.yaml.j2:26-32` — the policy is named `allow-all-egress-lb-nodes` but its `selector` is still `all()`. The name claims a scope the selector does not implement, so it reads as fixed. Unchanged since the review. |
+| #481 | Merge the two Calico value templates | ✅ **DONE** | `calico-without-firstFound.yaml.j2` is gone; `install-calico.yaml` renders `calico.yaml.j2` alone. |
+| #482 | `install-calico` only waits for the operator, not Calico | ✅ **DONE** | Waits for the `calico-node` daemonset and its rollout. |
+| #483 | LB nodes without a public-interface file are silently skipped | **OPEN** | `apply-calico-firewall.yaml:47-60` — `failed_when: false`, then `selectattr('rc','equalto',0) \| rejectattr('stdout','equalto','')`. A node that fails the read is dropped from the map with no warning and never gets a HostEndpoint. Unchanged. |
+| #484 | Felix configuration gated on the WireGuard toggle | **NEEDS CONFIRMATION** | `calico.yaml.j2:94-96` is now `enabled: false` / `logSeverityScreen: Info`. The WireGuard gate the ticket objected to is gone, but the block is inert either way — `logSeverityScreen` is not applied. If the intent was "always apply the Felix config, independent of encryption", this needs `enabled: true`. Confirm which was meant. |
+| #485 | Question: is `email_verified` fail-closed intentional? | **UNANSWERED** | A decision, not code. |
+
+#480 is still the single highest-value bug in the review.
+
+## 🟡 Epic A #415 — Sync and scale (5 done, 2 partial, 1 open)
 
 | # | Status | Note |
 |---|---|---|
-| #454 `allow_unauthenticated: true` | **OPEN** | 4 sites remain: `common/tasks/prepare-node.yaml:234,257`, `upgrade-kubeadm.yaml:41`, `upgrade-kubelet.yaml:12`. It was 7 before; the drop is de-duplication (#474), not a fix. |
-| #455 Calico/metrics-server/local-path images not mirrored | **GATED** | Blocked on the open question *"is airgapped/mirror-only an actual requirement?"* — unanswered on #453. |
-| #456 Seven public hosts contacted, no checksums | **GATED** | Same question. |
-| #457 Pin collections with `requirements.yml` | ✅ **DONE** | `ansible/requirements.yml` pins 5 collections; CI installs from it. |
-| #458 Deprecated `apt_key`, unreferenced mirror template | ✅ **DONE** | Only a comment mentions `apt_key` now. |
+| #416 Node diff returns every node when kubectl fails | ✅ **DONE** | `common/tasks/collect-node-lists.yaml` has `set -euo pipefail` and a "refuse to diff against an empty cluster" assert. |
+| #417 Restore the confirmation gate the README documents | **PARTIAL** | The *documentation* half is fixed — the README no longer promises a `Do you want to apply the above changes?` prompt, so it no longer lies. The **gate itself still does not exist**: the only `pause:` in `roles/` is the DNS propagation sleep in `update-dns-records.yaml:111`. `make sync` still cordons, drains, deletes nodes and removes etcd members unattended. Filed as a Blocker; still worth one. |
+| #418 Master removal crashes on `hostvars` for de-inventoried nodes | ✅ **DONE** | `update-dns-records.yaml:20-27` matches IPs by node name against kubectl output. |
+| #419 Rotation's `nodes_to_remove` returns all cluster nodes | **PARTIAL / by design** | Still returns every node, now documented as deliberate in `master-node-rotation/compare-node.yaml:1-8`: a rotation replaces the whole control plane, so every node is a candidate and `rotate-nodes.yaml` narrows it. The narrowing itself is no longer a hostname substring match — see #506. |
+| #420 Unanchored etcd member grep | ✅ **DONE** | `scale-down.yaml` uses `grep -P '(?<![\w-]){{ item }}(?![\w-])'`. |
+| #421 Worker join substring matching | ✅ **DONE** | List membership against `stdout_lines`. |
+| #422 Removed nodes are never reset and keep valid credentials | **OPEN** | `scale-down.yaml` cordons, drains, deletes the Node and removes the etcd member. It never runs `kubeadm reset` on the departing node. `roles/master/tasks/reset-nodes.yaml` exists but is the *pre-join* reset, not a teardown. A removed node keeps its kubelet client cert and its etcd peer keypair. |
+| #423 Molecule coverage for control-plane scale-down | ✅ **DONE** | `side_effect/remove_control_plane.yaml` + `tests/test_scale_down.yaml`, wired into `test_sequence`. |
 
-**Answering the airgapped question unblocks two tickets at once** and is the cheapest thing on this
-list — it is a decision, not work.
+## 🟢 Epic E #446 — Upgrades have no safety rails (4 of 6)
 
-## 🟡 Epic A #415 — Sync and scale (5 of 8, 2 genuinely open)
-
-| # | Status | Note |
+| # | Status | Evidence |
 |---|---|---|
-| #416 Node diff returns every node when kubectl fails | ✅ **DONE** | `collect-node-lists.yaml` now has `set -euo pipefail` plus a "refuse to diff against an empty cluster" assert. |
-| #417 Restore the confirmation gate the README documents | **OPEN** | No `pause`/`prompt` exists on the sync or scale path. The only pauses are the inter-node ones in `upgrade-cluster.yaml`. A destructive scale-down still runs unattended. |
-| #418 Master removal crashes on `hostvars` for de-inventoried nodes | ✅ **DONE** | `update-dns-records.yaml:15` matches IPs by node name instead of `hostvars[node]`. |
-| #419 Rotation's `nodes_to_remove` returns all cluster nodes | **PARTIAL / by design** | Still returns every node (`master-node-rotation/compare-node.yaml`), now documented as deliberate and narrowed by `rotate-nodes.yaml:20-21` via `select('search','master')`. That narrowing is a **hostname substring match**, so a control-plane node not named `*master*` is silently excluded. Same root cause as the `scale-down.yaml` regex. |
-| #420 Unanchored etcd member grep | ✅ **DONE** | `scale-down.yaml:38` uses `grep -P '(?<![\w-]){{ item }}(?![\w-])'`. |
-| #421 Worker join substring matching | ✅ **DONE** | Now list membership against `stdout_lines`. |
-| #422 Removed nodes are never reset and keep valid credentials | **OPEN** | `scale-down.yaml` cordons, drains, deletes and removes the etcd member — it never runs `kubeadm reset` on the departing node. |
-| #423 Molecule coverage for control-plane scale-down | ✅ **DONE** | `side_effect/remove_control_plane.yaml` + `tests/test_scale_down.yaml`, wired into `molecule.yml`'s `test_sequence`. |
+| #447 No etcd snapshot, no upgrade gate, no version-skew check | **OPEN** | `grep -rn "snapshot save\|skew" roles/ playbooks/` returns nothing. `first-node-upgrade.yaml` runs `kubeadm upgrade apply {{ kubernetes_version }} -y` with no backup ahead of it. |
+| #448 Worker kubelet patches silently discarded at first upgrade | ✅ **DONE** | Every kubeadm call that rewrites a kubelet config re-renders the patch and passes `--patches /etc/kubernetes/patches`: `worker/tasks/upgrade.yaml`, `master/tasks/upgrade.yaml`, `master/tasks/first-node-upgrade.yaml`. ⧗ The render now lives once in `roles/common/tasks/render-kubelet-patch.yaml` (#474) rather than a copy per role. |
+| #449 Secondary masters have no kubelet patch mechanism at all | ✅ **DONE** | `master/templates/kubeletConfigurationPatch.yaml.j2` plus `patches.directory` in `kubeadm-join-config.j2`, rendered before the join on both the steady-state and rotation paths. The master and worker templates stay separate on purpose — the worker's small tier is `1024Mi` against the master's `512Mi`. |
+| #450 Cert rotation overwrites cluster-wide `ClusterConfiguration` | ✅ **DONE** | `rotate-certs-with-config.yaml:31-94` fetches the live ClusterConfiguration, compares the env-derived fields, prints the difference and fails unless `-e allow_config_change=true`. The upload runs only on that opt-in. |
+| #451 `AuthenticationConfiguration` pins an apiVersion requiring 1.34 | ✅ **DONE** | Template selects `v1` at ≥1.34 and `v1beta1` below; preflight floor is 1.31. |
+| #452 Housekeeping: kubeadm hold asymmetry, kubelet reservation math | **PARTIAL** | Hold half fixed and de-duplicated: `common/tasks/upgrade-kubeadm.yaml:49` and `upgrade-kubelet.yaml:18,24`. **The reservation math is untouched** — `kubeReserved` still equals `systemReserved` (doubled headroom), `systemReservedCgroup: "/system.slice"` is still set while `enforceNodeAllocatable` is `["pods"]` only (so it does nothing), and the `>= 16384` tier is still unreachable on a nominal 16 GiB VM. |
 
-## 🟡 Epic H #465 — Plumbing, tooling, docs (5 of 7)
-
-| # | Status | Note |
-|---|---|---|
-| #466 Preflight play | ✅ **DONE** | `playbooks/preflight.yaml`, imported by `setup-cluster.yaml` and `upgrade-cluster.yaml`, so molecule gets it too. |
-| #467 `AUTOGLUE_ORG_ID` has no producer | ✅ **DONE** | `parser.py:73,156`. ⚠️ **But `parser.py:160` writes `AUTOGLUE_BASE_URL={autoglue_org_id}`** — the base URL is set to the org id. That looks like a new copy-paste bug introduced by the fix; worth a ticket. |
-| #468 `parser.py` misses four version variables | ✅ **DONE** | `version_fields` at `parser.py:131-135`. |
-| #469 `ansible.cfg` uses env-var names as ini keys | **OPEN** | Unchanged: `ANSIBLE_HOST_KEY_CHECKING="False"` and `ANSIBLE_ROLES_PATH=$PWD/roles` are still ini keys ansible does not read. Only `log_path` is valid. |
-| #470 Makefile | ✅ **DONE** | The bare `export ;` that leaked credentials into #414 is gone; `.env` rule works outside the container. |
-| #471 README haproxy / Terraform | ✅ **DONE** | `readme.md:69,166` now state that neither exists. |
-| #472 `check-network-connectivity` reports success without checking | **PARTIAL** | It now runs `ansible.builtin.ping` with `any_errors_fatal`, which is a real check. But **every substantive probe is commented out** — the node-to-node private path, the mirror reachability, the `ctrp` lookup and the 2379/2380/6443 probes are all inert. The file reads as done and is roughly 15% done. |
+**#447 remains the highest-value item in Epic E**: an etcd snapshot is the only thing between a
+failed `kubeadm upgrade apply` and an unrecoverable cluster.
 
 ## 🟡 Epic D #439 — Re-run safety (4 of 6)
 
 | # | Status | Note |
 |---|---|---|
-| #440 containerd config rewritten, non-atomic window | ✅ **DONE** | Now `copy` with registered content — idempotent and atomic. |
+| #440 containerd config rewritten, non-atomic window | ✅ **DONE** | `copy` with registered content — idempotent and atomic. |
 | #441 containerd/kubelet restarted on every run | ✅ **DONE** | `state: "{{ 'restarted' if containerd_config_file is changed else 'started' }}"`. |
-| #442 Every run dist-upgrades; kube packages never held at install | **PARTIAL** | The hold half is fixed (`prepare-node.yaml:246,264`). **`upgrade: dist` at `prepare-node.yaml:75` still runs on every single sync** — every `make sync` dist-upgrades every live node. |
-| #443 Four `creates:` sentinels never written | ✅ **DONE** | All remaining `creates:` point at paths their task actually writes. |
+| #442 Every run dist-upgrades; kube packages never held at install | **PARTIAL** | Holds are in place (`common/tasks/prepare-node.yaml:233,251`) and `cache_valid_time: 3600` is unified at `:57`. **`upgrade: dist` at `prepare-node.yaml:61` is still ungated** — every `make sync` dist-upgrades every live node. |
+| #443 Four `creates:` sentinels never written | ✅ **DONE** | All remaining `creates:` point at paths their task writes. |
 | #444 Swap and kernel modules do not survive a reboot | ✅ **DONE** | fstab edit + `persistent: present` modprobe + `/etc/sysctl.d/99-kubernetes.conf`. |
-| #445 No entrypoint survives `--check` | **PARTIAL** | `check_mode: false` added at the two places that need it (`select-orchestrator.yaml:27`, `sync.yaml:13`), but no dry run has been demonstrated end to end. Treat as unverified. |
+| #445 No entrypoint survives `--check` | **PARTIAL** | `check_mode: false` at the two places that need it (`select-orchestrator.yaml:27`, `sync.yaml:13`). No dry run has been demonstrated end to end. Treat as unverified. |
 
-## 🟡 Epic C #431 — Credentials (3 open of 7; 4 closed won't-do)
+## 🟡 Epic F #453 — Nexus mirror and apt signatures (3 of 5)
+
+The airgapped question that gated #455 and #456 has been answered in practice: the images were
+mirrored. Both remaining items are now ordinary code, not decisions.
 
 | # | Status | Note |
 |---|---|---|
-| #436 Etcd client cert copied into monitoring namespace | ✅ **DONE** | `create-etcd-secret.yaml` now publishes a scoped secret into a dedicated `etcd_secret_namespace`. |
-| #437 Test VMs internet-exposed, image has no provenance | **PARTIAL** | Molecule `create.yml` now builds a Hetzner firewall and attaches it. Image provenance is not addressed. |
-| #438 Tracked inventory file, third-party key generation | **PARTIAL** | Only `hosts.yaml.example` is tracked now. The key-generation half was not verified. |
+| #454 `allow_unauthenticated: true` | **OPEN** | 4 sites: `common/tasks/prepare-node.yaml:221,244`, `upgrade-kubeadm.yaml:41`, `upgrade-kubelet.yaml:12`. It was 7 before; the drop is de-duplication (#474), not a fix. |
+| #455 Calico/metrics-server/local-path images not mirrored | ✅ **DONE** | `calico.yaml.j2:2-3` (`quay.repo.gpkg.io`), `metrics-server-values.yaml.j2:17`, `local-path-provisioner-values.yaml.j2:10,14`, and `kubeadm-stacked-config.yaml.j2:56,60` (`k8s.repo.gpkg.io`). **The pause image is the gap** — see #507. |
+| #456 Seven public hosts contacted, no checksums | **OPEN** | 5 `get_url` calls across `common/tasks/prepare-node.yaml:80,194`, `common/tasks/upgrade-kubeadm.yaml:11` and `master/tasks/prepare-nodes.yaml:16,50`. `grep -rn "checksum:" roles/` returns nothing. |
+| #457 Pin collections with `requirements.yml` | ✅ **DONE** | `ansible/requirements.yml` pins 5 collections; CI installs from it. |
+| #458 Deprecated `apt_key`, unreferenced mirror template | ✅ **DONE** | Only a comment mentions `apt_key`. |
+
+## 🟢 Epic H #465 — Plumbing, tooling, docs (6 of 7)
+
+| # | Status | Note |
+|---|---|---|
+| #466 Preflight play | ✅ **DONE** | `playbooks/preflight.yaml`, imported by `setup-cluster.yaml` and `upgrade-cluster.yaml`. |
+| #467 `AUTOGLUE_ORG_ID` has no producer | ✅ **DONE** | `parser.py:157` writes `AUTOGLUE_BASE_URL={autoglue_base_url}`. The copy-paste bug the previous version of this file flagged was fixed and `org_id` removed entirely. |
+| #468 `parser.py` misses four version variables | ✅ **DONE** | `version_fields`. |
+| #469 `ansible.cfg` uses env-var names as ini keys | **OPEN** | Unchanged. `ANSIBLE_HOST_KEY_CHECKING="False"` and `ANSIBLE_ROLES_PATH=$PWD/roles` are still ini keys under `[defaults]` that ansible does not read. Only `log_path` is valid. |
+| #470 Makefile | ✅ **DONE** | The bare `export ;` that leaked credentials is gone. |
+| #471 README haproxy / Terraform | ✅ **DONE** | `readme.md:71,166` state that neither exists. |
+| #472 `check-network-connectivity` reports success without checking | ✅ **DONE** ⧗ | Every probe is now live: host ping under `any_errors_fatal`, the `ip` inventory assert, node-to-node private path, mirror reachability, the `ctrp` lookup and the 2379/2380/6443 matrix. Nine tasks, none commented out. |
+
+## ✅ Epic G #459 — CI (5 of 5, finished)
+
+#460 (PR trigger with `yamllint`/`ansible-lint` actually invoked), #461 (`concurrency:`),
+#462 (real molecule health checks) and #463 (`domain_name` produced in CI) were already done.
+
+**#464 is now done too**, all six sub-items: the artifact uploads `~/.cache/molecule`
+(`molecule_test.yaml:308`) instead of two paths that matched nothing; `latest_release.yaml`
+triggers on `types: [published]` alone and has a `concurrency:` group; `ansible/inventory/hosts.yaml`
+is untracked and ignored, and every generated molecule inventory including
+`second-rotate-master-nodes.yaml` is listed in `.gitignore:67-72`; `scale-cluster/create.yml:89`
+points `ctrp` at `master_nodes_list[:1]` rather than pre-satisfying its own assertion; the
+control-plane untaint appears only in the masters block of `common/hosts.yaml.j2`; and
+`molecule/test-cluster-aws/` is gone.
+
+## ✅ Epic C #431 — Credentials (3 of 3 actionable, finished)
+
+Four of the seven were closed won't-do.
+
+| # | Status | Note |
+|---|---|---|
+| #436 Etcd client cert copied into monitoring namespace | ✅ **DONE** ⧗ | `create-etcd-secret.yaml` and its import from `main.yaml` are deleted. etcd exposes an unauthenticated metrics-only listener on 2381 (`kubeadm-stacked-config.yaml.j2`), which is all Prometheus needs, so no etcd client credential is published at all. **Remaining work is in another repo**: the glueops-core kube-prometheus-stack serviceMonitor must be repointed to `http://<node>:2381`, and the leftover `etcd-client-certs` secret removed per cluster. |
+| #437 Test VMs internet-exposed, image has no provenance | ✅ **DONE** ⧗ | *Image:* `container_image.yaml` sets `sbom: true`, `provenance: mode=max` and runs `actions/attest-build-provenance`. *VMs:* the per-VM firewall is back in `molecule/common/proxmox-provision.yml` and now covers all three scenarios rather than `test-cluster` alone — `firewall=1` on net0, `policy_in: DROP`, `policy_out: ACCEPT`, one inbound rule for TCP 22, `dhcp: 1`. net1 stays unflagged so the cluster needs no rules. `cloud-init.yaml.j2:25` sets `ssh_pwauth: false`. ⚠️ Requires the datacenter firewall enabled on the PVE cluster (`pvesh set /cluster/firewall/options --enable 1`); provisioning asserts it rather than setting hypervisor-wide state. |
+| #438 Tracked inventory file, third-party key generation | ✅ **DONE** | `ansible/inventory/hosts.yaml` is untracked and `.gitignore:55` covers it; only `hosts.yaml.example` is tracked. The `electricneutron.com` link is gone from the README, and CI generates its own keys with `ssh-keygen` per run. |
 
 > **Standing constraint, unchanged:** `ansible/ansible.log` must never be published. #433 was closed
 > won't-do, so credentials keep landing in that file (`ansible.cfg:4`, no `no_log` anywhere) and
 > `.gitignore` does not cover it. `GlueOps/GlueKube` is public and artifacts are world-downloadable.
-> The CI artifact upload at `.github/workflows/molecule_test.yaml:186` uploads `~/.cache/molecule` —
-> **confirm that path cannot contain `ansible.log` before merging**, since molecule copies the
-> scenario tree into its cache.
-
-## 🟢 Epic G #459 — CI (4 of 5)
-
-#460 (PR trigger + `yamllint`/`ansible-lint` actually invoked), #461 (`concurrency:` present),
-#462 (real molecule health checks) and #463 (`domain_name` produced in CI) are all done.
-#464 is partial — artifacts, release race and test-inventory hygiene were not all addressed.
+> The CI artifact upload at `.github/workflows/molecule_test.yaml:305-308` uploads
+> `~/.cache/molecule` and **only** that — verified. It must stay that way.
 
 ## ✅ Epic B #424 — Finished
 
-#425 and #426 were resolved by **deleting `rotate-certs.yaml`** (the open question was answered:
-yes, it was dead code superseded by `rotate-certs-with-config.yaml`). #427 was resolved the same
-way — `playbooks/os-patch.yaml` and `roles/common/tasks/patch-os.yaml` are both gone. #429 has
-`--cluster` on the etcd health probe. #430 is fixed by `select-orchestrator.yaml`, which probes
-`/readyz` and falls back to `masters[0]` only during bootstrap; `orchestrator_node` now appears at
-78 sites against 4 remaining `masters[0]` references, all inside the selector itself.
+#425 and #426 were the two halves of the non-reentrant cert rotation. #425 was resolved by deleting
+`rotate-certs.yaml` (dead code superseded by `rotate-certs-with-config.yaml`). ⧗ **#426 is now
+fixed properly**: the park → wait → restore sequence in `rotate-certs-with-config.yaml:144-170` is a
+`block:`/`always:`, so the restore runs even when the wait exhausts its retries, and the park
+carries `creates:`/`removes:` so a recovery run walks past it instead of dying on an `mv` with no
+source and never reaching the restore.
+
+#427 was resolved by deleting `playbooks/os-patch.yaml` and `roles/common/tasks/patch-os.yaml`.
+#429 has `--cluster` on the etcd health probe. #430 is fixed by `select-orchestrator.yaml`:
+`orchestrator_node` appears at 81 sites and every one of the 8 remaining `masters[0]` references is
+inside a comment.
 
 #428 (`kubectl drain --timeout`) is still absent but was **closed as not planned** — accepted risk.
 
-## 🟡 Epic I #473 — Deferred items only
+## 🟢 Epic I #473 — Duplication and misleading names (3 of 5)
 
-#474 (de-duplication), #475 (renames) and #478 (nits) are done. Two things were deliberately left:
+⧗ **#474 is now complete.** `render-kubelet-patch.yaml` was the last genuinely duplicated task file
+and lives once in `roles/common/tasks/`, imported from six call sites. The template stays per-role
+by design (see #449). The earlier steps landed previously: `prepare-node.yaml`,
+`create-join-credentials.yaml`, `collect-node-lists.yaml`, `upgrade-kubeadm.yaml` and
+`upgrade-kubelet.yaml` are all shared out of `roles/common/`. The remaining `compare-node.yaml` and
+`join-nodes.yaml` deltas are the documented deliberate ones — the rotation diff computes
+`nodes_to_remove` differently on purpose (#419), and the two join paths differ in their gating.
+
+#475 (renames) and #478 (nits) are done. Two things are left, neither of them work:
 
 - **#476** — the tag errors are fixed (`join_worker` → `join_master` on the control-plane join,
-  `kubeconfig_setup` → `kubeadm_config`), but the duplicate *names* remain by choice: 9 ×
-  "Select the orchestrator node", 6 × "Generate Kubeadm configuration", 4 × "Preflight",
-  4 × "Generate Authentication Configuration". These are the same operation reached from different
-  paths, so repeating the name is honest. Close or re-scope the ticket rather than leaving it open.
+  `kubeconfig_setup` → `kubeadm_config`), but the duplicate task *names* remain by choice: 9 ×
+  "Select the orchestrator node", 6 × "Generate Kubeadm configuration", 6 × "Render the per-node
+  kubelet patch", 5 × "Elect the orchestrator", 4 × "Preflight". These are the same operation
+  reached from different paths, so repeating the name is honest. **Close or re-scope the ticket.**
 - **#477** — `.github/configs/workflows/bump_version.yaml` is still parked outside
   `.github/workflows/` and therefore inert. The ticket says *check with the team first*; moving it
   starts running release automation that has never run. **Needs a decision.**
-- The two unnamed plays in `setup-cluster.yaml` were explicitly excluded from scope.
+
+The two unnamed plays in `setup-cluster.yaml` were explicitly excluded from scope.
+
+## 🟡 Epic #505 — New findings from the review of PR #211 (2 of 5)
+
+Raised against this branch, not against `main`.
+
+| # | Status | Note |
+|---|---|---|
+| #506 Control-plane detection by hostname substring | ✅ **DONE** ⧗ | `select('search','master')` is gone from `rotate-nodes.yaml` and `sync.yaml`. `common/tasks/collect-node-lists.yaml` registers `current_control_plane_nodes` from `kubectl get nodes -l node-role.kubernetes.io/control-plane`; the removal lists intersect against it and the add list against `groups['masters']`. The two are tested differently on purpose — a node being added has no label and no etcd member yet, which is why #475's fix did not transfer. |
+| #507 Pause image not mirrored | **OPEN** | `grep -rn sandbox_image ansible/` returns nothing. `common/tasks/prepare-node.yaml` generates the containerd config from `containerd config default` and only flips `SystemdCgroup`, so `sandbox_image` stays at `registry.k8s.io/pause:3.x`. On a mirror-only network no pod sandbox can start on any node. This is the one gap left in #455. |
+| #508 etcd metrics on 0.0.0.0:2381 unauthenticated, code falsely claims molecule firewalls them | ✅ **DONE** ⧗ | The false claims are gone from `kubeadm-stacked-config.yaml.j2` and `readme.md`, which now say plainly that **nothing in `ansible/` closes 2381**. The molecule half is no longer a claim: the firewall is real (see #437) and `molecule/common/test-public-ports-closed.yml` fails `verify` if 2381, 6443, 10250 or 30000 answers on a node's public address. The `0.0.0.0` bind stays — `ClusterConfiguration` is replayed verbatim on every member and cannot carry a per-node address. |
+| #509 CI reuses static `CERTIFICATE_KEY` and `RANDOM_TOKEN` | **OPEN** | `molecule_test.yaml:127-128,177-178` still passes both from repository secrets into every run. `CERTIFICATE_KEY` decrypts the `kubeadm-certs` Secret, which holds the CA private key. The firewall from #437 shrinks the exposure but does not remove it — generating both per run inside the workflow is a few lines and drops the two secrets entirely. |
+| #510 This file is stale and should not be merged | **OPEN** | See the note at the top. This revision addresses the drift; it does not address the objection. |
 
 ---
 
 ## What to do next
 
-1. **Answer the three gating questions.** Airgapped/mirror-only (#453, unblocks #455 + #456),
-   `email_verified` fail-closed (#485), and `bump_version.yaml` (#477). Three decisions clear four
-   tickets and cost no engineering time.
-2. **Epic J #480** — the `all()` selector on the allow-all-egress GNP. Every Kubernetes egress
+1. **Epic J #480** — the `all()` selector on the allow-all-egress GNP. Every Kubernetes egress
    NetworkPolicy in the cluster is currently a no-op, and the rename makes it look handled.
-3. **Epic E #447 and #448** — an etcd snapshot before `kubeadm upgrade apply`, and `--patches` on
-   `kubeadm upgrade node`.
-4. **Epic A #422 and #417** — reset departing nodes so their credentials die with them, and put the
-   confirmation gate back in front of destructive scale operations.
-5. **Merge the branch.** 16 commits of fixes sitting on `feat/solving_issue_486` protect nobody.
-6. **Close what is done on GitHub.** 25+ tickets are complete on the branch and all 61 still read
-   as open, which is why this file had to be derived from code.
-
-### Cross-cutting item not in any ticket
-
-Both #419 and the `scale-down.yaml` etcd-removal gate decide *"is this a control-plane node?"* by
-**matching the hostname string** — `select('search','master')` at
-`master-node-rotation/rotate-nodes.yaml:20-21` and `item is search("master-node-*")` in
-`scale-down.yaml`. A control-plane node named anything else is silently skipped, leaving a phantom
-etcd member counting toward quorum. `item in groups['masters']` is the fix in both places. This
-deserves its own ticket under Epic A.
+2. **Epic E #447** — an etcd snapshot before `kubeadm upgrade apply`.
+3. **Epic A #422 and #417** — reset departing nodes so their credentials die with them, and put a
+   confirmation gate in front of destructive scale operations.
+4. **#509** — generate the CI bootstrap credentials per run. Small, and it retires two secrets.
+5. **Answer the four questions.** #477 (`bump_version.yaml`), #485 (`email_verified` fail-closed),
+   #484 (is the Felix block meant to be inert?), #510 (keep or delete this file). Four decisions,
+   no engineering time.
+6. **Then the housekeeping:** #507 (pause image), #454, #456, #469, #442's `upgrade: dist`, #452's
+   reservation math, #445's dry run.
+7. **Merge the branch.** 42 commits of fixes sitting on `feat/solving_issue_486` protect nobody.
+8. **Close what is done on GitHub.** The great majority of the 61 tickets are complete in code and
+   still read as open, which is why this file had to be derived from the tree rather than the
+   tracker.

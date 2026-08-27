@@ -27,7 +27,7 @@
 # kubeadm re-reads --patches from disk on every upgrade and this task is gated on the node not
 # already being in the cluster (#448).
 - name: Render the per-node kubelet patch
-  ansible.builtin.import_tasks: render-kubelet-patch.yaml
+  ansible.builtin.import_tasks: ../../common/tasks/render-kubelet-patch.yaml
   tags: join_worker
   when: inventory_hostname in groups['workers'] and inventory_hostname not in hostvars[orchestrator_node]['current_cluster_nodes'].stdout_lines
 

@@ -3,7 +3,7 @@
 # /var/lib/kubelet/config.yaml from the cluster-wide kubelet-config ConfigMap and discards the
 # per-node reservations this control-plane node joined with (#448, #449).
 - name: Render the per-node kubelet patch
-  ansible.builtin.import_tasks: render-kubelet-patch.yaml
+  ansible.builtin.import_tasks: ../../common/tasks/render-kubelet-patch.yaml
   tags: upgrade
 
 - name: Upgrading {{ inventory_hostname }}
