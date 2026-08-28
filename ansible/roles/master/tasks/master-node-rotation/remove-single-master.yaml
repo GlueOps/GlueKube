@@ -74,16 +74,6 @@
   register: etcd_remove_result
   failed_when: etcd_remove_result.rc != 0 and 'member not found' not in etcd_remove_result.stderr | default('')
 
-# Step 4: Delete the node from Kubernetes.
-#
-# This is the call that aborted a rotation 74 minutes in. It runs immediately after the etcd
-# membership change above, which is the least settled moment in the whole operation, and it had
-# neither a timeout nor a retry -- one stalled request ended the run with the member gone and the
-# Node still registered.
-#
-# --ignore-not-found is not cosmetic here, it is what makes the retry correct: `kubectl delete
-# node` exits 1 with NotFound when the node is already gone, so without it a retry that follows a
-# delete which actually succeeded would fail the play.
 - name: Delete node {{ node_to_remove }}
   ansible.builtin.shell: |
     export KUBECONFIG=/etc/kubernetes/admin.conf

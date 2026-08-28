@@ -9,8 +9,17 @@
 # On a fresh cluster no apiserver is up yet, so nothing answers and this falls back to
 # groups['masters'][0] - the bootstrap behaviour, unchanged.
 #
-# Computed once per run: later plays and serial batches reuse the fact instead of re-probing,
-# so the orchestrator cannot flap mid-operation.
+# Elected once per run: the election is gated on the `orchestrator` group not existing yet, and it
+# publishes that group itself, so later plays and serial batches adopt the elected node instead of
+# re-probing and the orchestrator cannot flap mid-operation.
+#
+# The gate is the group and not `orchestrator_node is not defined` (#486). The election tasks are
+# `run_once`, and `run_once` evaluates its `when` on the play's first host only, while the fact it
+# sets reaches just the hosts of the play that set it. A play mixing masters (elected on earlier)
+# with workers (not) therefore skipped the whole election whenever the first host happened to be a
+# master, and left every worker in the play with `orchestrator_node` undefined - the sync play in
+# sync-resources.yaml, exactly. `groups` is global, so gating on the group is the same answer on
+# every host, and the adopt task below hands the fact to whichever hosts are missing it.
 
 - name: Probe each control-plane node for apiserver readiness
   ansible.builtin.shell: |
@@ -26,7 +35,7 @@
   # and the election silently falls back to groups['masters'][0] instead of the real one.
   check_mode: false
   run_once: true
-  when: orchestrator_node is not defined
+  when: groups['orchestrator'] is not defined
   tags: always
 
 - name: Set the orchestrator to the first healthy control-plane node
@@ -40,7 +49,35 @@
          | first
          | default(groups['masters'][0], true) }}
   run_once: true
-  when: orchestrator_node is not defined
+  when: groups['orchestrator'] is not defined
+  tags: always
+
+# Publishing the group here rather than only in playbooks/elect-orchestrator.yaml keeps the
+# election single-shot for every entry point: a role that includes this file directly (the master
+# and worker roles both do) elects at most once per run too, and a `hosts: orchestrator` play in a
+# playbook that imported neither still finds its host.
+#
+# add_host on a host that already exists adds it to the group and leaves its inventory vars --
+# ansible_host, ansible_user, the key file -- untouched. check_mode: false for the same reason as
+# the probe: without it a dry run publishes no group and re-elects in every play.
+- name: Publish the elected node as the orchestrator group
+  ansible.builtin.add_host:
+    name: "{{ orchestrator_node }}"
+    groups: orchestrator
+  run_once: true
+  changed_when: false
+  check_mode: false
+  when: groups['orchestrator'] is not defined
+  tags: always
+
+# The hosts the election did not reach: every host of a play that ran after the electing one, and
+# every host of a later serial batch. Not run_once - this is per-host by definition.
+- name: Adopt the elected orchestrator on this host
+  ansible.builtin.set_fact:
+    orchestrator_node: "{{ groups['orchestrator'] | first }}"
+  when:
+    - orchestrator_node is not defined
+    - groups['orchestrator'] | default([]) | length > 0
   tags: always
 
 - name: Report the selected orchestrator

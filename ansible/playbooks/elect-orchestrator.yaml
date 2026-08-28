@@ -41,19 +41,12 @@
   gather_facts: false
   become: true
   tasks:
-    # Reuses the existing election rather than repeating it: the probe is gated on
-    # `orchestrator_node is not defined`, so a later play that includes the same file reuses this
-    # result instead of re-probing, and the orchestrator cannot flap mid-run.
+    # The role both elects and publishes the `orchestrator` group (the add_host used to live here,
+    # and moved into the role so that every entry point gets the group, not only the playbooks that
+    # import this one). It is gated on that group not existing yet, so a later play that includes
+    # the same file adopts this result instead of re-probing, and the orchestrator cannot flap
+    # mid-run.
     - name: Select the orchestrator node
       ansible.builtin.include_role:
         name: master
         tasks_from: select-orchestrator.yaml
-
-    # add_host on a host that already exists adds it to the group and leaves its inventory vars
-    # -- ansible_host, ansible_user, the key file -- untouched.
-    - name: Publish the elected node as the orchestrator group
-      ansible.builtin.add_host:
-        name: "{{ orchestrator_node }}"
-        groups: orchestrator
-      run_once: true
-      changed_when: false
