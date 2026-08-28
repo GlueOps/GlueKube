@@ -76,5 +76,5 @@
         get nodes -l node-role.kubernetes.io/control-plane -o json \
         | jq -c '[.items[].metadata.name] | sort'
     executable: /bin/bash
-  register: current_control_plane_nodes
+  register: common_current_control_plane_nodes
   changed_when: false

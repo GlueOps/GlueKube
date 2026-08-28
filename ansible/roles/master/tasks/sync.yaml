@@ -64,7 +64,7 @@
   vars:
     nodes_to_remove: >-
       {{ nodes_to_remove_list
-         | intersect(hostvars[orchestrator_node]['current_control_plane_nodes'].stdout | from_json)
+         | intersect(hostvars[orchestrator_node]['common_current_control_plane_nodes'].stdout | from_json)
          | sort | list }}
   when: inventory_hostname == orchestrator_node
 

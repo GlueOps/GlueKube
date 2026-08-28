@@ -29,7 +29,7 @@
     master_nodes_to_add: "{{ nodes_to_add_list | intersect(groups['masters']) | sort | list }}"
     master_nodes_to_remove: "{{ nodes_to_remove_list | intersect(control_plane_nodes) | sort | list }}"
   vars:
-    control_plane_nodes: "{{ hostvars[orchestrator_node]['current_control_plane_nodes'].stdout | from_json }}"
+    control_plane_nodes: "{{ hostvars[orchestrator_node]['common_current_control_plane_nodes'].stdout | from_json }}"
 
 - name: Filter nodes to remove (excluding orchestrator)
   set_fact:
