@@ -16,4 +16,8 @@
     values_files:
       - /opt/kubernetes/local-path-provisioner-values.yaml
     kubeconfig: /etc/kubernetes/admin.conf
+    wait: true
+    # default_check only compares the chart and values against helm's own release record, never
+    # against the cluster, so a caller that deleted the resources has to ask for the reconcile
+    force: "{{ lpp_helm_force | default(false) | bool }}"
   tags: install_local-path-provisioner

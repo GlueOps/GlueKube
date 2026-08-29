@@ -134,7 +134,7 @@ Four of the seven were closed won't-do.
 
 | # | Status | Note |
 |---|---|---|
-| #436 Etcd client cert copied into monitoring namespace | ✅ **DONE** ⧗ | `create-etcd-secret.yaml` and its import from `main.yaml` are deleted. etcd exposes an unauthenticated metrics-only listener on 2381 (`kubeadm-stacked-config.yaml.j2`), which is all Prometheus needs, so no etcd client credential is published at all. **Remaining work is in another repo**: the glueops-core kube-prometheus-stack serviceMonitor must be repointed to `http://<node>:2381`, and the leftover `etcd-client-certs` secret removed per cluster. |
+| #436 Etcd client cert copied into monitoring namespace | ✅ **DONE** ⧗ | `create-etcd-secret.yaml` and its import from `main.yaml` are deleted. etcd exposes an unauthenticated metrics-only listener on 2381 (`kubeadm-stacked-config.yaml.j2`), which is all Prometheus needs, so no etcd client credential is published at all. **Remaining work is in another repo and is post-merge**: the glueops-core kube-prometheus-stack serviceMonitor must be repointed from `https://<node>:2379` to `http://<node>:2381`, and the leftover `etcd-client-certs` secret removed per cluster — runbook in `epic-c-status.md`, "After the merge". |
 | #437 Test VMs internet-exposed, image has no provenance | ✅ **DONE** ⧗ | *Image:* `container_image.yaml` sets `sbom: true`, `provenance: mode=max` and runs `actions/attest-build-provenance`. *VMs:* the per-VM firewall is back in `molecule/common/proxmox-provision.yml` and now covers all three scenarios rather than `test-cluster` alone — `firewall=1` on net0, `policy_in: DROP`, `policy_out: ACCEPT`, one inbound rule for TCP 22, `dhcp: 1`. net1 stays unflagged so the cluster needs no rules. `cloud-init.yaml.j2:25` sets `ssh_pwauth: false`. ⚠️ Requires the datacenter firewall enabled on the PVE cluster (`pvesh set /cluster/firewall/options --enable 1`); provisioning asserts it rather than setting hypervisor-wide state. |
 | #438 Tracked inventory file, third-party key generation | ✅ **DONE** | `ansible/inventory/hosts.yaml` is untracked and `.gitignore:55` covers it; only `hosts.yaml.example` is tracked. The `electricneutron.com` link is gone from the README, and CI generates its own keys with `ssh-keygen` per run. |
 
@@ -211,6 +211,19 @@ Raised against this branch, not against `main`.
 6. **Then the housekeeping:** #507 (pause image), #454, #456, #469, #442's `upgrade: dist`, #452's
    reservation math, #445's dry run.
 7. **Merge the branch.** 42 commits of fixes sitting on `feat/solving_issue_486` protect nobody.
-8. **Close what is done on GitHub.** The great majority of the 61 tickets are complete in code and
+8. **After the merge, migrate etcd monitoring on every existing cluster.** Clusters built from
+   `main` scrape etcd on `https://<node>:2379` with the `etcd-client-certs` secret; this branch
+   moves monitoring to `http://<node>:2381` and stops minting that secret, so the glueops-core
+   serviceMonitor has to move with it and the leftover secret has to be deleted per cluster. The
+   2381 listener does not appear from an upgrade or a master rotation on an existing cluster --
+   both read the `kubeadm-config` ConfigMap, which predates the flag -- so the config has to be
+   uploaded first via `rotate-certs-with-config.yaml -e allow_config_change=true`, after which the
+   listener appears at the next real version upgrade (same-version `kubeadm upgrade apply` does not
+   work, so this cannot be forced). Existing clusters keep scraping 2379 meanwhile, so this is not
+   urgent -- but it is not done either. It binds `0.0.0.0`, so masters with a public interface must
+   be firewalled first. Ordering,
+   verification and rollback are in **`epic-c-status.md` -> "After the merge -- etcd monitoring
+   migration on existing clusters"**.
+9. **Close what is done on GitHub.** The great majority of the 61 tickets are complete in code and
    still read as open, which is why this file had to be derived from the tree rather than the
    tracker.

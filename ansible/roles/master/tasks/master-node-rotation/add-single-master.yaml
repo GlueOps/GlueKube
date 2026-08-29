@@ -18,6 +18,11 @@
   block:
     # No join config is rendered here: master-node-rotation/join-nodes.yaml renders it on the
     # joining node itself, so the rotation only needs the credentials (#474).
+    # No `when: inventory_hostname == orchestrator_node` here, unlike the steady-state callers:
+    # this whole file runs under `run_once`, so inventory_hostname is the play's first host
+    # (groups['masters'][0]) no matter which node the block delegates to. The block's delegate_to
+    # below is what puts these commands on the orchestrator, and run_once broadcasts the registered
+    # results to every host in the play, so hostvars[orchestrator_node] carries them.
     - name: Create the join credentials on orchestrator
       ansible.builtin.include_role:
         name: common

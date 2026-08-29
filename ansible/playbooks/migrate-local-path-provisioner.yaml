@@ -1,7 +1,8 @@
 ---
 # One-off migration for clusters where local-path-provisioner was installed with
 # `kubectl apply -f .../deploy/local-path-storage.yaml` instead of the Helm chart.
-# Safe to re-run: it detects what is already in place and skips what is done.
+# Safe to re-run: it reads the meta.helm.sh/release-name annotation off the deployment and skips
+# the migration when Helm already owns it.
 # No preflight import here: this is a one-off migration that needs a working cluster, not the
 # full environment validation an install or upgrade does. It does need a control-plane node to run
 # kubectl on, and elect-orchestrator.yaml carries its own --limit guard (#430).
@@ -14,11 +15,19 @@
   environment:
     KUBECONFIG: /etc/kubernetes/admin.conf
   tasks:
+    # argv bypasses the shlex split that ansible.builtin.command does on cmd, which would eat the
+    # backslashes and leave kubectl walking annotations -> meta -> helm instead of the flat key
     - name: Look up the current local-path-provisioner deployment
       ansible.builtin.command:
-        cmd: >-
-          kubectl -n local-path-storage get deployment local-path-provisioner
-          -o jsonpath={.metadata.annotations.meta\.helm\.sh/release-name}
+        argv:
+          - kubectl
+          - -n
+          - local-path-storage
+          - get
+          - deployment
+          - local-path-provisioner
+          - -o
+          - jsonpath={.metadata.annotations.meta\.helm\.sh/release-name}
       register: lpp_deployment
       changed_when: false
       failed_when: false
@@ -88,7 +97,23 @@
           clusterrolebinding/local-path-provisioner-bind
       when: lpp_legacy_install | bool
 
+    # force only on the migration path: the resources were just deleted, so helm has to reconcile
+    # against the live cluster instead of its own unchanged release record
     - name: Install local-path-provisioner with Helm
       ansible.builtin.include_role:
         name: master
         tasks_from: install-local-path-provisioner.yaml
+      vars:
+        lpp_helm_force: "{{ lpp_legacy_install | bool }}"
+
+    - name: Verify the provisioner deployment is back and available
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - -n
+          - local-path-storage
+          - rollout
+          - status
+          - deployment/local-path-provisioner
+          - --timeout=180s
+      changed_when: false

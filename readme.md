@@ -76,7 +76,40 @@ repositories, and they are what generates `hosts.yaml`:
 
 In the hosted flow you do not run either by hand: AutoGlue provisions the nodes and drops a
 `platform.json` next to this Makefile, and `parser.py` turns it into `ansible/inventory/hosts.yaml`
-and `.env` (`make .env`).
+and `.env` (`make .env`). See [how AutoGlue runs GlueKube](#how-autoglue-runs-gluekube) for what
+drives that.
+
+## How AutoGlue runs GlueKube
+
+nothing in this repository is the entrypoint in the hosted flow. **AutoGlue** is: it SSHes into the
+cluster's bastion host and runs GlueKube there as a container, mounting `platform.json` in as a
+volume. the `Makefile` targets in this repository are what it calls inside that container —
+`setup`, `sync`, `upgrade-cluster`, `rotate-master-nodes` and the rest are the interface between
+the two tools, so renaming or removing one is an AutoGlue-visible change, not a local one.
+
+the shape of the invocation:
+
+```bash
+# on the bastion, run by AutoGlue over ssh
+docker run --rm \
+  --volume /path/to/platform.json:/opt/gluekube/platform.json \
+  <gluekube image> make setup
+```
+
+`/opt/gluekube` is not arbitrary — it is the `WORKDIR` in the `Dockerfile` and the default
+`BASE_PATH` in `parser.py`, which is where `platform.json` is read from and where
+`ansible/inventory/hosts.yaml` and `.env` are written. `make .env` runs `parser.py` before any
+playbook, so a container started this way builds its own inventory and environment from the
+mounted file.
+
+running against a checkout on a workstation is the same thing without the container: set
+`GLUEKUBE_BASE_PATH` to the checkout (the `.env` rule already does) so `parser.py` reads and writes
+here instead of `/opt/gluekube`. that is the only difference between the two paths — everything
+below this line is identical either way.
+
+the SSH hop matters for a reason beyond convenience: the playbooks reach the nodes on their
+**private** addresses, and the bastion is inside that network. the same run started from a
+workstation outside it will fail at `ansible all -m ping` no matter what `hosts.yaml` says.
 
 If you want throwaway VMs to try things on, the molecule scenarios under `ansible/molecule/`
 build and destroy a whole cluster — `test-cluster` on Proxmox, `scale-cluster` and
@@ -283,6 +316,54 @@ to verify, run :
     kubectl get nodes
 ```
 
+# Firewalls
+
+the two layers below only make sense against the normal topology, so start there: **every node
+sits on a private subnet, except the load-balancer nodes, which are public.** masters and ordinary
+workers have private addresses only and are reached through the bastion — which is why AutoGlue
+SSHes into it to run anything, see [how AutoGlue runs GlueKube](#how-autoglue-runs-gluekube). the
+nodes labelled `use-as-loadbalancer` are the deliberate exception: they hold the public addresses
+and take ingress traffic on 80 and 443.
+
+that split is what the firewalls are shaped around. a GlueKube cluster is normally protected by
+**two independent firewalls**, and it is worth knowing which one covers what, because neither
+covers everything and neither lives in this repository.
+
+**1. the infrastructure firewall, in terraform/opentofu.** the cloud-level rules — security groups
+on AWS, the Hetzner cloud firewall, the Proxmox per-VM firewall — are created by the same modules
+that provision the VMs (`opentofu-module-GlueKube-AWS`, `opentofu-module-GlueKube-Proxmox`). this
+is the layer that closes the node ports that must never be public: 2379/2380, 2381, 6443, 10250,
+30000+. **there is no terraform in this repository**, so none of those rules are visible here and
+nothing in `ansible/` will tell you if they are missing or wrong — check them in the module repo
+for the cluster you are working on.
+
+**2. Calico, on the load-balancer nodes only.** `roles/master/tasks/apply-calico-firewall.yaml`
+selects the nodes labelled `use-as-loadbalancer`, reads the public interface each one persisted,
+creates a Calico `HostEndpoint` per node for that interface, and applies the two policies in
+`calico-global-network-policy.yaml.j2`: a `preDNAT` ingress policy allowing TCP 80 and 443 and
+ICMP and denying everything else, plus an allow-all egress policy. the ingress half is what lets
+ingress take public traffic on nodes that are deliberately exposed.
+
+read the egress half carefully before relying on either: despite the name
+(`allow-all-egress-lb-nodes`) it carries `selector: all()`, so it is **not** scoped to
+load-balancer nodes — it is a cluster-wide allow-all egress `GlobalNetworkPolicy`, which outranks
+Kubernetes `NetworkPolicy` and makes every egress NetworkPolicy in the cluster a no-op. that is
+#480 and it is still open.
+
+the gap between the two is the thing to hold onto: **Calico's policy applies to load-balancer nodes
+and to nothing else.** masters and ordinary workers have no `HostEndpoint`, so no Calico policy is
+enforced on their host interfaces. on the normal topology that is fine — those nodes have no public
+address for anything to arrive on. it stops being fine the moment a master gets a public interface,
+because then the infrastructure firewall is the only thing in front of the control-plane ports and
+Calico will not catch a mistake there. treat "this master has a public IP" as the condition that
+makes layer 1 load-bearing, and check it in the module repo rather than assuming.
+
+the molecule scenarios stand in for layer 1, since they provision their own VMs:
+`ansible/molecule/common/proxmox-provision.yml` sets `firewall=1` on the public NIC with a
+default-DROP input policy and a single rule for SSH, and
+`ansible/molecule/common/test-public-ports-closed.yml` fails the `verify` step if 2381, 6443,
+10250 or 30000 answers on a node's public address (#508).
+
 # Day-2 operations
 
 Everything below runs from the `ansible/` directory with `.env` sourced. `preflight.yaml` runs
@@ -328,18 +409,47 @@ that port is **unauthenticated**, so it must not be reachable from outside the c
 `0.0.0.0`, and that is not a choice this repo can make differently: kubeadm uploads
 `ClusterConfiguration` to the `kubeadm-config` ConfigMap and replays it verbatim on every
 control-plane node, so it cannot carry a per-node bind address. **nothing in `ansible/` closes
-2381** — the Calico policy in `calico-global-network-policy.yaml.j2` targets load-balancer
-HostEndpoints only and does not cover masters. if your control-plane nodes have public IPs, block
-2381 at the cloud or host firewall yourself.
+2381**: of the two firewalls described under [Firewalls](#firewalls), the Calico layer covers
+load-balancer nodes only, so masters are protected by the terraform/opentofu layer alone. if your
+control-plane nodes have public IPs, that is where 2381 has to be blocked.
 
-the molecule scenarios do close it, and you can read the code rather than take this paragraph's
-word for it: `ansible/molecule/common/proxmox-provision.yml` puts `firewall=1` on the public NIC
-with a default-DROP input policy and a single rule for SSH, and
-`ansible/molecule/common/test-public-ports-closed.yml` fails the `verify` step if 2381, 6443,
-10250 or 30000 answers on a node's public address (#508).
+binding to every interface is an accepted trade, not an oversight, and it rests on an assumption
+worth stating: **masters are expected to be on private addresses, and any master that does have a
+public interface must be firewalled.** if that stops being true for a cluster, 2381 is on the
+internet. watch for the case where the infrastructure firewall is attached per server rather than
+per project — on Hetzner it is — because a master added by a scale-up, or rebuilt, can come up
+attached to nothing and serve `/metrics` publicly from the moment etcd starts. the alternative considered was binding each node
+to its own LAN address by rewriting the rendered `etcd.yaml` after every kubeadm command that
+writes it; it was dropped as more moving parts than the firewall requirement is worth.
 
-existing clusters pick the listener up the next time the etcd static pod manifest is regenerated,
-i.e. on the next `upgrade-cluster.yaml` run.
+**existing clusters do not pick this up by upgrading.** the listener is an `extraArgs` entry in
+`ClusterConfiguration`, and a cluster built before this change has a `kubeadm-config` ConfigMap
+without it. `kubeadm upgrade apply` runs with no `--config`, so it re-renders the etcd static pod
+from that ConfigMap and etcd comes back on kubeadm's own default, `http://127.0.0.1:2381`. joining
+or rotating a master does not help either — `kubeadm join` takes a `JoinConfiguration` and reads
+its etcd settings from the same ConfigMap.
+
+the ConfigMap has to be updated first, which in this repo means one playbook:
+
+```
+ansible-playbook -i inventory/hosts.yaml playbooks/rotate-certs-with-config.yaml -e allow_config_change=true
+```
+
+that runs `kubeadm init phase upload-config kubeadm --config`, and the opt-in is #450's drift
+guard: it re-uploads the *whole* rendered ClusterConfiguration from your current `.env`, not just
+this flag, so check what else has moved before running it. do not omit `-e allow_config_change=true`
+— the guard compares `kubernetesVersion`, `controlPlaneEndpoint`, `networking`, `certSANs` and
+`apiServerExtraArgs` only, so an etcd-only difference raises nothing and the upload is skipped
+silently.
+
+the listener then appears the next time the etcd manifest is regenerated, which in practice means
+**the next real version upgrade** — `kubeadm upgrade apply` with the version the cluster is already
+on does not work, so it cannot be triggered on demand, and a master rotation does not cover the
+orchestrator (`rotate-nodes.yaml` excludes it from the remove list). nothing is broken while
+waiting: a cluster built before this change is still scraping `https://<node>:2379` with its
+existing `etcd-client-certs` secret. verify on the node (`curl -sS http://<master ip>:2381/health`)
+before repointing anything. the full migration, with rollback, is in `epic-c-status.md` under
+"After the merge".
 
 the cluster no longer publishes an `etcd-client-certs` secret into the monitoring namespace: the
 task that minted it is gone, because `http://<node>:2381` is all Prometheus needs. the
@@ -357,4 +467,7 @@ over, so run once per cluster:
 
 the playbook keeps the `local-path` storage class in place and recreates the provisioner itself with
 Helm. existing volumes and their data are not touched, only the provisioning of new volumes pauses
-for a few seconds. it is safe to re-run and it does nothing on clusters that are already migrated.
+for a few seconds. re-running is safe because it reads the `meta.helm.sh/release-name` annotation
+off the deployment first and skips the migration entirely once Helm owns it — the annotation, not a
+guess. it ends by waiting on the rollout, so a run that leaves the cluster without a provisioner
+fails loudly instead of silently.
