@@ -10,8 +10,8 @@ calico_chart_version: "{{ lookup('env', 'calico_chart_version') }}" #"v3.29.3"
 calico_tigera_operator_version: "{{ lookup('env', 'calico_tigera_operator_version') }}" #"v1.36.7"
 calico_network_calico_cidr: "172.16.0.0/16"
 # The test nodes have two NICs. firstFound -- what roles/master/tasks/install-calico.yaml falls
-# back to when this is unset -- would put VXLAN on ens18, which is net0: the firewalled public
-# bridge, and not the address in `ip`. Pin it to the LAN so Calico, the kubelet and etcd all agree.
+# back to when this is unset -- would put VXLAN on ens18, which is net0: the public bridge, and
+# not the address in `ip`. Pin it to the LAN so Calico, the kubelet and etcd all agree.
 # Setting this is what makes calico.yaml.j2 emit the nodeAddressAutodetectionV4 block at all; an
 # empty value omits it and falls back to firstFound, which create.yml prevents by asserting
 # PROXMOX_LAN_CIDR is set.

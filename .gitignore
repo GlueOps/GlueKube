@@ -75,3 +75,5 @@ hosts.ini
 # destroy.yml, the bare one is read by inventory/group_vars/masters.yaml
 /ansible/molecule/*/autoglue-ids.yaml
 /ansible/molecule/*/autoglue-record-id
+
+/platform.json

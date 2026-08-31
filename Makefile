@@ -23,7 +23,7 @@
 export
 
 .PHONY: ping-servers check-connectivity setup sync rotate-master-nodes label-taint-nodes \
-        rotate-certs-with-config upgrade-cluster
+        rotate-certs-with-config upgrade-cluster migrate-local-path-provisioner
 
 ping-servers: .env
 	ansible all -i ansible/inventory/hosts.yaml -m ping
@@ -53,3 +53,11 @@ rotate-certs-with-config: .env
 upgrade-cluster: .env
 	@echo "Upgrading the GlueKube cluster..."
 	ansible-playbook -i ansible/inventory/hosts.yaml ansible/playbooks/upgrade-cluster.yaml
+
+# One-off, once per cluster built before local-path-provisioner moved to its Helm chart. Not part
+# of any other target: it deletes and recreates the running provisioner, so it stays something an
+# operator runs on purpose. `setup` no longer depends on it -- install-local-path-provisioner.yaml
+# skips the release and says so on an unmigrated cluster rather than aborting the play.
+migrate-local-path-provisioner: .env
+	@echo "Migrating local-path-provisioner to its Helm chart..."
+	ansible-playbook -i ansible/inventory/hosts.yaml ansible/playbooks/migrate-local-path-provisioner.yaml

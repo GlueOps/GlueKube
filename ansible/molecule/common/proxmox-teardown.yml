@@ -1,17 +1,4 @@
 ---
-# Removes what proxmox-provision.yml built. Imported by every scenario's destroy.yml with
-#   ansible.builtin.import_tasks: ../common/proxmox-teardown.yml
-# after `vars_files: [../common/proxmox-vars.yml]`.
-#
-# Required from the importing play: num_master_nodes, num_worker_nodes, snippet_prefix and
-# pve_vmid_offset -- the SAME values create.yml used. The vmids are derived rather than recorded,
-# which is the whole reason this playbook needs no state file handed to it, and it is also why a
-# scenario that changes its node counts must change them in both files.
-#
-# There is no network or firewall object to remove: the scenarios run on existing flat bridges,
-# and the per-VM ruleset provisioning writes lives in the VM's own firewall config, so `state:
-# absent` with purge below takes it with the VM. The datacenter firewall is asserted by
-# provisioning and never set by it, so there is nothing to put back there either.
 
 - name: Build the master node list
   ansible.builtin.set_fact:
@@ -33,9 +20,8 @@
 
 # vmid-range ownership check (#486). Provisioning tags every VM it creates with pve_tags plus
 # snippet_prefix, but until now nothing read the tag back: proxmox_kvm adopts an existing VM on a
-# colliding vmid rather than refusing it, and the tasks below then resize its root disk to 40G,
-# apply a default-DROP firewall to it and start it. On a shared PVE host that is somebody else's
-# workload. The vmids are derived from pve_vmid_base rather than recorded, so a collision is not
+# colliding vmid rather than refusing it, and the tasks below then resize its root disk to 40G
+# and start it. On a shared PVE host that is somebody else's workload. The vmids are derived from pve_vmid_base rather than recorded, so a collision is not
 # hypothetical -- it is what happens the first time this range is used for anything else.
 #
 # /cluster/resources is one call for every VM on the cluster; `tags` comes back as a

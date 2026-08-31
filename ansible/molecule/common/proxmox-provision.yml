@@ -1,42 +1,4 @@
 ---
-# Builds a molecule scenario's nodes on Proxmox VE and works out their addresses.
-#
-# Imported by every scenario's create.yml with
-#   ansible.builtin.import_tasks: ../common/proxmox-provision.yml
-# after `vars_files: [../common/proxmox-vars.yml]`. This file was extracted from
-# test-cluster/create.yml once all three scenarios moved off Hetzner -- it is the same code that
-# scenario was running, not a reimplementation.
-#
-# Required from the importing play:
-#   num_master_nodes / num_worker_nodes   how many of each to build
-#   snippet_prefix                        namespaces the cloud-init files and tags the VMs
-#   pve_vmid_offset                       0 / 100 / 200, keeps the scenarios' vmids disjoint
-#
-# What it leaves behind for the scenario to build inventories from:
-#   cluster_nodes           [{name, vmid, role}] for every node, masters first
-#   master_nodes_list       the master subset, in name order
-#   worker_nodes_list       the worker subset, in name order
-#   node_public_addresses   {name: net0 address}  -- what molecule SSHes to
-#   node_lan_addresses      {name: net1 address}  -- what the cluster binds to
-#
-# Auth comes from the environment and is never written here: community.proxmox reads
-# PROXMOX_HOST, PROXMOX_USER, PROXMOX_TOKEN_ID, PROXMOX_TOKEN_SECRET and PROXMOX_VALIDATE_CERTS
-# itself, which is why no module below passes api_* parameters. The ansible.builtin.uri calls
-# cannot use that fallback and rebuild the token header from the same variables.
-#
-# Prerequisites on the cluster, none of which this file creates:
-#   - an Ubuntu 24.04 cloud image on a storage's "import" content type ($PROXMOX_IMPORT_FROM).
-#     The nodes are built from it directly; there is no template to clone. The cloud-init drive
-#     is attached here (ide2) -- without one, cicustom and ipconfig0 are accepted and then
-#     silently ignored.
-#   - a storage with the "snippets" content type ($PROXMOX_SNIPPET_STORAGE)
-#   - SSH access to the PVE host. The API's storage upload endpoint does not accept snippets, so
-#     the cloud-init files have to be written to the hypervisor directly.
-#   - the datacenter firewall switched on (asserted below, never set here)
-#   - two bridges with DHCP on each: $PROXMOX_BRIDGE_PUBLIC carries net0, the address molecule
-#     SSHes to and the only NIC that is filtered; $PROXMOX_BRIDGE_LAN carries net1, which is what
-#     the cluster itself runs on. $PROXMOX_LAN_CIDR is what tells the two leases apart.
-
 - name: Required Proxmox variables are set
   ansible.builtin.assert:
     that:
@@ -133,24 +95,6 @@
   vars:
     import_volids: "{{ import_volumes.json.data | map(attribute='volid') | list }}"
 
-# The per-VM ruleset further down only takes effect if the datacenter firewall is on. Turning it
-# on is deliberately NOT done here: it is hypervisor-wide state shared with every other VM on the
-# cluster, and enabling it applies a default-DROP input policy that can lock you out of unrelated
-# guests and of the PVE host itself. Assert, and let a human do it once.
-#
-# Asserting rather than warning is the point. Writing rules that silently do nothing is exactly
-# the failure this replaced: the code claimed the nodes were firewalled while 2381, 6443, 10250
-# and every NodePort sat open on a public address (#508, #437).
-- name: Read the datacenter firewall options
-  ansible.builtin.uri:
-    url: "{{ pve_api_url }}/cluster/firewall/options"
-    method: GET
-    headers: "{{ pve_auth_header }}"
-    validate_certs: "{{ pve_validate_certs }}"
-    return_content: true
-  register: cluster_firewall
-
-
 # One list, used by every loop below and rebuilt identically in proxmox-teardown.yml.
 - name: Build the master node list
   ansible.builtin.set_fact:
@@ -170,17 +114,7 @@
              'role': 'worker'}] }}
   loop: "{{ range(0, num_worker_nodes) | list }}"
 
-# Split once here so the inventory templates can slice them -- master_nodes_list[:1] is the
-# direct replacement for the Hetzner scenarios' master_nodes.results[:1].
-# vmid-range ownership check (#486). Provisioning tags every VM it creates with pve_tags plus
-# snippet_prefix, but until now nothing read the tag back: proxmox_kvm adopts an existing VM on a
-# colliding vmid rather than refusing it, and the tasks below then resize its root disk to 40G,
-# apply a default-DROP firewall to it and start it. On a shared PVE host that is somebody else's
-# workload. The vmids are derived from pve_vmid_base rather than recorded, so a collision is not
-# hypothetical -- it is what happens the first time this range is used for anything else.
-#
-# /cluster/resources is one call for every VM on the cluster; `tags` comes back as a
-# semicolon-joined string, absent entirely on an untagged VM.
+
 - name: Read the cluster's VM inventory
   ansible.builtin.uri:
     url: "{{ pve_api_url }}/cluster/resources?type=vm"
@@ -213,8 +147,8 @@
       {{ foreign_vms | length }} VM(s) occupy this scenario's vmid range without its
       "{{ snippet_prefix }}" tag: {{ foreign_vms | map(attribute='vmid') | zip(foreign_vms
       | map(attribute='name') | list) | list }}. Provisioning would adopt them -- resizing their
-      root disk, applying a default-DROP firewall and starting them. Move this scenario's range
-      with PROXMOX_VMID_BASE / pve_vmid_offset, or remove those VMs.
+      root disk and starting them. Move this scenario's range with PROXMOX_VMID_BASE /
+      pve_vmid_offset, or remove those VMs.
     quiet: true
 
 - name: Split the node list by role
@@ -343,12 +277,7 @@
       ide2: "{{ pve_storage }}:cloudinit"
     boot: order=virtio0
     net:
-      # firewall=1 is what makes the per-VM ruleset below apply at all -- PVE only filters an
-      # interface carrying the flag, and a policy_in of DROP on a VM whose NICs are all unflagged
-      # filters nothing.
-      net0: "virtio,bridge={{ pve_bridge_public }}{{ public_tag }},firewall=1"
-      # No firewall=1 here on purpose. The LAN stays open whatever policy_in the VM firewall is
-      # set to, which is what lets etcd, the kubelet and Calico VXLAN talk without a single rule.
+      net0: "virtio,bridge={{ pve_bridge_public }}{{ public_tag }}"
       net1: "virtio,bridge={{ pve_bridge_lan }}{{ lan_tag }}"
     # cicustom below replaces only user-data, so Proxmox still builds network-config from these
     # two. That is also why the snippet must not configure networking itself.
@@ -374,59 +303,6 @@
   loop: "{{ cluster_nodes }}"
   loop_control:
     label: "{{ item.name }} ({{ pve_disk_size }})"
-
-# Applied before the first boot, not after: a node that comes up unfiltered and is fenced a minute
-# later has still been reachable on a public address for that minute.
-#
-# There is no VM-level firewall-options module in community.proxmox, so this one goes through the
-# API directly. dhcp: 1 is NOT optional -- both NICs hold a DHCP lease, and a default-DROP input
-# policy without it drops the renewal and the node falls off the network mid-run.
-- name: Enable the firewall on each node
-  ansible.builtin.uri:
-    url: "{{ pve_api_url }}/nodes/{{ pve_node }}/qemu/{{ item.vmid }}/firewall/options"
-    method: PUT
-    headers: "{{ pve_auth_header }}"
-    validate_certs: "{{ pve_validate_certs }}"
-    body_format: form-urlencoded
-    body:
-      enable: 1
-      dhcp: 1
-      policy_in: DROP
-      policy_out: ACCEPT
-    status_code: [200]
-  loop: "{{ cluster_nodes }}"
-  loop_control:
-    label: "{{ item.name }}"
-
-# Inbound SSH and nothing else; outbound is unrestricted by the policy_out above, which the nodes
-# need for apt, the package mirrors and every image pull.
-#
-# SSH is the only thing that has to reach a node from off-box: molecule connects over net0 and
-# every cluster protocol rides the unfiltered LAN NIC. That is what closes 2381, 6443, 10250 and
-# the NodePort range on the public address (#508, #437).
-#
-# level: vm puts the rules in the VM's own firewall config, so they are deleted with the VM and
-# proxmox-teardown.yml has no firewall object to clean up. `pos` is required by PVE -- rules are
-# position-indexed, not a set -- and `iface` scopes this to the one filtered NIC, so it keeps
-# saying what it means if net1 ever gains firewall=1.
-- name: Allow inbound SSH on the public NIC of each node
-  community.proxmox.proxmox_firewall:
-    level: vm
-    vmid: "{{ item.vmid }}"
-    state: present
-    update: true
-    rules:
-      - pos: 0
-        type: in
-        action: ACCEPT
-        proto: tcp
-        dport: "22"
-        iface: net0
-        enable: true
-        comment: molecule SSH
-  loop: "{{ cluster_nodes }}"
-  loop_control:
-    label: "{{ item.name }}"
 
 - name: Start each node
   community.proxmox.proxmox_kvm:

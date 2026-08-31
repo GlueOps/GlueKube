@@ -115,6 +115,27 @@
       when: not (allow_config_change | default(false) | bool)
 
 
+# The whole PKI, not just the apiserver (#486). Everything below this task used to be the only
+# certificate work the playbook did -- it regenerated apiserver.{crt,key} and nothing else -- while
+# `playbooks/rotate-certs.yaml`, `roles/master/tasks/rotate-certs.yaml` and `make rotate-certs` were
+# deleted on this branch and readme.md's day-2 table now sends "rotate the control-plane
+# certificates" here. An operator following that renewed one certificate of eleven and was left with
+# etcd/server, etcd/peer, apiserver-etcd-client, front-proxy and the controller-manager/scheduler
+# kubeconfigs expiring on their original schedule.
+#
+# Ordering: this runs BEFORE the apiserver-specific regeneration below, not after. `certs renew`
+# rebuilds apiserver.crt from the cluster's STORED kubeadm-config, so running it last would
+# overwrite the cert the `--config` render produces and silently drop any certSAN change on a run
+# with -e allow_config_change=false, where the upload is skipped and the stored copy is stale.
+# Renewing first and letting the config-driven regeneration have the last word on the apiserver
+# keeps both behaviours.
+#
+# `certs renew all` also rewrites /etc/kubernetes/admin.conf, which is why the kubeconfig copy is
+# refreshed further down.
+- name: Renew the full control-plane PKI
+  ansible.builtin.command: kubeadm certs renew all
+  tags: rotate-certs-with-config
+
 - name: Remove existing API server cert files to force regeneration from config
   ansible.builtin.file:
     path: "{{ item }}"
@@ -212,4 +233,109 @@
   delay: 10
   until: apiserver_ready.rc == 0 and ('ok' in apiserver_ready.stdout)
   changed_when: false
+  tags: rotate-certs-with-config
+
+# The apiserver picked up its new certificate by being parked above; the other three static pods
+# hold the certs `certs renew all` just replaced -- etcd/server and etcd/peer on etcd,
+# controller-manager.conf and scheduler.conf on the other two -- and keep serving the old ones
+# until their containers are recreated. Same park/restore shape as the apiserver, and for the same
+# reason: `always` restores the manifests even if the wait exhausts its retries, and
+# `creates:`/`removes:` make a recovery run walk past a half-finished park instead of failing on an
+# `mv` with no source.
+#
+# Deliberately after the apiserver is confirmed ready, not alongside it. On this `serial: 1` play
+# only one master's etcd member is down at a time, so a 3-node cluster keeps quorum -- but this
+# node's apiserver talks to 127.0.0.1:2379 only, so overlapping the two windows would take the
+# local control plane down twice over rather than once.
+- name: Restart the remaining control-plane static pods onto the renewed certificates
+  tags: rotate-certs-with-config
+  vars:
+    remaining_static_pods: [etcd, kube-controller-manager, kube-scheduler]
+  block:
+    - name: Park the remaining static pod manifests
+      ansible.builtin.command: "mv /etc/kubernetes/manifests/{{ item }}.yaml /opt/kubernetes/manifests/{{ item }}.yaml"
+      args:
+        creates: "/opt/kubernetes/manifests/{{ item }}.yaml"
+        removes: "/etc/kubernetes/manifests/{{ item }}.yaml"
+      loop: "{{ remaining_static_pods }}"
+
+    - name: Wait until the parked containers are removed
+      ansible.builtin.shell: |
+        set -o pipefail
+        ctr -n k8s.io containers list | grep {{ item }} || true
+      args:
+        executable: /bin/bash
+      register: old_static_pod_container
+      retries: 18
+      delay: 5
+      until: old_static_pod_container.stdout == ""
+      changed_when: false
+      loop: "{{ remaining_static_pods }}"
+  always:
+    - name: Restore the remaining static pod manifests
+      ansible.builtin.command: "mv /opt/kubernetes/manifests/{{ item }}.yaml /etc/kubernetes/manifests/{{ item }}.yaml"
+      args:
+        removes: "/opt/kubernetes/manifests/{{ item }}.yaml"
+      loop: "{{ remaining_static_pods }}"
+
+- name: Verify the remaining static pod containers are recreated
+  ansible.builtin.shell: |
+    set -o pipefail
+    ctr -n k8s.io containers list | grep {{ item }} || true
+  args:
+    executable: /bin/bash
+  register: new_static_pod_container
+  retries: 18
+  delay: 5
+  until: new_static_pod_container.stdout != ""
+  changed_when: false
+  loop: [etcd, kube-controller-manager, kube-scheduler]
+  tags: rotate-certs-with-config
+
+- name: Wait for the API server to become ready again
+  ansible.builtin.shell: |
+    export KUBECONFIG=/etc/kubernetes/admin.conf
+    kubectl get --raw='/readyz'
+  register: apiserver_ready_after_restart
+  retries: 18
+  delay: 10
+  until: apiserver_ready_after_restart.rc == 0 and ('ok' in apiserver_ready_after_restart.stdout)
+  changed_when: false
+  tags: rotate-certs-with-config
+
+# `certs renew all` rewrote /etc/kubernetes/admin.conf with a fresh client certificate. Without this
+# the copy at /opt/kubernetes/.kube/config -- the one kubeadm-init.yaml puts there and the one an
+# operator on the box actually uses -- keeps the pre-rotation credential and starts failing when the
+# old certificate expires. Same tasks as kubeadm-init.yaml:44-58, so the file ends up identical
+# whichever path wrote it last.
+- name: Create kubeconfig directory
+  ansible.builtin.file:
+    path: /opt/kubernetes/.kube
+    state: directory
+    mode: "0755"
+  tags: rotate-certs-with-config
+
+- name: Refresh the operator kubeconfig with the renewed credential
+  ansible.builtin.copy:
+    src: /etc/kubernetes/admin.conf
+    dest: /opt/kubernetes/.kube/config
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0644"
+  tags: rotate-certs-with-config
+
+# The outcome, printed rather than asserted. What counts as "long enough" depends on when the
+# operator plans to run this again, so this reports the expiry dates and leaves the judgement to
+# them -- but it makes a rotation that silently renewed nothing impossible to mistake for a good
+# run, which is what the old apiserver-only behaviour looked like from the log.
+- name: Read the certificate expiry dates
+  ansible.builtin.command: kubeadm certs check-expiration
+  register: certs_expiration
+  changed_when: false
+  tags: rotate-certs-with-config
+
+- name: Report the certificate expiry dates
+  ansible.builtin.debug:
+    msg: "{{ certs_expiration.stdout_lines }}"
   tags: rotate-certs-with-config

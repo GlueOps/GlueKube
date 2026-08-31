@@ -361,11 +361,12 @@ because then the infrastructure firewall is the only thing in front of the contr
 Calico will not catch a mistake there. treat "this master has a public IP" as the condition that
 makes layer 1 load-bearing, and check it in the module repo rather than assuming.
 
-the molecule scenarios stand in for layer 1, since they provision their own VMs:
-`ansible/molecule/common/proxmox-provision.yml` sets `firewall=1` on the public NIC with a
-default-DROP input policy and a single rule for SSH, and
-`ansible/molecule/common/test-public-ports-closed.yml` fails the `verify` step if 2381, 6443,
-10250 or 30000 answers on a node's public address (#508).
+the molecule scenarios do **not** stand in for layer 1.
+`ansible/molecule/common/proxmox-provision.yml` builds no PVE firewall — neither NIC carries
+`firewall=1` and no per-VM ruleset is written — so a scenario's nodes answer on 2381, 6443, 10250
+and the NodePort range from their public address. that is a property of the test environment, not
+of a deployed cluster, but it does mean the scenarios prove nothing about layer 1 and should only
+run on a network where that exposure is acceptable.
 
 # Running this against an existing cluster
 
@@ -470,9 +471,22 @@ ansible-playbook -i inventory/hosts.yaml playbooks/rotate-certs-with-config.yaml
 a `0.0.0.0` entry in `certSANs` is excluded from the comparison on both sides, so it never shows up
 in that diff on an older cluster.
 
-the playbook runs `serial: 1` and parks the apiserver manifest one master at a time to restart it
-onto the new certificate. that park is wrapped in `block`/`always` with `creates:`/`removes:`
-guards, so an interrupted run restores the manifest on the way out and re-running is safe.
+**what it renews.** `kubeadm certs renew all` — the whole PKI: apiserver, apiserver-etcd-client,
+apiserver-kubelet-client, etcd/server, etcd/peer, etcd-healthcheck-client, front-proxy-client, and
+the admin/controller-manager/scheduler kubeconfigs. up to this release the playbook regenerated
+`apiserver.{crt,key}` and nothing else, so an operator who followed this section still had every
+other certificate expiring on its original schedule. the apiserver certificate is then rebuilt a
+second time from the rendered config, which is what applies a changed `certSANs` list.
+
+the playbook runs `serial: 1` and parks the static pod manifests one master at a time to restart
+them onto the new certificates — the apiserver first, then etcd, controller-manager and scheduler
+once it is ready again. each park is wrapped in `block`/`always` with `creates:`/`removes:` guards,
+so an interrupted run restores the manifests on the way out and re-running is safe. one master's
+etcd member is down at a time, so a 3-node cluster keeps quorum throughout.
+
+`/opt/kubernetes/.kube/config` is refreshed from the renewed `admin.conf` at the end, and the run
+finishes by printing `kubeadm certs check-expiration` — read it, it is the confirmation that the
+rotation did what you asked.
 
 ## `/opt/kubernetes` has to exist on the elected orchestrator
 
@@ -520,7 +534,7 @@ first on the starred ones and stops the run if a variable or the inventory shape
 | upgrade Kubernetes | bump the versions in `.env`, then `playbooks/upgrade-cluster.yaml` | ★ |
 | rotate the control-plane certificates | `playbooks/rotate-certs-with-config.yaml` | |
 | re-apply labels and taints only | `playbooks/setup-cluster.yaml --tags label_nodes` | |
-| move local-path-provisioner to Helm — **required once per pre-existing cluster, before `setup-cluster.yaml`** | `playbooks/migrate-local-path-provisioner.yaml` | |
+| move local-path-provisioner to Helm — once per pre-existing cluster; until you do, `setup-cluster.yaml` skips the release and says so | `playbooks/migrate-local-path-provisioner.yaml` | |
 | check the network before any of the above | `playbooks/check-network-connectivity.yaml` | |
 
 **There is no etcd backup or restore path in this repository.** Nothing here snapshots etcd before
@@ -607,7 +621,11 @@ local-path-provisioner is now installed with its Helm chart. clusters that were 
 that change still carry the resources created with `kubectl apply`, and Helm refuses to take them
 over, so run once per cluster:
 
-`ansible-playbook  -i inventory/hosts.yaml playbooks/migrate-local-path-provisioner.yaml`
+```bash
+make migrate-local-path-provisioner            # from the repo root, loads .env for you
+ansible-playbook -i inventory/hosts.yaml \
+  playbooks/migrate-local-path-provisioner.yaml    # from ansible/, with .env already sourced
+```
 
 the playbook keeps the `local-path` storage class in place and recreates the provisioner itself with
 Helm. existing volumes and their data are not touched, only the provisioning of new volumes pauses
@@ -616,11 +634,19 @@ off the deployment first and skips the migration entirely once Helm owns it — 
 guess. it ends by waiting on the rollout, so a run that leaves the cluster without a provisioner
 fails loudly instead of silently.
 
-**this is a prerequisite for `setup-cluster.yaml`, not an optional tidy-up.** `install-addons.yaml`
-Helm-installs the release with no adoption step, so on an unmigrated cluster it aborts with
-`invalid ownership metadata … missing key "meta.helm.sh/release-name"` — and because that removes the
-orchestrator from the run, the **Taint Nodes** and **Apply Calico Firewall rules** plays that follow
-it are `hosts: orchestrator` and get skipped without a message. this only affects
+**run it, but `setup-cluster.yaml` no longer breaks if you have not.** `install-local-path-provisioner.yaml`
+reads `app.kubernetes.io/managed-by` off the `local-path` storage class first: anything other than
+`Helm` means the manifest install is still there, and the Helm release is **skipped with a message
+pointing here** instead of aborting on `invalid ownership metadata … missing key "meta.helm.sh/release-name"`.
+that abort used to remove the orchestrator from the run, which silently took the **Taint Nodes** and
+**Apply Calico Firewall rules** plays down with it — both are `hosts: orchestrator` and were skipped
+without a word.
+
+skipping, not adopting, is the deliberate choice: the storage class can be adopted with an annotate
+and a label, but the Deployment cannot — `spec.selector` is immutable and the chart uses different
+labels — so a genuine adoption has to delete the running provisioner first. that is destructive, and
+it belongs in a playbook you ran on purpose rather than in a routine `make setup`. until you run the
+migration your cluster keeps the manifest install and stays on the old provisioner. this only affects
 `setup-cluster.yaml`; `sync`, `upgrade-cluster` and `rotate-certs-with-config` never install addons.
 
 to check which state a cluster is in, read the annotation rather than guessing:
