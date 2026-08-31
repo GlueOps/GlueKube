@@ -81,6 +81,9 @@ drives that.
 
 ## How AutoGlue runs GlueKube
 
+### bastion
+the bastion(controller) is usally equiped with all the tools that gluekube needs, like docker, dig...etc
+
 nothing in this repository is the entrypoint in the hosted flow. **AutoGlue** is: it SSHes into the
 cluster's bastion host and runs GlueKube there as a container, mounting `platform.json` in as a
 volume. the `Makefile` targets in this repository are what it calls inside that container —
