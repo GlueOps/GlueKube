@@ -15,6 +15,17 @@
   ansible.builtin.debug:
     var: groups['workers']
 
+# Same reason as first-node-upgrade.yaml (#486): the sync and rotation paths write their scratch
+# node lists here but never run prepare-nodes, so on a cluster built before this directory was
+# created on every master it exists only on the original `kubeadm init` node. lineinfile and copy
+# do not create parent directories, so without this the diff fails on whichever master the election
+# picks if that is not the original one.
+- name: Ensure the GlueKube state directory exists
+  ansible.builtin.file:
+    path: /opt/kubernetes
+    state: directory
+    mode: "0755"
+
 - name: Remove the stale desired-node list
   ansible.builtin.file:
     path: "/opt/kubernetes/new_nodes_list"

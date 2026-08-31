@@ -367,10 +367,151 @@ default-DROP input policy and a single rule for SSH, and
 `ansible/molecule/common/test-public-ports-closed.yml` fails the `verify` step if 2381, 6443,
 10250 or 30000 answers on a node's public address (#508).
 
+# Running this against an existing cluster
+
+`setup-cluster.yaml` builds a cluster; it is not what you point at one that already exists. the
+three targets that do run against a live cluster are **`sync`**, **`upgrade-cluster`** and
+**`rotate-certs-with-config`**, and this release changes something in each of them. what follows is
+only about those three.
+
+worth stating up front, because it is the difference that makes this list short: `install-addons`,
+`install-calico` and the `apt upgrade: dist` in `prepare-node.yaml` are reached only through the
+`master` role's `main.yaml`, which only `setup-cluster.yaml` triggers. **none of the three targets
+below dist-upgrades an existing node, upgrades the Calico release, or touches the addons.** `sync`
+runs `prepare-nodes` only on a node it is adding.
+
+## before `sync` or `upgrade-cluster`: regenerate `.env`
+
+`playbooks/preflight.yaml` is new in this release and both of those import it. it stops the run on
+an empty `certificate_key`, `random_token`, `service_subnet`, `calico_chart_version`,
+`calico_tigera_operator_version`, `calico_network_calico_cidr`, or any of `autoglue_base_url`,
+`autoglue_org_key`, `autoglue_org_secret`, `autoglue_record_id`. it also asserts Ubuntu, a full
+`vX.Y.Z` `kubernetes_version` at 1.31 or newer, that `kubernetes_package_version` is the matching
+minor, and that every host has a unique `ip`.
+
+`parser.py` writes every one of those, so an `.env` regenerated with `make .env` from `platform.json`
+passes. an `.env` hand-written before this release may not.
+
+`rotate-certs-with-config.yaml` does **not** import preflight — it runs straight into the plays.
+
+## running `sync`
+
+the risk here is the node diff, and it is worth two minutes before every run.
+
+`sync` computes what to add and what to remove as an **exact set difference** between the host keys
+in `hosts.yaml` and the node names `kubectl get nodes` returns
+(`roles/common/tasks/collect-node-lists.yaml`). nothing in this repository forces those two
+namespaces to agree — there is no `nodeRegistration.name` and no `--hostname-override` anywhere.
+
+so a single inventory key that does not match a kubelet node name character-for-character puts a
+**live, healthy node** into `nodes_to_remove`, and the removal path cordons it, drains it,
+`kubectl delete node`s it and removes its etcd member. confirm they match first:
+
+```bash
+# from ansible/ -- these two lists must be identical
+ansible-inventory -i inventory/hosts.yaml --list \
+  | jq -r '.masters.hosts[], .workers.hosts[]' | sort
+
+kubectl get nodes -o jsonpath='{.items[*].metadata.name}' | tr ' ' '\n' | sort
+```
+
+what is *not* a risk: an existing node is never re-joined or reset — both `join-nodes.yaml` files
+gate every task on the node not already appearing in `kubectl get nodes` — and `prepare-nodes` is
+gated on `inventory_hostname in nodes_to_add`, so only a genuinely new node is prepared and
+dist-upgraded.
+
+one fix in this release matters here: `sync` used to abort on every worker with an
+`AnsibleUndefinedVariable`, because the orchestrator election published its result only to the
+masters. adding a worker silently did nothing. that is fixed — the election now publishes an
+`orchestrator` group, which is global, and every host adopts it.
+
+## running `upgrade-cluster`
+
+- **bump the version first.** change `kubernetes_version` and `kubernetes_package_version` in
+  `.env`. `kubeadm upgrade apply` at the version already installed does not regenerate the
+  static-pod manifests, so a same-version run does not do what it looks like it does.
+- **watch the drains.** the cordon/drain steps in `playbooks/upgrade-cluster.yaml` carry no
+  `--timeout`, and the uncordon is a separate task rather than an `always`. a blocking
+  PodDisruptionBudget hangs the upgrade indefinitely, and a drain that fails leaves the node
+  cordoned — recover with `kubectl uncordon <node>` by hand. this predates this release.
+- **take your own etcd snapshot.** as noted under [Day-2 operations](#day-2-operations), there is
+  no backup or restore path in this repository, so an upgrade is not recoverable from within this
+  tooling.
+- **it will not switch etcd to port 2381.** `kubeadm upgrade` re-renders the static pods from the
+  cluster's `kubeadm-config` ConfigMap, and nothing on this path updates that ConfigMap. see
+  [Etcd metrics](#etcd-metrics) and
+  [running `rotate-certs-with-config`](#running-rotate-certs-with-config) below.
+
+## running `rotate-certs-with-config`
+
+**this playbook re-uploads the cluster's `kubeadm-config` ConfigMap on every run.** it sets
+`allow_config_change: true` in its own play vars, so #450's drift guard is disabled by default here
+and `kubeadm init phase upload-config kubeadm` runs unconditionally on the orchestrator.
+
+that is deliberate — it is the only path in this repository that moves an existing cluster onto etcd
+metrics on 2381, and every cluster built before that change would otherwise fail the guard on its
+first run. but understand what it means: the ConfigMap is rewritten from **your current `.env`**, in
+full, not just the etcd field. a stale `kubernetes_version`, `service_subnet`, `domain_name` or
+`loadbalancer_apiserver` is uploaded along with everything else, and every later `kubeadm join` and
+`kubeadm upgrade` reads it.
+
+so before running: **regenerate `.env` from `platform.json`**, and read the `Report the
+configuration difference` task in the output — it still prints `cluster:` against `rendered:`
+whenever the two disagree, which is the only thing standing between a stale variable and a
+cluster-wide change.
+
+to put the guard back for one run:
+
+```bash
+ansible-playbook -i inventory/hosts.yaml playbooks/rotate-certs-with-config.yaml \
+  -e allow_config_change=false
+```
+
+a `0.0.0.0` entry in `certSANs` is excluded from the comparison on both sides, so it never shows up
+in that diff on an older cluster.
+
+the playbook runs `serial: 1` and parks the apiserver manifest one master at a time to restart it
+onto the new certificate. that park is wrapped in `block`/`always` with `creates:`/`removes:`
+guards, so an interrupted run restores the manifest on the way out and re-running is safe.
+
+## `/opt/kubernetes` has to exist on the elected orchestrator
+
+this one bites `sync` and `upgrade-cluster` both, and only in one situation.
+
+both write scratch state into `/opt/kubernetes` on whichever master the orchestrator election picks
+— `sync` writes its node lists and the taint/label script there, `upgrade-cluster` writes
+`upgrade_plan.txt` — and neither playbook runs `prepare-nodes`, which is what creates the directory.
+on a cluster built before this release it exists **only on the master that originally ran
+`kubeadm init`**.
+
+the election picks the first master whose apiserver answers `/readyz`, which is normally that same
+node, so in the ordinary case this never comes up. it comes up when that node is down or excluded by
+`--limit` — exactly when you most want `sync` to work — and the run then fails on a missing
+directory rather than on anything meaningful.
+
+this is fixed in this release — `collect-node-lists.yaml` and `first-node-upgrade.yaml` both create
+the directory themselves now, so neither target depends on which master is elected. the note stays
+because a cluster running an older checkout of this repo still has the gap; there,
+`mkdir -p /opt/kubernetes` on the elected master and re-run.
+
+## what happens to etcd metrics
+
+the task that published the `etcd-client-certs` secret into the monitoring namespace is gone in this
+release. the secret already in your cluster is **not** deleted, so existing monitoring keeps working
+— but nothing refreshes it after a certificate rotation. moving to the 2381 listener is the
+`rotate-certs-with-config -e allow_config_change=true` step described above, and the serviceMonitor
+in glueops-core has to be repointed to match. see [Etcd metrics](#etcd-metrics) for the detail.
+
 # Day-2 operations
 
 Everything below runs from the `ansible/` directory with `.env` sourced. `preflight.yaml` runs
 first on the starred ones and stops the run if a variable or the inventory shape is wrong.
+
+> **pointing any of these at a cluster that already exists? read
+> [Running this against an existing cluster](#running-this-against-an-existing-cluster) first.**
+> `sync-resources.yaml` can remove a healthy node if the inventory names and the Kubernetes node
+> names disagree, and `rotate-certs-with-config.yaml` re-uploads the cluster's `kubeadm-config`
+> ConfigMap from your `.env` on every run.
 
 | I want to | Run | |
 |---|---|---|
@@ -379,7 +520,7 @@ first on the starred ones and stops the run if a variable or the inventory shape
 | upgrade Kubernetes | bump the versions in `.env`, then `playbooks/upgrade-cluster.yaml` | ★ |
 | rotate the control-plane certificates | `playbooks/rotate-certs-with-config.yaml` | |
 | re-apply labels and taints only | `playbooks/setup-cluster.yaml --tags label_nodes` | |
-| move local-path-provisioner to Helm (once per old cluster) | `playbooks/migrate-local-path-provisioner.yaml` | |
+| move local-path-provisioner to Helm — **required once per pre-existing cluster, before `setup-cluster.yaml`** | `playbooks/migrate-local-path-provisioner.yaml` | |
 | check the network before any of the above | `playbooks/check-network-connectivity.yaml` | |
 
 **There is no etcd backup or restore path in this repository.** Nothing here snapshots etcd before
@@ -435,15 +576,15 @@ its etcd settings from the same ConfigMap.
 the ConfigMap has to be updated first, which in this repo means one playbook:
 
 ```
-ansible-playbook -i inventory/hosts.yaml playbooks/rotate-certs-with-config.yaml -e allow_config_change=true
+ansible-playbook -i inventory/hosts.yaml playbooks/rotate-certs-with-config.yaml
 ```
 
-that runs `kubeadm init phase upload-config kubeadm --config`, and the opt-in is #450's drift
-guard: it re-uploads the *whole* rendered ClusterConfiguration from your current `.env`, not just
-this flag, so check what else has moved before running it. do not omit `-e allow_config_change=true`
-— the guard compares `kubernetesVersion`, `controlPlaneEndpoint`, `networking`, `certSANs` and
-`apiServerExtraArgs` only, so an etcd-only difference raises nothing and the upload is skipped
-silently.
+that runs `kubeadm init phase upload-config kubeadm --config`. the playbook sets
+`allow_config_change: true` in its play vars, so no flag is needed — but that also means it
+re-uploads the *whole* rendered ClusterConfiguration from your current `.env`, not just the etcd
+field. regenerate `.env` first and read the `Report the configuration difference` task in the
+output before letting a run through. see
+[running `rotate-certs-with-config`](#running-rotate-certs-with-config).
 
 the listener then appears the next time the etcd manifest is regenerated, which in practice means
 **the next real version upgrade** — `kubeadm upgrade apply` with the version the cluster is already
@@ -474,3 +615,20 @@ for a few seconds. re-running is safe because it reads the `meta.helm.sh/release
 off the deployment first and skips the migration entirely once Helm owns it — the annotation, not a
 guess. it ends by waiting on the rollout, so a run that leaves the cluster without a provisioner
 fails loudly instead of silently.
+
+**this is a prerequisite for `setup-cluster.yaml`, not an optional tidy-up.** `install-addons.yaml`
+Helm-installs the release with no adoption step, so on an unmigrated cluster it aborts with
+`invalid ownership metadata … missing key "meta.helm.sh/release-name"` — and because that removes the
+orchestrator from the run, the **Taint Nodes** and **Apply Calico Firewall rules** plays that follow
+it are `hosts: orchestrator` and get skipped without a message. this only affects
+`setup-cluster.yaml`; `sync`, `upgrade-cluster` and `rotate-certs-with-config` never install addons.
+
+to check which state a cluster is in, read the annotation rather than guessing:
+
+```bash
+kubectl -n local-path-storage get deploy local-path-provisioner \
+  -o jsonpath='{.metadata.annotations.meta\.helm\.sh/release-name}'
+```
+
+an empty result on a deployment that exists means the manifest install — migrate. `local-path-provisioner`
+means Helm already owns it and there is nothing to do.

@@ -1,3 +1,16 @@
+# upgrade-cluster.yaml does not run prepare-nodes, which is what normally creates this, and on a
+# cluster built before /opt/kubernetes was created on every master it exists only on the node that
+# originally ran `kubeadm init` (#486). This play is `hosts: orchestrator`, so it lands on whichever
+# master the election picks -- and the moment that is not the original init node, the redirect below
+# fails with "No such file or directory" after kubeadm has already been upgraded. file/directory is
+# idempotent and creates parents.
+- name: Ensure the GlueKube state directory exists
+  ansible.builtin.file:
+    path: /opt/kubernetes
+    state: directory
+    mode: "0755"
+  tags: upgrade
+
 - name: show upgrade plan
   ansible.builtin.shell: |
     export KUBECONFIG=/etc/kubernetes/admin.conf
