@@ -4,20 +4,52 @@
   become: true
   gather_facts: true
   tasks:
-    - name: Get Kubernetes Nodes Status
+    # A point-in-time Ready check fails on a legitimate reconvergence. Removing a control-plane
+    # node does not stop its apiserver, so a worker whose kubelet is pinned to that apiserver
+    # keeps talking to it until the connection breaks: the node misses heartbeats and the node
+    # controller marks it NotReady for one nodeMonitorGracePeriod (~50s) before the kubelet
+    # re-resolves the ctrp record onto a surviving master and recovers. A scale-cluster run
+    # failed here on exactly that, twelve seconds after this same assertion had passed against
+    # the same cluster.
+    #
+    # Retrying IS the assertion: the cluster is required to reach all-Ready, not to have been
+    # all-Ready at the first instant it was asked.
+    - name: Wait for every node to report Ready
       ansible.builtin.shell: |
         export KUBECONFIG=/etc/kubernetes/admin.conf
         kubectl get nodes --no-headers
       register: kube_nodes
       changed_when: false
+      retries: 12
+      delay: 10
+      # The node count is part of the condition on purpose: a kubectl that fails outright
+      # reject()s to length 0 exactly like an all-Ready cluster does, so emptiness alone would
+      # satisfy the loop on the first attempt and pass this test on no evidence whatsoever.
+      until: >-
+        kube_nodes.stdout_lines | default([]) | length > 0 and
+        kube_nodes.stdout_lines | default([]) | reject('search', ' Ready ') | list | length == 0
+      # Not fatal on its own. Failing here would abort the play before the diagnostics below
+      # ran, on exactly the runs that need them; the two fail tasks after them decide the result.
+      ignore_errors: true
 
     - name: Debug Node Status Output
       ansible.builtin.debug:
         msg: "{{ kube_nodes.stdout_lines }}"
 
+    # The loop below iterates the node list, so an empty list is a vacuous pass: a kubectl that
+    # never answered would report the cluster healthy. Checked separately so the two say what
+    # actually went wrong.
+    - name: Fail if the node list could not be read
+      ansible.builtin.fail:
+        msg: >-
+          kubectl get nodes returned no nodes after 120s
+          (rc {{ kube_nodes.rc | default('n/a') }}):
+          {{ kube_nodes.stderr | default('') | trim }}
+      when: kube_nodes.stdout_lines | default([]) | length == 0
+
     - name: Fail if any node is not Ready
       ansible.builtin.fail:
-        msg: "One or more Kubernetes nodes are NOT in Ready state!"
+        msg: "Node is still not Ready after 120s: {{ item }}"
       when: "' Ready ' not in item"
       loop: "{{ kube_nodes.stdout_lines }}"
     

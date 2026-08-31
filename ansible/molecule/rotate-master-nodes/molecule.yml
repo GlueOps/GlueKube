@@ -21,7 +21,6 @@ scenario:
     - side_effect side_effect/rotate_master_nodes.yaml
     - side_effect tests/test_cluster_healthy.yaml
     - side_effect side_effect/second_rotate_master_nodes.yaml
-    - side_effect tests/test_cluster_healthy.yaml
     - verify
     - destroy
 

@@ -28,7 +28,6 @@ scenario:
     - side_effect tests/test_scale_up_worker.yaml
     - side_effect side_effect/remove_control_plane.yaml
     - side_effect tests/test_scale_down.yaml
-    - side_effect tests/test_cluster_healthy.yaml
     - verify
     - destroy
 

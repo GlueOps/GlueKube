@@ -23,7 +23,9 @@ scenario:
     # the convergence work in epic D (#439). It is only on this scenario: scale-cluster and
     # rotate-master-nodes interleave side effects, so a re-converge there means something else.
     # - idempotence
-    - side_effect tests/test_cluster_healthy.yaml
+    # No trailing `side_effect tests/test_cluster_healthy.yaml` here: `verify` imports that same
+    # playbook (verify.yml), so listing it too ran the identical assertions twice, seconds apart,
+    # and doubled the window in which a transient NotReady could fail the run.
     - verify
     - destroy
 
