@@ -15,11 +15,18 @@
 # the two together. The worker role keeps its own copy
 # (roles/worker/templates/kubeletConfigurationPatch.yaml.j2) because its small-tier
 # systemReserved is deliberately higher -- workers carry more non-kubelet system load.
+# Sized from the facts of the node this patch is FOR, not the play host (#486). The rotation
+# renders this under add-single-master.yaml's block-level delegate_to (the incoming node) inside a
+# run_once block: delegation moves execution, not fact resolution, so a bare ansible_memtotal_mb
+# resolved on groups['masters'][0] -- the OUTGOING master -- and sized the incoming node's
+# reservations from hardware it does not have, which is the exact mis-sizing #449 exists to
+# prevent. node_to_add is undefined on the steady-state path, so this is the play host there.
+{% set n = hostvars[node_to_add | default(inventory_hostname)] %}
 apiVersion: kubelet.config.k8s.io/v1beta1
 kind: KubeletConfiguration
 kubeReserved:
-  cpu: "{{ '512m' if (ansible_processor_vcpus | int) >= 4 else '200m' }}"
-  memory: "{{ '2560Mi' if (ansible_memtotal_mb | int) >= 16384 else '512Mi' }}"
+  cpu: "{{ '512m' if (n.ansible_processor_vcpus | int) >= 4 else '200m' }}"
+  memory: "{{ '2560Mi' if (n.ansible_memtotal_mb | int) >= 16384 else '512Mi' }}"
 systemReserved:
-  cpu: "{{ '512m' if (ansible_processor_vcpus | int) >= 4 else '200m' }}"
-  memory: "{{ '2560Mi' if (ansible_memtotal_mb | int) >= 16384 else '512Mi' }}"
+  cpu: "{{ '512m' if (n.ansible_processor_vcpus | int) >= 4 else '200m' }}"
+  memory: "{{ '2560Mi' if (n.ansible_memtotal_mb | int) >= 16384 else '512Mi' }}"

@@ -15,7 +15,6 @@ ansible/playbooks/setup-cluster.yaml jinja[spacing]
 ansible/playbooks/setup-cluster.yaml name[play]
 ansible/playbooks/setup-cluster.yaml var-naming[no-role-prefix]
 ansible/playbooks/upgrade-cluster.yaml name[template]
-ansible/roles/common/handlers/main.yml fqcn[action-core]
 ansible/roles/master/tasks/apply-calico-firewall.yaml command-instead-of-shell
 ansible/roles/master/tasks/apply-calico-firewall.yaml jinja[spacing]
 ansible/roles/master/tasks/apply-calico-firewall.yaml no-changed-when
@@ -23,8 +22,6 @@ ansible/roles/master/tasks/apply-calico-firewall.yaml var-naming[no-role-prefix]
 ansible/roles/master/tasks/compare-node.yaml var-naming[no-role-prefix]
 ansible/roles/master/tasks/copy-join-command.yaml no-changed-when
 ansible/roles/master/tasks/copy-join-command.yaml var-naming[no-role-prefix]
-ansible/roles/master/tasks/create-etcd-secret.yaml no-changed-when
-ansible/roles/master/tasks/create-etcd-secret.yaml var-naming[no-role-prefix]
 ansible/roles/master/tasks/first-node-upgrade.yaml name[casing]
 ansible/roles/master/tasks/first-node-upgrade.yaml no-changed-when
 ansible/roles/master/tasks/first-node-upgrade.yaml var-naming[no-role-prefix]
@@ -40,8 +37,6 @@ ansible/roles/master/tasks/master-node-rotation/add-single-master.yaml var-namin
 ansible/roles/master/tasks/master-node-rotation/check-etcd-health.yaml fqcn[action-core]
 ansible/roles/master/tasks/master-node-rotation/check-etcd-health.yaml var-naming[no-role-prefix]
 ansible/roles/master/tasks/master-node-rotation/compare-node.yaml var-naming[no-role-prefix]
-ansible/roles/master/tasks/master-node-rotation/copy-join-command.yaml no-changed-when
-ansible/roles/master/tasks/master-node-rotation/copy-join-command.yaml var-naming[no-role-prefix]
 ansible/roles/master/tasks/master-node-rotation/join-nodes.yaml no-changed-when
 ansible/roles/master/tasks/master-node-rotation/remove-single-master.yaml fqcn[action-core]
 ansible/roles/master/tasks/master-node-rotation/remove-single-master.yaml no-changed-when
@@ -67,8 +62,6 @@ ansible/roles/master/tasks/sync.yaml var-naming[no-role-prefix]
 ansible/roles/master/tasks/taint-nodes.yaml name[casing]
 ansible/roles/master/tasks/taint-nodes.yaml no-changed-when
 ansible/roles/master/tasks/upgrade.yaml no-changed-when
-ansible/roles/worker/tasks/compare-nodes.yaml command-instead-of-shell
-ansible/roles/worker/tasks/compare-nodes.yaml fqcn[action-core]
 ansible/roles/worker/tasks/copy-join-command.yaml no-changed-when
 ansible/roles/worker/tasks/copy-join-command.yaml var-naming[no-role-prefix]
 ansible/roles/worker/tasks/join-nodes.yaml no-changed-when

@@ -35,20 +35,41 @@
                      | selectattr('kind', 'defined')
                      | selectattr('kind', 'equalto', 'ClusterConfiguration')
                      | first | default({}, true) }}"
-    live_significant: "{{ {
-        'kubernetesVersion': live_cc.get('kubernetesVersion', ''),
+    # certSANs are compared with "0.0.0.0" rejected from BOTH sides (#486). Every cluster built
+    # before this branch has it in the stored ConfigMap -- it was in the template and was removed
+    # here -- so comparing the raw lists would make this guard hard-fail on the first cert
+    # rotation of every existing cluster. The only documented escape, -e allow_config_change=true,
+    # also un-gates the upload at the bottom of this file, so the operator's way past a spurious
+    # diff was to overwrite the cluster's authoritative config. "0.0.0.0" is inert as an apiserver
+    # SAN either way, so dropping it from the comparison is the narrow fix; keeping it in the
+    # template would have been the other.
+    #
+    # etcd is compared too, narrowed the same way apiServer is. The etcd extraArgs carry
+    # listen-metrics-urls, which this branch changes cluster-wide -- without it here the guard
+    # asserted on a subset of what the upload would actually rewrite and reported "no drift" while
+    # silently carrying that change through on an allow_config_change run. dataDir and
+    # imageRepository are deliberately excluded: kubeadm fills them in as defaults and the
+    # template never sets them, so including them would be permanent false drift.
+    live_etcd: "{{ ((live_cc.get('etcd', {}) or {}).get('local', {}) or {}) }}"
+    rendered_etcd: "{{ ((rendered_cc.get('etcd', {}) or {}).get('local', {}) or {}) }}"
+    live_significant: "{{ {'kubernetesVersion': live_cc.get('kubernetesVersion', ''),
         'controlPlaneEndpoint': live_cc.get('controlPlaneEndpoint', ''),
         'networking': live_cc.get('networking', {}),
-        'certSANs': (live_cc.get('apiServer', {}) or {}).get('certSANs', []) | sort,
-        'apiServerExtraArgs': (live_cc.get('apiServer', {}) or {}).get('extraArgs', [])
-      } }}"
-    rendered_significant: "{{ {
-        'kubernetesVersion': rendered_cc.get('kubernetesVersion', ''),
+        'certSANs': (live_cc.get('apiServer', {}) or {}).get('certSANs', [])
+                    | reject('equalto', '0.0.0.0') | sort,
+        'apiServerExtraArgs': (live_cc.get('apiServer', {}) or {}).get('extraArgs', []),
+        'etcd': {'extraArgs': live_etcd.get('extraArgs', []),
+                 'serverCertSANs': live_etcd.get('serverCertSANs', []) | sort,
+                 'peerCertSANs': live_etcd.get('peerCertSANs', []) | sort}} }}"
+    rendered_significant: "{{ {'kubernetesVersion': rendered_cc.get('kubernetesVersion', ''),
         'controlPlaneEndpoint': rendered_cc.get('controlPlaneEndpoint', ''),
         'networking': rendered_cc.get('networking', {}),
-        'certSANs': (rendered_cc.get('apiServer', {}) or {}).get('certSANs', []) | sort,
-        'apiServerExtraArgs': (rendered_cc.get('apiServer', {}) or {}).get('extraArgs', [])
-      } }}"
+        'certSANs': (rendered_cc.get('apiServer', {}) or {}).get('certSANs', [])
+                    | reject('equalto', '0.0.0.0') | sort,
+        'apiServerExtraArgs': (rendered_cc.get('apiServer', {}) or {}).get('extraArgs', []),
+        'etcd': {'extraArgs': rendered_etcd.get('extraArgs', []),
+                 'serverCertSANs': rendered_etcd.get('serverCertSANs', []) | sort,
+                 'peerCertSANs': rendered_etcd.get('peerCertSANs', []) | sort}} }}"
   tags: rotate-certs-with-config
   block:
     # failed_when: false, not ignore_errors -- a missing ConfigMap is a legitimate state to

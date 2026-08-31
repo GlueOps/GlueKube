@@ -22,7 +22,14 @@ RUN apt-get update && apt-get upgrade -y && \
     # playbooks/preflight.yaml.
     pip install --no-cache-dir ansible jmespath netaddr proxmoxer requests && \
     apt-get install openssh-client -y && \
-    apt-get install jq curl -y
+    # dnsutils supplies `dig`. master-node-rotation/update-dns-records.yaml shells out to it to
+    # find the zone's authoritative nameservers and to confirm the ctrp record propagated before
+    # the rotation drains and deletes the outgoing master -- and those tasks inherit
+    # `delegate_to: localhost` from roles/master/tasks/rotate-master-nodes.yaml, so they run on
+    # the Ansible controller, which in the hosted flow is THIS container and not the bastion.
+    # Without dig the lookup returns nothing and the rotation deletes a master having verified
+    # no propagation at all. CI never caught it because GitHub runners ship dig.
+    apt-get install jq curl dnsutils -y
 
 # Set working directory
 WORKDIR /opt/gluekube

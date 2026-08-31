@@ -92,13 +92,21 @@
       ignore_errors: true
       when: inventory_hostname in groups['masters'] | default([])
 
+    # `when` on a looped task is evaluated PER ITEM, so on a worker cluster_ports.results is not
+    # absent -- it is a full-length list of skipped item results (#486). Those dicts carry `item`
+    # but no `failed`, so the bare `probe.failed` below raised an undefined-attribute error and
+    # `any_errors_fatal: true` on this play turned it into an abort of the whole connectivity
+    # check. Rejecting skipped items and defaulting `failed` fixes both halves: the loop body
+    # never sees a skipped result, and a result that legitimately lacks `failed` reads as open.
     - name: Report which control-plane ports are open
       ansible.builtin.debug:
         msg: |-
           etcd and apiserver ports seen from {{ inventory_hostname }}:
-          {% for probe in cluster_ports.results %}
-          {{ probe.item[0] }}:{{ probe.item[1] }} {{ 'open' if not probe.failed else 'closed' }}
+          {% for probe in cluster_ports.results | rejectattr('skipped', 'defined') %}
+          {{ probe.item[0] }}:{{ probe.item[1] }} {{ 'closed' if probe.failed | default(false) else 'open' }}
           {% endfor %}
           All closed is the correct state before the first build. On a running cluster, a closed
           2379/2380 between masters means etcd cannot form a quorum.
-      when: cluster_ports.results is defined
+      when:
+        - cluster_ports.results is defined
+        - cluster_ports.results | rejectattr('skipped', 'defined') | list | length > 0

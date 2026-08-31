@@ -150,17 +150,17 @@
     return_content: true
   register: cluster_firewall
 
-# - name: The datacenter firewall is enabled
-#   ansible.builtin.assert:
-#     that:
-#       - cluster_firewall.json.data.enable | default(0) | int == 1
-#     fail_msg: >-
-#       The datacenter firewall is off, so the per-VM rules this playbook creates would do nothing
-#       and the test nodes would be wide open on a public address. Turn it on once at
-#       Datacenter -> Firewall -> Options, or `pvesh set /cluster/firewall/options --enable 1`.
-#       Read your default policies before you do: enabling it applies a default-DROP input policy
-#       cluster-wide, and the PVE host's own management port is subject to it.
-#     quiet: true
+- name: The datacenter firewall is enabled
+  ansible.builtin.assert:
+    that:
+      - cluster_firewall.json.data.enable | default(0) | int == 1
+    fail_msg: >-
+      The datacenter firewall is off, so the per-VM rules this playbook creates would do nothing
+      and the test nodes would be wide open on a public address. Turn it on once at
+      Datacenter -> Firewall -> Options, or `pvesh set /cluster/firewall/options --enable 1`.
+      Read your default policies before you do: enabling it applies a default-DROP input policy
+      cluster-wide, and the PVE host's own management port is subject to it.
+    quiet: true
 
 # One list, used by every loop below and rebuilt identically in proxmox-teardown.yml.
 - name: Build the master node list
@@ -183,6 +183,51 @@
 
 # Split once here so the inventory templates can slice them -- master_nodes_list[:1] is the
 # direct replacement for the Hetzner scenarios' master_nodes.results[:1].
+# vmid-range ownership check (#486). Provisioning tags every VM it creates with pve_tags plus
+# snippet_prefix, but until now nothing read the tag back: proxmox_kvm adopts an existing VM on a
+# colliding vmid rather than refusing it, and the tasks below then resize its root disk to 40G,
+# apply a default-DROP firewall to it and start it. On a shared PVE host that is somebody else's
+# workload. The vmids are derived from pve_vmid_base rather than recorded, so a collision is not
+# hypothetical -- it is what happens the first time this range is used for anything else.
+#
+# /cluster/resources is one call for every VM on the cluster; `tags` comes back as a
+# semicolon-joined string, absent entirely on an untagged VM.
+- name: Read the cluster's VM inventory
+  ansible.builtin.uri:
+    url: "{{ pve_api_url }}/cluster/resources?type=vm"
+    method: GET
+    headers: "{{ pve_auth_header }}"
+    validate_certs: "{{ pve_validate_certs }}"
+    return_content: true
+  register: pve_vm_inventory
+
+- name: Find what already occupies this scenario's vmid range
+  ansible.builtin.set_fact:
+    vms_in_scenario_range: >-
+      {{ (pve_vm_inventory.json.data | default([]))
+         | selectattr('vmid', 'defined')
+         | selectattr('vmid', 'in', cluster_nodes | map(attribute='vmid') | map('int') | list)
+         | list }}
+
+- name: Separate this scenario's own VMs from foreign ones
+  ansible.builtin.set_fact:
+    foreign_vms: >-
+      {{ (vms_in_scenario_range | rejectattr('tags', 'defined') | list)
+         + (vms_in_scenario_range | selectattr('tags', 'defined')
+            | rejectattr('tags', 'search', snippet_prefix) | list) }}
+
+- name: The scenario's vmid range holds nothing that is not ours
+  ansible.builtin.assert:
+    that:
+      - foreign_vms | length == 0
+    fail_msg: >-
+      {{ foreign_vms | length }} VM(s) occupy this scenario's vmid range without its
+      "{{ snippet_prefix }}" tag: {{ foreign_vms | map(attribute='vmid') | zip(foreign_vms
+      | map(attribute='name') | list) | list }}. Provisioning would adopt them -- resizing their
+      root disk, applying a default-DROP firewall and starting them. Move this scenario's range
+      with PROXMOX_VMID_BASE / pve_vmid_offset, or remove those VMs.
+    quiet: true
+
 - name: Split the node list by role
   ansible.builtin.set_fact:
     master_nodes_list: "{{ cluster_nodes | selectattr('role', 'equalto', 'master') | list }}"

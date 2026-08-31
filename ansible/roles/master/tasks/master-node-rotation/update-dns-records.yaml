@@ -107,9 +107,20 @@
   debug:
     msg: "Authoritative NS servers: {{ ns_servers.stdout_lines }}"
 
-- name: Wait for DNS propagation (no NS servers found)
-  ansible.builtin.pause:
-    seconds: 70
+# Fatal rather than a 70s pause (#486). This branch used to be the silent path: the lookup above
+# is failed_when: false, so a controller without `dig` -- which is what the GlueKube container was
+# until dnsutils was added to the Dockerfile -- landed here, slept, and let the rotation go on to
+# drain and delete the outgoing master having verified no propagation whatsoever. An empty NS list
+# means the check cannot run, and a rotation that cannot verify DNS must not proceed to the
+# destructive half.
+- name: Refuse to continue without the zone's authoritative nameservers
+  ansible.builtin.fail:
+    msg: >-
+      Could not resolve the authoritative nameservers for {{ loadbalancer_apiserver }}, so the
+      propagation of the updated ctrp record cannot be verified and this rotation would delete a
+      control-plane node on an unchecked DNS change. Confirm `dig` is installed on the Ansible
+      controller (the GlueKube container installs dnsutils; a bare checkout may not have it) and
+      that the controller can reach a resolver, then re-run.
   when: ns_servers.stdout_lines | length == 0
 
 - name: Verify DNS propagation on at least 2 NS servers

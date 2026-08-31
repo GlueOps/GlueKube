@@ -4,6 +4,20 @@
 - name: Prepare the node
   ansible.builtin.import_tasks: ../../common/tasks/prepare-node.yaml
 
+# Created here, unconditionally, rather than only on the node that ran `kubeadm init` (#486).
+# /opt/kubernetes is where taint-nodes.yaml drops taint-label-nodes.py, install-addons.yaml
+# writes its Helm values, first-node-upgrade.yaml writes upgrade_plan.txt and kubeadm-init.yaml
+# keeps the kubeconfig the `fetch` reads. Those plays are now `hosts: orchestrator`, so any
+# master is a legal orchestrator -- but the directory only ever existed on the bootstrap node,
+# so a run whose elected orchestrator had not been through `kubeadm init` failed at the fetch,
+# and `make upgrade-cluster` aborted on a missing /opt/kubernetes/upgrade_plan.txt after a full
+# rotation had replaced the original node. file/state=directory is idempotent.
+- name: Create the GlueKube state directory
+  ansible.builtin.file:
+    path: /opt/kubernetes/.kube
+    state: directory
+    mode: "0755"
+
 # jq is what compare-node.yaml and the etcd checks parse kubectl/etcdctl JSON with.
 - name: Install the control-plane CLI dependencies
   ansible.builtin.apt:

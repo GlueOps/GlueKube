@@ -104,7 +104,10 @@
         name: master
         tasks_from: install-local-path-provisioner.yaml
       vars:
-        lpp_helm_force: "{{ lpp_legacy_install | bool }}"
+        master_lpp_helm_force: "{{ lpp_legacy_install | bool }}"
+        # This playbook runs against a cluster that is already up, so waiting is safe here and is
+        # what keeps a deleted-then-reinstalled provisioner from being reported as done early.
+        master_lpp_helm_wait: true
 
     - name: Verify the provisioner deployment is back and available
       ansible.builtin.command:

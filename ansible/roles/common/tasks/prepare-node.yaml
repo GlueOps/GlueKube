@@ -1,8 +1,16 @@
 ---
+# hostvars[node_to_add | default(inventory_hostname)], not the bare fact (#486). The rotation
+# reaches this file through add-single-master.yaml's `delegate_to: {{ node_to_add }}` inside a
+# run_once block, and delegation moves where a task EXECUTES, not which host's facts a bare
+# `ansible_*` name resolves to -- that stays the play host, groups['masters'][0]. A bare
+# ansible_swaptotal_mb therefore asked "does the OUTGOING master have swap" while swapoff ran on
+# the incoming one, so a rotated-in node with /swap.img in fstab kept swap on and its kubelet
+# refused to start. kubeadm-join-config.j2 already uses this form for the same reason.
+# In the steady-state path node_to_add is undefined and this is the play host, unchanged.
 - name: Disable swap immediately
   ansible.builtin.command: swapoff -a
   changed_when: false
-  when: ansible_swaptotal_mb | int > 0
+  when: hostvars[node_to_add | default(inventory_hostname)]['ansible_swaptotal_mb'] | default(0) | int > 0
 
 # swapoff only lasts until the next boot. kubelet has failSwapOn true by default and
 # kubeadm-stacked-config.yaml.j2 does not override it, so a node that reboots with swap back

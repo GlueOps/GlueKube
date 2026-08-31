@@ -36,13 +36,16 @@
   when: kube_apiserver_manifest.stat.exists == false
   tags: init_kubeadm
 
-# create a directory for the kubeconfig file
+# Ungated (#486). prepare-nodes.yaml creates /opt/kubernetes/.kube on every master, and both
+# tasks below are idempotent -- copy compares checksums. They used to carry
+# `when: kube_apiserver_manifest.stat.exists == false`, which is only true on the node that ran
+# `kubeadm init`, so on any other elected orchestrator the kubeconfig was never written and the
+# `fetch` below failed on a missing source.
 - name: Create kubeconfig directory
   ansible.builtin.file:
     path: "/opt/kubernetes/.kube"
     state: directory
     mode: "0755"
-  when: kube_apiserver_manifest.stat.exists == false
   tags: kubeconfig_setup
 
 - name: Copy kubeconfig to user home directory
@@ -53,7 +56,6 @@
     owner: "root"
     group: "root"
     mode: "0644"
-  when: kube_apiserver_manifest.stat.exists == false
   tags: kubeconfig_setup
 
 

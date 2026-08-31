@@ -41,11 +41,11 @@
       --cert=/etc/kubernetes/pki/etcd/server.crt \
       --key=/etc/kubernetes/pki/etcd/server.key \
       member list
-  register: etcd_member_list
+  register: master_etcd_member_list
   changed_when: false
   retries: 3
   delay: 10
-  until: etcd_member_list.rc == 0
+  until: master_etcd_member_list.rc == 0
   when: inventory_hostname == orchestrator_node and nodes_to_remove | length > 0
 
 # Gated on nothing but etcd's own membership (#475).
@@ -73,7 +73,7 @@
       member remove {{ etcd_member_id }}
   vars:
     etcd_member_id: >-
-      {{ etcd_member_list.stdout_lines | default([])
+      {{ master_etcd_member_list.stdout_lines | default([])
          | select('search', '(?<![\w-])' ~ item ~ '(?![\w-])')
          | map('regex_replace', '^([^,]*),.*$', '\1')
          | map('trim') | list | first | default('') }}
@@ -81,9 +81,9 @@
   when:
     - inventory_hostname == orchestrator_node and nodes_to_remove | length > 0
     - etcd_member_id | length > 0
-  register: etcd_member_removed
-  changed_when: etcd_member_removed.rc == 0
+  register: master_etcd_member_removed
+  changed_when: master_etcd_member_removed.rc == 0
   # tolerate the member disappearing between the read above and this removal, as the sibling does
   failed_when: >-
-    etcd_member_removed.rc != 0 and
-    'member not found' not in etcd_member_removed.stderr | default('')
+    master_etcd_member_removed.rc != 0 and
+    'member not found' not in master_etcd_member_removed.stderr | default('')

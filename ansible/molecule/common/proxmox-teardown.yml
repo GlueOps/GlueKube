@@ -31,6 +31,50 @@
              'role': 'worker'}] }}
   loop: "{{ range(0, num_worker_nodes) | list }}"
 
+# vmid-range ownership check (#486). Provisioning tags every VM it creates with pve_tags plus
+# snippet_prefix, but until now nothing read the tag back: proxmox_kvm adopts an existing VM on a
+# colliding vmid rather than refusing it, and the tasks below then resize its root disk to 40G,
+# apply a default-DROP firewall to it and start it. On a shared PVE host that is somebody else's
+# workload. The vmids are derived from pve_vmid_base rather than recorded, so a collision is not
+# hypothetical -- it is what happens the first time this range is used for anything else.
+#
+# /cluster/resources is one call for every VM on the cluster; `tags` comes back as a
+# semicolon-joined string, absent entirely on an untagged VM.
+- name: Read the cluster's VM inventory
+  ansible.builtin.uri:
+    url: "{{ pve_api_url }}/cluster/resources?type=vm"
+    method: GET
+    headers: "{{ pve_auth_header }}"
+    validate_certs: "{{ pve_validate_certs }}"
+    return_content: true
+  register: pve_vm_inventory
+
+- name: Find what already occupies this scenario's vmid range
+  ansible.builtin.set_fact:
+    vms_in_scenario_range: >-
+      {{ (pve_vm_inventory.json.data | default([]))
+         | selectattr('vmid', 'defined')
+         | selectattr('vmid', 'in', cluster_nodes | map(attribute='vmid') | map('int') | list)
+         | list }}
+
+- name: Separate this scenario's own VMs from foreign ones
+  ansible.builtin.set_fact:
+    foreign_vms: >-
+      {{ (vms_in_scenario_range | rejectattr('tags', 'defined') | list)
+         + (vms_in_scenario_range | selectattr('tags', 'defined')
+            | rejectattr('tags', 'search', snippet_prefix) | list) }}
+
+# The delete loop below runs over this, not over cluster_nodes: a vmid the scenario never created
+# must not be force-purged just because it falls in the derived range. A vmid holding nothing is
+# kept -- deleting an absent vmid is a harmless no-op and dropping it here would mean a VM the API
+# call missed survives teardown.
+- name: Restrict the delete list to vmids this scenario owns
+  ansible.builtin.set_fact:
+    deletable_nodes: >-
+      {{ cluster_nodes
+         | rejectattr('vmid', 'in', foreign_vms | map(attribute='vmid') | map('int') | list)
+         | list }}
+
 # force stops a running VM first -- without it the module returns changed=false with "Stop it
 # before deletion or use force=true", which is every VM in a normal run. purge drops the vmid
 # from backup/replication/HA config too, which matters here because the next run reuses exactly
@@ -44,10 +88,23 @@
     force: true
     purge: true
     timeout: 300
-  loop: "{{ cluster_nodes }}"
+  loop: "{{ deletable_nodes }}"
   loop_control:
     label: "{{ item.name }} ({{ item.vmid }})"
   register: delete_nodes
+
+# After the delete, not before: this scenario's own VMs still get torn down, and the collision is
+# then reported rather than silently leaving a foreign VM to be adopted by the next create.
+- name: No foreign VM was left standing in this scenario's vmid range
+  ansible.builtin.assert:
+    that:
+      - foreign_vms | length == 0
+    fail_msg: >-
+      Teardown skipped {{ foreign_vms | length }} VM(s) in this scenario's vmid range because they
+      do not carry its "{{ snippet_prefix }}" tag: {{ foreign_vms | map(attribute='vmid')
+      | zip(foreign_vms | map(attribute='name') | list) | list }}. They are not ours to purge. The
+      next create will refuse this range until they are moved or removed.
+    quiet: true
 
 - name: Register the Proxmox host for the snippet cleanup
   ansible.builtin.add_host:

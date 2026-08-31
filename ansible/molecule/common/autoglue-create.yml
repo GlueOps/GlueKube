@@ -41,6 +41,22 @@
       - autoglue_domain.json.id | string | length > 0
     fail_msg: "AutoGlue did not return an id for the domain: {{ autoglue_domain.json }}"
 
+# Written the moment the domain exists, not once the record does too (#486). autoglue-destroy.yml
+# gates every DELETE on this file, so any failure between the domain POST and the record POST --
+# the record call itself, an assert, an interrupted CI job -- used to orphan the domain with
+# nothing recording its id. All three scenarios POST the same domain_name, so one orphan then
+# fails the next run of ANY of them at its first AutoGlue task, after the VMs are already built.
+# The record id is deliberately empty here: destroy gates the two DELETEs separately, so a file
+# holding only the domain id cleans up exactly what exists.
+- name: Hand the domain id to destroy before anything else can fail
+  ansible.builtin.copy:
+    content: |
+      ---
+      autoglue_domain_id: "{{ autoglue_domain.json.id }}"
+      autoglue_record_id: ""
+    dest: "./autoglue-ids.yaml"
+    mode: "0644"
+
 - name: Create the ctrp A record in the new domain via AutoGlue API
   ansible.builtin.uri:
     url: "{{ lookup('env', 'AUTOGLUE_BASE_URL') }}/api/v1/dns/domains/{{ autoglue_domain.json.id }}/records"
@@ -66,6 +82,7 @@
       - autoglue_record.json.id | string | length > 0
     fail_msg: "AutoGlue did not return an id for the record: {{ autoglue_record.json }}"
 
+# Rewrites the file the domain task above already created, now that the record id exists too.
 - name: Hand the AutoGlue ids to destroy
   ansible.builtin.copy:
     content: |

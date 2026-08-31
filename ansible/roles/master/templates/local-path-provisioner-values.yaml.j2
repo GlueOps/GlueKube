@@ -1,10 +1,31 @@
-nodeSelector:
-  glueops.dev/role: glueops-platform
+# Preferred affinity, not a hard nodeSelector -- the same call calico.yaml.j2 makes in this repo,
+# and for the same reason. roles/master/tasks/main.yaml installs the addons (line 23) before
+# taint-nodes.yaml has run, so glueops.dev/role exists on NO node at install time; on the molecule
+# scenarios it never exists at all, because common/hosts.yaml.j2 writes `extra.taints` and no
+# `extra.labels`. A hard nodeSelector leaves the pod Pending while local-path is the cluster's
+# default StorageClass -- every new PVC then waits forever with nothing to explain why.
+# "preferred" still lands it on the platform nodepool on any cluster that has one.
+affinity:
+  nodeAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        preference:
+          matchExpressions:
+            - key: glueops.dev/role
+              operator: In
+              values:
+                - glueops-platform
+# Kept: the platform nodepool carries a matching NoSchedule taint, and the control-plane
+# tolerations let this schedule during a bootstrap where the masters are still the only nodes.
 tolerations:
   - effect: NoSchedule
     key: glueops.dev/role
     operator: Equal
     value: glueops-platform
+  - effect: NoSchedule
+    key: node-role.kubernetes.io/control-plane
+  - effect: NoSchedule
+    key: node-role.kubernetes.io/master
 
 image:
   repository: dockerhub.repo.gpkg.io/rancher/local-path-provisioner
