@@ -1,0 +1,49 @@
+# Sourced by every ansible-playbook the bastion runs, via `set -a; . {{ bastion_env_file }}`.
+# Written by common/bastion-prepare.yml with no_log and mode 0600.
+#
+# This file exists because inventory/group_vars/all.yaml and masters.yaml are nothing but
+# `lookup('env', ...)`. The molecule controller has those in its environment; the bastion is a
+# different machine and does not, so a converge started there would render an empty
+# kubernetes_version and die at "Init kubeadm" with AnsibleUndefinedVariable.
+#
+# Passing them in a task's `environment:` instead would put CERTIFICATE_KEY, RANDOM_TOKEN and
+# AUTOGLUE_ORG_SECRET into molecule's own output, which is `log: true`. A root-only file keeps
+# them out of the transcript.
+{% for name in bastion_env_passthrough %}
+{{ name }}='{{ lookup('env', name) }}'
+{% endfor %}
+
+# AUTOGLUE_RECORD_ID is handled separately: create.yml's first play made the record, and
+# inventory/group_vars/masters.yaml prefers the id in $MOLECULE_SCENARIO_DIRECTORY/autoglue-record-id
+# over this variable. That directory does not exist here and MOLECULE_SCENARIO_DIRECTORY is
+# deliberately NOT exported below, so the file lookup misses, errors='ignore' yields an empty
+# string, and this fallback -- the id from THIS run, not whatever was in the operator's .env --
+# is what the master role uses.
+AUTOGLUE_RECORD_ID='{{ autoglue_record_id_for_run }}'
+
+# PROXMOX_LAN_CIDR is easy to overlook in a list of Kubernetes settings, and it is not optional:
+# inventory/group_vars/masters.yaml feeds it to calico_node_address_autodetection_v4. Unset, the
+# block is omitted from calico.yaml.j2, Calico falls back to firstFound, and VXLAN comes up on the
+# NAT interface instead of the LAN.
+PROXMOX_LAN_CIDR='{{ lookup('env', 'PROXMOX_LAN_CIDR') }}'
+
+# Roles are searched at <playbook_dir>/roles, i.e. ansible/playbooks/roles, which does not exist.
+# ansible.cfg's ANSIBLE_ROLES_PATH= line looks like it covers this but is an env-var name used as
+# an ini key, so ansible ignores it -- the real setting has always come from the environment.
+ANSIBLE_ROLES_PATH='{{ bastion_gluekube_root }}/ansible/roles'
+ANSIBLE_HOST_KEY_CHECKING='False'
+
+# NOT cosmetic, and /dev/null rather than empty. ansible.cfg's `log_path = $PWD/ansible.log` IS a
+# real ini key (unlike the two env-var-shaped keys above it, which ansible ignores), and under
+# molecule it is never read because molecule writes its own ansible.cfg and exports ANSIBLE_CONFIG.
+# The runs on this host are the first ones that would honour it -- writing the join token, the
+# certificate key and the AutoGlue org secret to a file on a host with a public address.
+#
+# An EMPTY value does not disable it: ansible resolves '' to the current directory and then dies
+# with "[Errno 21] Is a directory" before running a single task. /dev/null is a real, writable
+# path that keeps nothing.
+ANSIBLE_LOG_PATH='/dev/null'
+
+# One playbook run here lasts 20-40 minutes over an SSH hop that, in CI, crosses a Tailscale exit
+# node. Without keepalives a quiet stretch is torn down as a dead connection mid-converge.
+ANSIBLE_SSH_ARGS='-o ControlMaster=auto -o ControlPersist=60s -o ServerAliveInterval=30 -o ServerAliveCountMax=10'

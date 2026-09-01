@@ -6,14 +6,65 @@ All three scenarios — `test-cluster`, `scale-cluster` and `rotate-master-nodes
 | file | what it is |
 | --- | --- |
 | `common/proxmox-vars.yml` | every `PROXMOX_*` setting, loaded by each scenario's `vars_files` |
+| `common/node-list.yml` | the list of VMs a scenario owns, imported by provision **and** teardown |
 | `common/proxmox-provision.yml` | preflights, VM create, address discovery — imported by every `create.yml` |
 | `common/proxmox-teardown.yml` | the matching delete, imported by every `destroy.yml` |
 | `common/autoglue-create.yml` / `-destroy.yml` | the DNS domain and `ctrp` record |
 | `common/cloud-init.yaml.j2` | the per-node snippet, rendered once per VM |
-| `common/hosts.yaml.j2` | the inventory template every scenario writes through |
+| `common/bastion-cloud-init.yaml.j2` | the bastion's snippet — no kubelet, no k8s sysctls |
+| `common/hosts.yaml.j2` | the **cluster** inventory, templated onto the bastion |
+| `common/bastion-hosts.yaml.j2` | the **bastion** inventory, the only one written locally |
+| `common/bastion-vars.yml` | paths and names both bastion-side files share |
+| `common/bastion-prepare.yml` | toolchain, code ship and `.env` — imported by every `create.yml` |
+| `common/bastion-run.yml` / `bastion-poll.yml` | runs one playbook on the bastion and streams it back |
+| `common/bastion-env.j2` | the `.env` the remote runs source |
 
 A scenario's own `create.yml` is then only the parts that genuinely differ: how many nodes, which
 vmid range, which inventory files, and what `ctrp` resolves to.
+
+## How a run reaches the nodes
+
+The cluster nodes have **no publicly reachable address**. Each scenario builds a bastion, and that
+bastion is the only thing molecule talks to:
+
+```
+molecule (laptop / CI runner)
+        │  ssh, vmbr_public          ← the only inbound path into the scenario
+        ▼
+   bastion-node          net0 vmbr_public   net1 vmbr_lan
+   /opt/gluekube/ansible │                  │
+   ansible-playbook ─────┼──────────────────┘  ssh over the LAN address
+                         │
+        ┌────────────────┴───────────────────────────┐
+        ▼                                            ▼
+   master-node-N                               worker-node-N
+   net0 vmbr_nat (egress only)  net1 vmbr_lan  ← no inbound from anywhere
+```
+
+This is the production topology. AutoGlue SSHes into a cluster's bastion and runs GlueKube there
+as a container, and `parser.py` writes the nodes' **private** addresses into `ansible_host`; until
+now molecule tested the exact opposite, connecting straight to a wide-open public address.
+
+Mechanically:
+
+- `create.yml`'s first play builds the VMs, makes the DNS record, and writes
+  `inventory/hosts.yaml` — which now holds **the bastion and nothing else**. That is the file
+  `molecule.yml` links.
+- `create.yml`'s second play (`hosts: bastion`) installs the toolchain, copies the whole `ansible/`
+  tree to `/opt/gluekube/ansible`, writes a root-only `/opt/gluekube/.env`, and templates the
+  cluster inventories into the **mirrored** scenario directory on the bastion.
+- Every later step — `converge`, each `side_effect`, `verify` — is a thin wrapper play against the
+  bastion that runs `ansible-playbook` there and tails its output back. The wrappers live in
+  `<scenario>/remote/`, plus `converge.yml` and `verify.yml`.
+- **`playbooks/`, `roles/`, `side_effect/` and `tests/` are unchanged and unaware.** The mirror
+  preserves the repo layout and the remote run `chdir`s to the scenario directory, which is the
+  same cwd molecule uses locally, so `keys/vm_node`, `../inventory/scale-up-ctrp.yaml` and
+  `import_playbook: ../../../playbooks/sync-resources.yaml` all resolve exactly as before.
+
+Each remote step's stdout is streamed into the molecule transcript roughly every 15 seconds and
+fetched to `<scenario>/logs/` at the end, so a failure is still diagnosable after `destroy` has
+deleted the bastion. The bastion's own `ansible.log` is never fetched — it contains the join
+token, the certificate key and the AutoGlue org secret.
 
 ## ⚠️ Do not run a scenario while CI is running one
 
@@ -21,11 +72,11 @@ Every scenario reuses a fixed resource identity, and all three create the same D
 `$domain_name`. That identity is the **vmid range** each scenario owns — `$PROXMOX_VMID_BASE`
 plus a per-scenario offset, masters at `base+1..`, workers at `base+11..`:
 
-| scenario | offset | masters | workers |
-| --- | --- | --- | --- |
-| `test-cluster` | 0 | 9001–9003 | 9011–9013 |
-| `scale-cluster` | 100 | 9101–9103 | 9111–9113 |
-| `rotate-master-nodes` | 200 | 9201–9209 | 9211 |
+| scenario | offset | bastion | masters | workers |
+| --- | --- | --- | --- | --- |
+| `test-cluster` | 0 | 9000 | 9001–9003 | 9011–9013 |
+| `scale-cluster` | 100 | 9100 | 9101–9103 | 9111–9113 |
+| `rotate-master-nodes` | 200 | 9200 | 9201–9209 | 9211 |
 
 The offsets keep the three scenarios from colliding with **each other**. They do nothing about a
 second run of the *same* scenario: create is idempotent on the vmid, so it does not fail, it
@@ -33,10 +84,12 @@ silently *adopts* the first run's VMs and writes their IPs into its own inventor
 reaches `destroy` first deletes the other's VMs, and its DNS teardown removes the domain the
 other run is still using.
 
-Pick a `PROXMOX_VMID_BASE` leaving 9000–9211 (at the default) free and reserved for molecule.
-`destroy` deletes those vmids outright, so a base that collides with a real VM destroys it. The
-offsets live in each scenario's `create.yml` *and* `destroy.yml` — change one, change both, or
-destroy will delete the wrong range.
+Pick a `PROXMOX_VMID_BASE` leaving 9000–9211 (at the default) free and reserved for molecule. The
+range starts at the base itself now — that is the bastion. `destroy` deletes those vmids outright,
+so a base that collides with a real VM destroys it. The offsets live in each scenario's
+`create.yml` *and* `destroy.yml` — change one, change both, or destroy will delete the wrong range.
+The list of VMs itself is no longer duplicated: provision and teardown both import
+`common/node-list.yml`, so a VM added to a scenario cannot be forgotten by teardown.
 
 The symptoms are inexplicable SSH failures, or — worse — a green run against a cluster somebody
 else half-built.
@@ -47,14 +100,18 @@ your laptop. Before running locally, check that
 
 ## ⚠️ `create` dirties tracked files
 
-`create.yml` writes `<scenario>/inventory/hosts.yaml` with the live public IPs, SSH usernames and
-key paths of the test VMs. That file is git-tracked as an empty placeholder and cannot be
-gitignored: molecule resolves `inventory.links.hosts` before it runs anything and aborts with
-*"The source path ... does not exist"* if the target is missing.
+`create.yml` writes `<scenario>/inventory/hosts.yaml` with the bastion's live public IP, SSH
+username and key path. That file is git-tracked as an empty placeholder and cannot be gitignored:
+molecule resolves `inventory.links.hosts` before it runs anything and aborts with *"The source
+path ... does not exist"* if the target is missing.
 
 So after a run, `git status` is dirty with real infrastructure data. **`git checkout
-ansible/molecule/*/inventory/hosts.yaml` before committing**, and never `git add -A` blind. The
-generated `scale-*.yaml` / `rotate-*.yaml` inventories in the same directory *are* gitignored.
+ansible/molecule/*/inventory/hosts.yaml` before committing**, and never `git add -A` blind.
+
+It is one file per scenario now, and only the bastion. The cluster inventories — the real
+`hosts.yaml` with the nodes in it, and `scale-up-ctrp.yaml` and friends — are templated straight
+onto the bastion and never touch the working tree at all. `<scenario>/logs/`, where each remote
+step's output is fetched back to, is gitignored.
 
 ## Setup
 
@@ -133,28 +190,39 @@ export PROXMOX_STORAGE="local"
 # this matches the Terraform module. use "host" only on a single-host cluster.
 export PROXMOX_CPU="x86-64-v2-AES"
 
-# each node gets two NICs, and BOTH bridges have to serve DHCP -- create.yml reads the addresses
-# back out of the qemu guest agent.
-#   net0, public bridge: the address molecule SSHes to. this is the inventory's ansible_host, and
-#                        no filtering is applied to it -- see the note under "prerequisites".
-#   net1, LAN bridge:    the address the cluster runs on -- kubelet, etcd, Calico VXLAN, and what
-#                        the ctrp record resolves to. this is the inventory's `ip`. unfiltered.
+# every VM gets two NICs, and every bridge involved has to serve DHCP -- create.yml reads the
+# addresses back out of the qemu guest agent.
+#   net0, public bridge: the BASTION only. the address molecule SSHes to, and the only inbound
+#                        path into the scenario.
+#   net0, NAT bridge:    every master and worker. outbound internet -- apt, registry.k8s.io, the
+#                        helm repos, github releases -- and nothing inbound.
+#   net1, LAN bridge:    all of them. the address the cluster runs on -- kubelet, etcd, Calico
+#                        VXLAN, and what the ctrp record resolves to. this is the inventory's
+#                        `ip`, and now also its ansible_host, because the bastion is on this LAN.
 export PROXMOX_BRIDGE_PUBLIC="vmbr_public"
+export PROXMOX_BRIDGE_NAT="vmbr_nat"
 export PROXMOX_BRIDGE_LAN="vmbr_lan"
 
-# VLAN tags for those two bridges, matching what the Terraform module does: the LAN bridge is
-# VLAN-aware and DHCP is on 101, the public one is untagged. empty means the NIC gets no tag.
-# an untagged NIC on a VLAN-aware bridge takes no lease, and that only shows up much later as
+# VLAN tags for those bridges, matching what the Terraform module does: the LAN bridge is
+# VLAN-aware and DHCP is on 101, the public and NAT ones are untagged. empty means the NIC gets no
+# tag. an untagged NIC on a VLAN-aware bridge takes no lease, and that only shows up much later as
 # "the guest agent never reported an address".
 export PROXMOX_BRIDGE_PUBLIC_VLAN=""
+export PROXMOX_BRIDGE_NAT_VLAN=""
 export PROXMOX_BRIDGE_LAN_VLAN="101"
 
-# REQUIRED. the subnet the LAN bridge hands out. the guest agent reports both addresses in one
-# list with no hint which NIC each came from, so this is the only thing that tells them apart:
-# in-range is `ip`, out-of-range is ansible_host. get it wrong and every node fails the LAN assert
-# after all six VMs are already built. it is also what Calico's nodeAddressAutodetectionV4 is
-# pinned to, via inventory/group_vars/masters.yaml.
+# REQUIRED. the subnet the LAN bridge hands out. the guest agent reports both of a VM's addresses
+# in one list with no hint which NIC each came from, so this is the only thing that tells them
+# apart: in-range is `ip`, out-of-range is the egress address. get it wrong and every node fails
+# the LAN assert after all the VMs are already built. it is also what Calico's
+# nodeAddressAutodetectionV4 is pinned to, via inventory/group_vars/masters.yaml.
 export PROXMOX_LAN_CIDR="10.10.0.0/16"
+
+# optional, and only used for one preflight: create.yml asserts the NAT scope does not overlap the
+# LAN scope. an overlap does not fail on its own -- it silently puts a node's NAT address into the
+# inventory's `ip`, and etcd, the kubelet and Calico then bind to an address the other nodes
+# cannot reach.
+export PROXMOX_NAT_CIDR=""
 
 # storage with the "snippets" content type enabled, and where that storage keeps them on disk.
 export PROXMOX_SNIPPET_STORAGE="local"
@@ -172,11 +240,18 @@ export PROXMOX_VMID_BASE="9000"
 
 # per-node hardware. defaults are roughly a Hetzner ccx13.
 #
-# rotate-master-nodes builds NINE masters plus a worker. at these defaults that is 40 vCPU and
-# 80G of RAM in one scenario -- cheap when the nodes were rented per-hour on Hetzner, less so on
-# a single PVE host. turn these down if the host cannot seat it.
+# rotate-master-nodes builds NINE masters plus a worker plus the bastion. at these defaults that
+# is 42 vCPU and 82G of RAM in one scenario -- cheap when the nodes were rented per-hour on
+# Hetzner, less so on a single PVE host. turn these down if the host cannot seat it.
 export PROXMOX_CORES="4"
 export PROXMOX_MEMORY="8192"
+
+# the bastion's own hardware. it runs ansible-playbook and nothing else -- no kubelet, no
+# container images -- so it does not need a node's size, and giving it one would cost a third of
+# a node per scenario.
+export PROXMOX_BASTION_CORES="2"
+export PROXMOX_BASTION_MEMORY="2048"
+export PROXMOX_BASTION_DISK_SIZE="20G"
 
 # SSH to the hypervisor. the Proxmox API's storage upload endpoint does not accept snippets, so
 # create.yml writes the cloud-init files to the PVE host directly. host defaults to PROXMOX_HOST,
@@ -217,17 +292,26 @@ can:
 - the cloud-init template above, with a cloud-init drive
 - a storage with the `snippets` content type enabled
 - SSH access to the PVE host
-- both bridges, with DHCP on each
-- **no default gateway in the LAN bridge's DHCP scope.** Two default routes make the node's
-  outbound path nondeterministic, and `/etc/glueops/public-interface` — derived from the default
-  route in `common/cloud-init.yaml.j2` — stops reliably naming the public NIC. Hand out an
+- all three bridges, with DHCP on each
+- **`$PROXMOX_BRIDGE_NAT` must actually route out.** It is the cluster nodes' only path to apt,
+  `repo.gpkg.io`, `registry.k8s.io`, the Helm repos and GitHub releases, so its DHCP scope has to
+  hand out a router option *and* nameservers. If it does not, cloud-init never finishes on any
+  node and the run dies at *Wait for the guest agent to report an address*. `create.yml` checks the
+  bridge exists; it cannot check that it NATs. The `test_nodes_pingable` step right after `create`
+  is the thing that does — it probes `repo.gpkg.io:443` and `pkgs.k8s.io:443` from every node.
+- **no default gateway in the LAN bridge's DHCP scope.** Unchanged, and now more load-bearing than
+  before: it is what keeps a node's single default route on the NAT NIC. Two default routes make
+  the outbound path nondeterministic, and `/etc/glueops/public-interface` — derived from the
+  default route in `common/cloud-init.yaml.j2` — stops naming a predictable NIC. Hand out an
   address and a netmask on `$PROXMOX_BRIDGE_LAN`, nothing else.
 
-> **What the nodes are exposed on.** Nothing here builds a PVE firewall: neither NIC carries
-> `firewall=1`, no per-VM ruleset is written, and the datacenter firewall is neither read nor
-> required. Both addresses are therefore wide open — the public one answers on `6443`, `10250`,
-> etcd's unauthenticated metrics port `2381` and the NodePort range as readily as on `22`. Run
-> these scenarios on a network you are willing to have that on.
+> **What is exposed.** Nothing here builds a PVE firewall: no NIC carries `firewall=1`, no per-VM
+> ruleset is written, and the datacenter firewall is neither read nor required. What changed is
+> that there is now only **one** VM with a publicly reachable address — the bastion — and all it
+> answers on is `22`. The masters and workers are on `$PROXMOX_BRIDGE_NAT` and
+> `$PROXMOX_BRIDGE_LAN` only, so `6443`, `10250`, etcd's unauthenticated metrics port `2381` and
+> the NodePort range are no longer reachable from outside the scenario's own network. They are
+> still wide open *within* it: anything else on `$PROXMOX_BRIDGE_LAN` can reach them unfiltered.
 
 `domain_name` is required — `kubeadm-stacked-config.yaml.j2` puts `kube-api.$domain_name` in the
 apiserver certSANs and `authentication-configuration.yaml.j2` builds the Dex issuer from it.
@@ -235,8 +319,10 @@ Without it every scenario dies at *Init kubeadm* with `AnsibleUndefinedVariable`
 
 - install the collections: `ansible-galaxy collection install -r ansible/requirements.yml`
 
-- install the python libraries the modules need on the controller:
-  `pip install jmespath netaddr proxmoxer requests`
+- install the pinned python side: `pip install -r ansible/requirements.txt`. That is where
+  `ansible-core` is pinned too, and the version matters: the bastion installs from the same file,
+  and the two controllers behaving differently is a failure that only ever shows up on one of
+  them. `molecule` itself is not in there — install it separately.
 
 - source .env
 
@@ -250,8 +336,11 @@ Without it every scenario dies at *Init kubeadm* with `AnsibleUndefinedVariable`
 equals the number of masters — not merely that whatever nodes happen to be listed are Ready, which
 passes just as happily on an empty cluster.
 
-`test-cluster` additionally runs molecule's `idempotence` step: a second `converge` must report
-zero changed tasks.
+`test-cluster` **does not** run molecule's `idempotence` step — it is commented out in its
+`molecule.yml`, and it could not work here anyway: molecule counts changed tasks in the *local*
+run, and the task that launches the remote playbook is always changed. The equivalent check lives
+in `common/bastion-run.yml` as `bastion_run_assert_no_changes`, which reads the remote
+`PLAY RECAP`. Set it on a second converge to restore the regression guard for #439.
 
 ## DNS lifecycle
 
@@ -272,6 +361,14 @@ It also writes the record id on its own to `<scenario>/autoglue-record-id`, whic
 `inventory/group_vars/masters.yaml` reads through `$MOLECULE_SCENARIO_DIRECTORY`. That is how the
 scale and rotate scenarios' `update-dns-records.yaml` PATCHes the record this run actually created
 instead of whatever `$AUTOGLUE_RECORD_ID` happens to point at.
+
+On the bastion that indirection is deliberately short-circuited. `MOLECULE_SCENARIO_DIRECTORY` is
+not exported into `/opt/gluekube/.env`, so the file lookup misses, `errors='ignore'` yields an
+empty string, and the `$AUTOGLUE_RECORD_ID` fallback fires — and that variable is written into the
+`.env` with **this run's** record id, read off the local `autoglue-record-id` at ship time. Same
+result, one indirection fewer, and it cannot pick up a stale id from an operator's environment.
+`.env` is written after `autoglue-create.yml` for exactly this reason: `playbooks/preflight.yaml`
+fails every master on an empty `autoglue_record_id`.
 
 Two things worth knowing:
 

@@ -32,17 +32,33 @@ pve_import_storage: "{{ pve_import_from.split(':')[0] }}"
 pve_storage: "{{ lookup('env', 'PROXMOX_STORAGE') | default('local', true) }}"
 
 
+# Three bridges now, not two, because the cluster nodes lost their public leg:
+#
+#   public  only the bastion sits on it. It is the one address reachable from the machine running
+#           molecule, and the only inbound path into the whole scenario.
+#   nat     every master and worker's net0. Outbound internet (apt, registry.k8s.io, the Helm
+#           repos, GitHub releases) and nothing inbound.
+#   lan     net1 on all of them, including the bastion: the address the cluster actually runs on
+#           and the one the bastion SSHes to.
 pve_bridge_public: "{{ lookup('env', 'PROXMOX_BRIDGE_PUBLIC') | default('vmbr_public', true) }}"
+pve_bridge_nat: "{{ lookup('env', 'PROXMOX_BRIDGE_NAT') | default('vmbr_nat', true) }}"
 pve_bridge_lan: "{{ lookup('env', 'PROXMOX_BRIDGE_LAN') | default('vmbr_lan', true) }}"
 # VLAN tags, matching the Terraform module: the LAN bridge is VLAN-aware and DHCP lives on tag
-# 101, the public bridge is untagged. Empty means no tag at all -- an untagged NIC on a
+# 101, the public and NAT bridges are untagged. Empty means no tag at all -- an untagged NIC on a
 # VLAN-aware bridge gets no lease, and the failure surfaces much later as "the guest agent never
 # reported an address", so these are worth getting right up front.
 pve_bridge_public_vlan: "{{ lookup('env', 'PROXMOX_BRIDGE_PUBLIC_VLAN') }}"
+pve_bridge_nat_vlan: "{{ lookup('env', 'PROXMOX_BRIDGE_NAT_VLAN') }}"
 pve_bridge_lan_vlan: "{{ lookup('env', 'PROXMOX_BRIDGE_LAN_VLAN') | default('101', true) }}"
 # Required, and the only thing that tells the two leases apart: the guest agent reports both
 # addresses in one list with nothing to say which NIC they came from.
 pve_lan_cidr: "{{ lookup('env', 'PROXMOX_LAN_CIDR') }}"
+# Optional, and only used to fail early with a useful message. Address classification is
+# LAN-vs-not-LAN, so a NAT scope that overlaps the LAN scope would silently put a node's NAT
+# address into `ip` -- etcd, the kubelet and Calico would then all bind to an address the other
+# nodes cannot reach. Set it and provisioning asserts the two do not overlap before it builds
+# anything; leave it empty and that check is skipped.
+pve_nat_cidr: "{{ lookup('env', 'PROXMOX_NAT_CIDR') }}"
 
 pve_snippet_storage: "{{ lookup('env', 'PROXMOX_SNIPPET_STORAGE') | default('local', true) }}"
 # Not defaulted to /var/lib/vz/snippets: that is only right when the storage happens to be PVE's
@@ -64,7 +80,16 @@ pve_cores: "{{ lookup('env', 'PROXMOX_CORES') | default('4', true) }}"
 pve_cpu: "{{ lookup('env', 'PROXMOX_CPU') | default('x86-64-v2-AES', true) }}"
 pve_memory: "{{ lookup('env', 'PROXMOX_MEMORY') | default('8192', true) }}"
 
-# Masters take base+1.., workers base+11.. . Deterministic so destroy.yml needs no state file --
+# The bastion runs ansible-playbook and nothing else -- no kubelet, no container images -- so it
+# does not need a node's hardware. This is not just tidiness: rotate-master-nodes already builds
+# ten VMs at 4 vCPU / 8G on a single PVE host, which its create.yml calls out as tight, and the
+# bastion makes eleven.
+pve_bastion_cores: "{{ lookup('env', 'PROXMOX_BASTION_CORES') | default('2', true) }}"
+pve_bastion_memory: "{{ lookup('env', 'PROXMOX_BASTION_MEMORY') | default('2048', true) }}"
+pve_bastion_disk_size: "{{ lookup('env', 'PROXMOX_BASTION_DISK_SIZE') | default('20G', true) }}"
+
+# Bastion takes base+0, masters base+1.., workers base+11.. . Deterministic so destroy.yml needs
+# no state file --
 # and so a collision with a pre-existing VM is a collision with a *known* range. pve_vmid_offset
 # is set per scenario (0 / 100 / 200) so the three never overlap even when one of them leaks.
 pve_vmid_base: >-

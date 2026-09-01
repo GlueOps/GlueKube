@@ -1,5 +1,5 @@
 ---
-# Builds the nodes scale-cluster scales up and down, on Proxmox VE.
+# Builds the nodes scale-cluster scales up and down, plus the bastion that drives them.
 #
 # The provisioning is shared -- see ../common/proxmox-provision.yml. What is specific to this
 # scenario is the five inventories below: every node is BUILT here, but each side effect converges
@@ -11,18 +11,23 @@
 #   inventory/scale-down-worker.yaml  three masters, one worker
 #   inventory/scale-down-ctrp.yaml    one master, three workers
 #
+# All five now live ON THE BASTION, under the mirrored scenario directory, because that is where
+# the side effects run and where they swap one over hosts.yaml. The only inventory written
+# locally is the bastion's own, which is what molecule.yml links.
+#
 # Plus the two AutoGlue files destroy.yml and group_vars/masters.yaml read back.
 - name: Create Proxmox VMs
   hosts: localhost
   gather_facts: true
   vars_files:
     - ../common/proxmox-vars.yml
+    - ../common/bastion-vars.yml
   vars:
     num_master_nodes: 3
     num_worker_nodes: 3
     public_key: "{{ lookup('file', 'keys/vm_node.pub') }}"
-    # vmids 9101-9103 (masters) and 9111-9113 (workers) -- disjoint from test-cluster's 9001+
-    # and rotate-master-nodes' 9201+. destroy.yml must carry the same offset.
+    # vmids 9100 (bastion), 9101-9103 (masters) and 9111-9113 (workers) -- disjoint from
+    # test-cluster's 9000+ and rotate-master-nodes' 9200+. destroy.yml must carry the same offset.
     pve_vmid_offset: 100
     snippet_prefix: molecule-scale-cluster
 
@@ -30,55 +35,7 @@
     - name: Build the nodes on Proxmox
       ansible.builtin.import_tasks: ../common/proxmox-provision.yml
 
-    # The subset the first converge builds a cluster from. The remaining nodes exist but are not
-    # in this file, so nothing touches them until a side effect converges one of the inventories
-    # below.
-    - name: Store default inventory
-      ansible.builtin.template:
-        src: "{{ playbook_dir }}/../common/hosts.yaml.j2"
-        dest: "./inventory/hosts.yaml"
-        mode: "0644"
-      vars:
-        inv_masters: "{{ master_nodes_list[:1] }}"
-        inv_workers: "{{ worker_nodes_list[:2] }}"
-
-    - name: Store scale up control plane inventory
-      ansible.builtin.template:
-        src: "{{ playbook_dir }}/../common/hosts.yaml.j2"
-        dest: "./inventory/scale-up-ctrp.yaml"
-        mode: "0644"
-      vars:
-        inv_masters: "{{ master_nodes_list }}"
-        inv_workers: "{{ worker_nodes_list[:2] }}"
-
-    - name: Store inventory (for scale up worker node)
-      ansible.builtin.template:
-        src: "{{ playbook_dir }}/../common/hosts.yaml.j2"
-        dest: "./inventory/scale-up-worker.yaml"
-        mode: "0644"
-      vars:
-        inv_masters: "{{ master_nodes_list }}"
-        inv_workers: "{{ worker_nodes_list }}"
-
-    - name: Store inventory (for scale down worker node)
-      ansible.builtin.template:
-        src: "{{ playbook_dir }}/../common/hosts.yaml.j2"
-        dest: "./inventory/scale-down-worker.yaml"
-        mode: "0644"
-      vars:
-        inv_masters: "{{ master_nodes_list }}"
-        inv_workers: "{{ worker_nodes_list[:1] }}"
-
-    - name: Store inventory (for scale down control plane node)
-      ansible.builtin.template:
-        src: "{{ playbook_dir }}/../common/hosts.yaml.j2"
-        dest: "./inventory/scale-down-ctrp.yaml"
-        mode: "0644"
-      vars:
-        inv_masters: "{{ master_nodes_list[:1] }}"
-        inv_workers: "{{ worker_nodes_list }}"
-
-    # Only the first master exists as an apiserver at this point -- inventory/hosts.yaml above
+    # Only the first master exists as an apiserver at this point -- the cluster inventory below
     # converges master_nodes_list[:1]. Pointing the record at all three pre-satisfied the
     # scenario's own assertion: converge ran against two dead A records, and a scale-up that
     # never touched DNS still looked correct (#464). sync.yaml's update-dns-records task is what
@@ -89,9 +46,44 @@
         autoglue_record_values: >-
           {{ master_nodes_list[:1] | map(attribute='name') | map('extract', node_lan_addresses) | list }}
 
-    # proxmox-provision.yml already waits for the guest agent and for SSH, so the nodes are up by
-    # here. This is the tail of cloud-init: package_upgrade is still running when SSH opens, and
-    # converging into it means fighting the apt lock.
-    - name: Wait for 60 seconds to let cloud-init finish
-      ansible.builtin.pause:
-        seconds: 60
+    - name: Store the bastion inventory
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../common/bastion-hosts.yaml.j2"
+        dest: "./inventory/hosts.yaml"
+        mode: "0644"
+
+    - name: Pick up the bastion
+      ansible.builtin.meta: refresh_inventory
+
+- name: Make the bastion a GlueKube controller
+  hosts: bastion
+  gather_facts: true
+  vars_files:
+    - ../common/bastion-vars.yml
+  tasks:
+    - name: Install the toolchain and ship the code
+      ansible.builtin.import_tasks: ../common/bastion-prepare.yml
+
+    # After the ship, never before: bastion-prepare.yml unpacks the whole ansible/ tree over this
+    # directory, so anything templated first would be overwritten by the untar.
+    - name: Store the cluster inventories on the bastion
+      ansible.builtin.template:
+        src: "{{ bastion_local_ansible_root }}/molecule/common/hosts.yaml.j2"
+        dest: "{{ bastion_scenario_dir }}/inventory/{{ item.file }}"
+        owner: cluster
+        group: cluster
+        mode: "0644"
+      vars:
+        inv_masters: "{{ master_nodes_list[:item.masters] }}"
+        inv_workers: "{{ worker_nodes_list[:item.workers] }}"
+      loop:
+        # The subset the first converge builds a cluster from. The remaining nodes exist but are
+        # not in this file, so nothing touches them until a side effect swaps one of the others
+        # over it.
+        - {file: hosts.yaml, masters: 1, workers: 2}
+        - {file: scale-up-ctrp.yaml, masters: 3, workers: 2}
+        - {file: scale-up-worker.yaml, masters: 3, workers: 3}
+        - {file: scale-down-worker.yaml, masters: 3, workers: 1}
+        - {file: scale-down-ctrp.yaml, masters: 1, workers: 3}
+      loop_control:
+        label: "{{ item.file }} ({{ item.masters }}m/{{ item.workers }}w)"

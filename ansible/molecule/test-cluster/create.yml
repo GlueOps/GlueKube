@@ -1,28 +1,34 @@
 ---
-# Builds the six-node test cluster on Proxmox VE.
+# Builds the six-node test cluster on Proxmox VE, plus the bastion that drives it.
 #
 # The provisioning itself is shared with scale-cluster and rotate-master-nodes -- see
 # ../common/proxmox-provision.yml, which this scenario's code was extracted into once all three
 # moved off Hetzner. What stays here is what actually differs between the scenarios: how many
 # nodes, which vmid range, which inventories, and what ctrp resolves to.
 #
-# Everything downstream of this playbook is provider-agnostic, so the contract it has to honour
-# is just the three files it drops in the scenario directory:
+# The second play is where this stopped being a purely local affair. The cluster nodes have no
+# public leg any more -- net0 is the NAT bridge, which is outbound only -- so nothing here can
+# reach them. The bastion can, and it is the machine that runs setup-cluster.yaml; this play is
+# what puts the code, the toolchain, the inventory and the environment on it.
 #
-#   inventory/hosts.yaml   the real inventory, linked by molecule.yml's inventory.links.hosts
-#   autoglue-ids.yaml      domain + record ids, read back by destroy.yml
-#   autoglue-record-id     the bare record id, read by inventory/group_vars/masters.yaml
+# The contract with everything downstream is four files:
+#
+#   inventory/hosts.yaml               LOCAL: the bastion, and nothing else. molecule.yml links it.
+#   <bastion>/…/inventory/hosts.yaml   REMOTE: the real cluster inventory
+#   autoglue-ids.yaml                  domain + record ids, read back by destroy.yml
+#   autoglue-record-id                 the bare record id, carried into the bastion's .env
 - name: Create Proxmox VMs
   hosts: localhost
   gather_facts: true
   vars_files:
     - ../common/proxmox-vars.yml
+    - ../common/bastion-vars.yml
   vars:
     num_master_nodes: 3
     num_worker_nodes: 3
     public_key: "{{ lookup('file', 'keys/vm_node.pub') }}"
-    # vmids 9001-9003 (masters) and 9011-9013 (workers). scale-cluster takes +100 and
-    # rotate-master-nodes +200, so a VM leaked by a cancelled run is never adopted by a
+    # vmids 9000 (bastion), 9001-9003 (masters) and 9011-9013 (workers). scale-cluster takes +100
+    # and rotate-master-nodes +200, so a VM leaked by a cancelled run is never adopted by a
     # different scenario. destroy.yml must carry the same offset.
     pve_vmid_offset: 0
     snippet_prefix: molecule-test-cluster
@@ -31,15 +37,6 @@
     - name: Build the nodes on Proxmox
       ansible.builtin.import_tasks: ../common/proxmox-provision.yml
 
-    - name: Store default inventory
-      ansible.builtin.template:
-        src: "{{ playbook_dir }}/../common/hosts.yaml.j2"
-        dest: "./inventory/hosts.yaml"
-        mode: "0644"
-      vars:
-        inv_masters: "{{ master_nodes_list }}"
-        inv_workers: "{{ worker_nodes_list }}"
-
     - name: Create the DNS domain and ctrp record
       ansible.builtin.import_tasks: ../common/autoglue-create.yml
       vars:
@@ -47,3 +44,40 @@
         # one every node resolves ctrp to, so it must match the inventory's `ip`.
         autoglue_record_values: >-
           {{ master_nodes_list | map(attribute='name') | map('extract', node_lan_addresses) | list }}
+
+    # Molecule's own inventory, and the only one written locally. It holds the bastion because the
+    # bastion is the only host molecule can talk to; the cluster inventory is written onto the
+    # bastion by the next play.
+    - name: Store the bastion inventory
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../common/bastion-hosts.yaml.j2"
+        dest: "./inventory/hosts.yaml"
+        mode: "0644"
+
+    # Makes the `bastion` group real for the play below. Done after every delegate_to: pve_host
+    # task above, because refresh_inventory drops in-memory hosts -- pve_host included.
+    - name: Pick up the bastion
+      ansible.builtin.meta: refresh_inventory
+
+- name: Make the bastion a GlueKube controller
+  hosts: bastion
+  gather_facts: true
+  vars_files:
+    - ../common/bastion-vars.yml
+  tasks:
+    - name: Install the toolchain and ship the code
+      ansible.builtin.import_tasks: ../common/bastion-prepare.yml
+
+    # After the ship, never before: bastion-prepare.yml unpacks the whole ansible/ tree, and that
+    # tree contains the LOCAL inventory/hosts.yaml -- the bastion-only one. Templating first would
+    # have it overwritten by the untar.
+    - name: Store the cluster inventory on the bastion
+      ansible.builtin.template:
+        src: "{{ bastion_local_ansible_root }}/molecule/common/hosts.yaml.j2"
+        dest: "{{ bastion_scenario_dir }}/inventory/hosts.yaml"
+        owner: cluster
+        group: cluster
+        mode: "0644"
+      vars:
+        inv_masters: "{{ master_nodes_list }}"
+        inv_workers: "{{ worker_nodes_list }}"

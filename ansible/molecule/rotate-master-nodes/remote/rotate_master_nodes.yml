@@ -1,20 +1,20 @@
 ---
-# Molecule runs this; the bastion runs tests/test_cluster_healthy.yaml.
+# Molecule runs this; the bastion runs side_effect/rotate_master_nodes.yaml.
 #
 # The cluster nodes have no address molecule can reach, so every step that touches them is a
 # thin play against the bastion that shells out to ansible-playbook there. The playbook it
 # runs is unchanged and unaware -- common/bastion-prepare.yml mirrors the repo at
 # /opt/gluekube/ansible and the remote run chdirs to the scenario directory, so its relative paths
 # resolve exactly as they do locally.
-- name: Verify the cluster reached its expected state from the bastion
+- name: Rotate the control plane from the bastion
   hosts: bastion
   gather_facts: false
   vars_files:
-    - ../common/bastion-vars.yml
+    - ../../common/bastion-vars.yml
   tasks:
-    - name: Run tests/test_cluster_healthy.yaml on the bastion
-      ansible.builtin.include_tasks: ../common/bastion-run.yml
+    - name: Run side_effect/rotate_master_nodes.yaml on the bastion
+      ansible.builtin.include_tasks: ../../common/bastion-run.yml
       vars:
-        bastion_run_name: verify
-        bastion_run_playbook: tests/test_cluster_healthy.yaml
-        bastion_run_timeout: 900
+        bastion_run_name: rotate_master_nodes
+        bastion_run_playbook: side_effect/rotate_master_nodes.yaml
+        bastion_run_timeout: 7200

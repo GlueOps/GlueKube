@@ -1,0 +1,129 @@
+---
+# Runs one GlueKube playbook on the bastion and streams its output back. Included by every
+# converge.yml, verify.yml and side-effect wrapper from a `hosts: bastion` play that loads
+# ../common/bastion-vars.yml.
+#
+#   bastion_run_playbook   what to run, as the repo path relative to the scenario directory --
+#                          e.g. ../../playbooks/setup-cluster.yaml, or tests/test_cluster_healthy.yaml
+#   bastion_run_name       short label; names the log file on both sides
+#   bastion_run_timeout    seconds before the remote run is killed. Default 2h.
+#   bastion_run_assert_no_changes  fail unless the remote PLAY RECAP reports changed=0 everywhere
+#
+# The remote playbook, its inventory and its group_vars are the ones shipped by
+# common/bastion-prepare.yml, unmodified. Nothing under playbooks/, roles/, side_effect/ or tests/
+# knows this indirection exists.
+
+- name: Ensure the log directory exists
+  ansible.builtin.file:
+    path: "{{ bastion_log_dir }}"
+    state: directory
+    owner: cluster
+    group: cluster
+    mode: "0755"
+  become: true
+
+# Timestamped, because a sequence can run the same step twice -- rotate-master-nodes checks
+# tests/test_cluster_healthy.yaml before and after each rotation -- and a fixed name would leave
+# only the last one's log to look at.
+- name: Reset the streaming state
+  ansible.builtin.set_fact:
+    bastion_run_id: "{{ bastion_run_name }}-{{ '%Y%m%d-%H%M%S' | strftime }}"
+    bastion_run_offset: 1
+    bastion_run_finished: false
+    bastion_run_polls: "{{ ((bastion_run_timeout | default(7200) | int) / 15) | round(0, 'ceil') | int }}"
+
+- name: Name the log and its exit-code file
+  ansible.builtin.set_fact:
+    bastion_run_log: "{{ bastion_log_dir }}/{{ bastion_run_id }}.log"
+    bastion_run_rc_file: "{{ bastion_log_dir }}/{{ bastion_run_id }}.rc"
+
+- name: Run and report
+  block:
+    # async + poll: 0 detaches the run from this SSH session. That is not only about not blocking:
+    # a converge is 20-40 minutes, and holding one connection open for it -- in CI across a
+    # Tailscale exit node -- means a single flap kills the play AND orphans the remote
+    # ansible-playbook with a half-built cluster. Detached, a flap costs one poll.
+    #
+    # The rc is written to a file rather than read from the async job: the poll loop below is what
+    # decides when the run is over, and it must work even if this session died and came back.
+    - name: "Start {{ bastion_run_name }} on the bastion"
+      ansible.builtin.shell:
+        cmd: |
+          set -a
+          . {{ bastion_env_file }}
+          set +a
+          ansible-playbook -i inventory/hosts.yaml {{ bastion_run_playbook }} \
+            > {{ bastion_run_log }} 2>&1
+          echo $? > {{ bastion_run_rc_file }}
+        chdir: "{{ bastion_scenario_dir }}"
+        executable: /bin/bash
+      async: "{{ bastion_run_timeout | default(7200) | int }}"
+      poll: 0
+      changed_when: true
+
+    # A plain `until:` retry would print nothing but "FAILED - RETRYING" for the whole run. This
+    # tails the log instead, so the molecule transcript reads like a local converge, roughly 15s
+    # behind. bastion-poll.yml re-includes itself until the run ends -- see the note there.
+    - name: "Follow {{ bastion_run_name }}"
+      ansible.builtin.include_tasks: bastion-poll.yml
+
+    - name: The remote run finished within its timeout
+      ansible.builtin.assert:
+        that:
+          - bastion_run_finished
+        fail_msg: >-
+          {{ bastion_run_name }} did not finish within
+          {{ bastion_run_timeout | default(7200) }}s on the bastion. The run may still be going --
+          {{ bastion_run_log }} on {{ ansible_host }} is the live output.
+        quiet: true
+
+    - name: Read the remote exit code
+      ansible.builtin.slurp:
+        src: "{{ bastion_run_rc_file }}"
+      register: bastion_run_rc
+
+    # This is what makes molecule abort the sequence. `destroy` still runs afterwards -- molecule's
+    # --destroy defaults to always -- and destroy.yml never touches the bastion, so the VMs come
+    # down even when the bastion is the thing that broke.
+    - name: The remote run succeeded
+      ansible.builtin.fail:
+        msg: >-
+          {{ bastion_run_playbook }} exited {{ bastion_run_rc.content | b64decode | trim }} on the
+          bastion. The full output is above and in
+          {{ bastion_scenario_name }}/logs/{{ bastion_run_id }}.log.
+      when: (bastion_run_rc.content | b64decode | trim | int) != 0
+
+    # Molecule's own `idempotence` step counts changes in the LOCAL run, and the launcher task
+    # above is always changed, so that step can never see the remote cluster. This reads the
+    # remote PLAY RECAP instead, and is how the #439 regression guard stays reachable.
+    - name: Nothing changed on a re-converge
+      when: bastion_run_assert_no_changes | default(false) | bool
+      block:
+        - name: Read the remote play recap
+          ansible.builtin.command:
+            cmd: "grep -E '^[^ ]+ +: ok=' {{ bastion_run_log }}"
+          register: bastion_run_recap
+          changed_when: false
+
+        - name: Every host reported changed=0
+          ansible.builtin.assert:
+            that:
+              - bastion_run_recap.stdout_lines | reject('search', 'changed=0 ') | list | length == 0
+            fail_msg: >-
+              {{ bastion_run_playbook }} was not idempotent:
+              {{ bastion_run_recap.stdout_lines | reject('search', 'changed=0 ') | list }}
+            quiet: true
+
+  always:
+    # Fetched even on failure, and especially then: the log is the only record of what the remote
+    # run did, and the next step in the sequence is destroy.
+    #
+    # This log ONLY. /opt/gluekube/ansible/ansible.log is never fetched and never uploaded --
+    # .gitignore spells out that it contains the join token, the certificate key and the AutoGlue
+    # org secret.
+    - name: Bring the step log back
+      ansible.builtin.fetch:
+        src: "{{ bastion_run_log }}"
+        dest: "{{ bastion_local_scenario_dir }}/logs/{{ bastion_run_id }}.log"
+        flat: true
+      failed_when: false

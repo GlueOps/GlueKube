@@ -1,0 +1,25 @@
+# Python side of the controller, pinned. requirements.yml is the Galaxy half.
+#
+# There are now TWO controllers in a molecule run -- the machine running molecule, and the bastion
+# it ships this repo to and runs ansible-playbook on. They have to agree: an inventory or a filter
+# that behaves differently across an ansible-core major is a failure that only ever appears on one
+# of them, with no hint that a version is involved. That is why this file exists rather than the
+# three hand-maintained `pip install` lines it replaces (.github/workflows/molecule_test.yaml,
+# Dockerfile, and the readme's manual instructions).
+#
+# ansible-core, not the `ansible` distribution: the collections this repo needs are pinned in
+# requirements.yml and installed with ansible-galaxy, so pulling the batteries-included package
+# would silently shadow those pins with whatever version it happens to bundle.
+ansible-core==2.21.3
+
+# community.general.json_query -- playbooks/setup-cluster.yaml's node label/taint lookup and
+# roles/master/tasks/sync.yaml. Controller-side, so it is needed on the bastion.
+jmespath==1.1.0
+# ansible.utils.ipaddr / network_in_network -- playbooks/preflight.yaml's pod-vs-service CIDR
+# overlap check, and molecule/common/proxmox-provision.yml's address classification.
+netaddr==1.3.0
+
+# community.proxmox only, i.e. molecule's create/destroy. NOT needed on the bastion: every
+# Proxmox call stays on the machine running molecule.
+proxmoxer==2.3.0
+requests==2.34.2

@@ -11,10 +11,11 @@ described below.
 
 for system level, you need to do:
 
-- install ansible
-- `pip install jmespath netaddr proxmoxer requests` — jmespath backs the `json_query` used when
-  labelling nodes, netaddr backs the CIDR overlap check in `playbooks/preflight.yaml`, and
-  proxmoxer + requests back the `community.proxmox` modules that `molecule/test-cluster` uses
+- `pip install -r ansible/requirements.txt` — this installs `ansible-core` itself, pinned, plus
+  jmespath (backs the `json_query` used when labelling nodes), netaddr (backs the CIDR overlap
+  check in `playbooks/preflight.yaml`) and proxmoxer + requests (back the `community.proxmox`
+  modules the molecule scenarios use). CI, the container image and the bastion molecule builds
+  all install from this same file, so none of them can drift onto a different ansible-core.
 - install the ansible collections, pinned in `ansible/requirements.yml` (CI installs from the
   same file, so keep the two in step):
 
@@ -115,9 +116,10 @@ the SSH hop matters for a reason beyond convenience: the playbooks reach the nod
 workstation outside it will fail at `ansible all -m ping` no matter what `hosts.yaml` says.
 
 If you want throwaway VMs to try things on, the molecule scenarios under `ansible/molecule/`
-build and destroy a whole cluster — `test-cluster` on Proxmox, `scale-cluster` and
-`rotate-master-nodes` on Hetzner. See
-[ansible/molecule/readme.md](ansible/molecule/readme.md).
+build and destroy a whole cluster. All three — `test-cluster`, `scale-cluster` and
+`rotate-master-nodes` — build on Proxmox, and each builds a **bastion** alongside the nodes and
+runs the playbooks from it, for the reason in the paragraph above: the nodes have private
+addresses only. See [ansible/molecule/readme.md](ansible/molecule/readme.md).
 
 # Install Kubernetes
 

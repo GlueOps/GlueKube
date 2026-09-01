@@ -53,7 +53,11 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install ansible-core ansible-lint yamllint
+          pip install ansible-lint yamllint
+          # ansible-core is pinned here, not floating: the molecule job and the bastion install
+          # from this same file, and a lint job on a different core major would pass syntax that
+          # then fails on the machines that run it.
+          pip install -r ansible/requirements.txt
 
       - name: Install Ansible collections
         run: ansible-galaxy collection install -r ansible/requirements.yml
@@ -105,13 +109,13 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install molecule molecule-plugins[docker] ansible-core ansible-lint yamllint
+          pip install molecule molecule-plugins[docker] ansible-lint yamllint
           pip install docker
-          # netaddr backs the ansible.utils ipaddr/network_in_network filters that
-          # playbooks/preflight.yaml uses for the pod/service CIDR overlap check.
-          # proxmoxer + requests back the community.proxmox modules that
-          # molecule/test-cluster's create.yml and destroy.yml use.
-          pip install jmespath python-dateutil netaddr proxmoxer requests
+          # ansible-core and the library the modules need, pinned. There are two controllers in a
+          # molecule run now -- this runner, and the bastion it ships the repo to -- and
+          # common/bastion-prepare.yml installs from this same file, so the two cannot drift onto
+          # different ansible-core majors.
+          pip install -r ansible/requirements.txt
 
       - name: Install Ansible collections
         run: ansible-galaxy collection install -r ansible/requirements.yml
@@ -149,16 +153,24 @@ jobs:
           # Must advertise x86-64-v2 or better: Calico's binaries are built with GOAMD64=v2
           # and abort on the `kvm64` model Proxmox otherwise defaults to.
           PROXMOX_CPU: ${{ vars.PROXMOX_CPU || secrets.PROXMOX_CPU || 'x86-64-v2-AES' }}
-          # Two NICs: net0 on the public bridge for SSH, net1 on the LAN bridge for everything the
-          # cluster does. PROXMOX_LAN_CIDR is what create.yml uses to tell the two DHCP leases
-          # apart, so an unset value fails the run up front rather than mis-assigning addresses.
+          # Three bridges. Only the bastion sits on the public one -- it is the single address this
+          # runner can reach, and everything past `create` runs over that hop. Masters and workers
+          # get net0 on the NAT bridge, which is outbound-only, and net1 on the LAN, which is what
+          # the cluster runs on. PROXMOX_LAN_CIDR is what create.yml uses to tell a VM's two DHCP
+          # leases apart, so an unset value fails the run up front rather than mis-assigning
+          # addresses.
           PROXMOX_BRIDGE_PUBLIC: ${{ vars.PROXMOX_BRIDGE_PUBLIC || secrets.PROXMOX_BRIDGE_PUBLIC || 'vmbr_public' }}
+          PROXMOX_BRIDGE_NAT: ${{ vars.PROXMOX_BRIDGE_NAT || secrets.PROXMOX_BRIDGE_NAT || 'vmbr_nat' }}
           PROXMOX_BRIDGE_LAN: ${{ vars.PROXMOX_BRIDGE_LAN || secrets.PROXMOX_BRIDGE_LAN || 'vmbr_lan' }}
           # VLAN tags on those bridges. The LAN bridge is VLAN-aware and serves DHCP on 101; the
-          # public one is untagged, and an empty value means no tag is set at all.
+          # public and NAT ones are untagged, and an empty value means no tag is set at all.
           PROXMOX_BRIDGE_PUBLIC_VLAN: ${{ vars.PROXMOX_BRIDGE_PUBLIC_VLAN || secrets.PROXMOX_BRIDGE_PUBLIC_VLAN || '' }}
+          PROXMOX_BRIDGE_NAT_VLAN: ${{ vars.PROXMOX_BRIDGE_NAT_VLAN || secrets.PROXMOX_BRIDGE_NAT_VLAN || '' }}
           PROXMOX_BRIDGE_LAN_VLAN: ${{ vars.PROXMOX_BRIDGE_LAN_VLAN || secrets.PROXMOX_BRIDGE_LAN_VLAN || '101' }}
           PROXMOX_LAN_CIDR: ${{ vars.PROXMOX_LAN_CIDR || secrets.PROXMOX_LAN_CIDR || '' }}
+          # Optional. Only used to assert up front that the NAT scope does not overlap the LAN
+          # scope, which would silently put a NAT address into the inventory's `ip`.
+          PROXMOX_NAT_CIDR: ${{ vars.PROXMOX_NAT_CIDR || secrets.PROXMOX_NAT_CIDR || '' }}
           PROXMOX_SNIPPET_STORAGE: ${{ vars.PROXMOX_SNIPPET_STORAGE || secrets.PROXMOX_SNIPPET_STORAGE || 'local' }}
           PROXMOX_VMID_BASE: ${{ vars.PROXMOX_VMID_BASE || secrets.PROXMOX_VMID_BASE || '9000' }}
           # Comma-separated; tags every VM the scenario builds so a leaked one is easy to find.
@@ -193,22 +205,24 @@ jobs:
           echo "PROXMOX_STORAGE=${PROXMOX_STORAGE}" >> $GITHUB_ENV
           echo "PROXMOX_CPU=${PROXMOX_CPU}" >> $GITHUB_ENV
           echo "PROXMOX_BRIDGE_PUBLIC=${PROXMOX_BRIDGE_PUBLIC}" >> $GITHUB_ENV
+          echo "PROXMOX_BRIDGE_NAT=${PROXMOX_BRIDGE_NAT}" >> $GITHUB_ENV
           echo "PROXMOX_BRIDGE_LAN=${PROXMOX_BRIDGE_LAN}" >> $GITHUB_ENV
           echo "PROXMOX_BRIDGE_PUBLIC_VLAN=${PROXMOX_BRIDGE_PUBLIC_VLAN}" >> $GITHUB_ENV
+          echo "PROXMOX_BRIDGE_NAT_VLAN=${PROXMOX_BRIDGE_NAT_VLAN}" >> $GITHUB_ENV
           echo "PROXMOX_BRIDGE_LAN_VLAN=${PROXMOX_BRIDGE_LAN_VLAN}" >> $GITHUB_ENV
           echo "PROXMOX_LAN_CIDR=${PROXMOX_LAN_CIDR}" >> $GITHUB_ENV
+          echo "PROXMOX_NAT_CIDR=${PROXMOX_NAT_CIDR}" >> $GITHUB_ENV
           echo "PROXMOX_SNIPPET_STORAGE=${PROXMOX_SNIPPET_STORAGE}" >> $GITHUB_ENV
           echo "PROXMOX_VMID_BASE=${PROXMOX_VMID_BASE}" >> $GITHUB_ENV
           echo "PROXMOX_TAGS=${PROXMOX_TAGS}" >> $GITHUB_ENV
           echo "PROXMOX_SSH_USER=${PROXMOX_SSH_USER}" >> $GITHUB_ENV
 
-      - name: Create /opt/gluekube directory and download Kubernetes release key
-        run: |
-          sudo mkdir -p /opt/gluekube
-          K8S_MINOR=$(echo $kubernetes_version | cut -d. -f1,2)
-          sudo curl -fsSL "https://pkgs.k8s.io/core:/stable:/${K8S_MINOR}/deb/Release.key" -o /opt/gluekube/kubernetes-release.key
+      # The /opt/gluekube/kubernetes-release.key step that used to be here is gone.
+      # roles/common/tasks/prepare-node.yaml copies that file from an absolute CONTROLLER path,
+      # and the controller is no longer this runner -- it is the per-scenario bastion, which
+      # fetches its own copy in molecule/common/bastion-prepare.yml. One fewer place that has to
+      # track $kubernetes_version.
 
-      
 
       # All three scenarios build their VMs on Proxmox. Besides the throwaway key for the test
       # VMs they each need a key for the PVE host itself: the Proxmox API's storage upload
@@ -300,10 +314,16 @@ jobs:
       # has no no_log (issue #433 was closed as won't-do), and this repository is public --
       # artifacts on public repos are world-downloadable. Uploading it publishes the join token,
       # the certificate key and the AutoGlue org secret.
+      # ansible/molecule/*/logs is the stdout of each playbook the BASTION ran, fetched back by
+      # molecule/common/bastion-run.yml. Without it a failed converge leaves nothing behind: the
+      # bastion is deleted by destroy seconds later. It is the step log only -- never the
+      # bastion's own ansible.log, for the reason above.
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: molecule-test-results
-          path: ~/.cache/molecule
+          path: |
+            ~/.cache/molecule
+            ansible/molecule/*/logs
           retention-days: 7

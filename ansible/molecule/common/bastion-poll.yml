@@ -1,0 +1,67 @@
+---
+# One tick of the log follower in bastion-run.yml, and the recursion that keeps it going.
+#
+# Recursive rather than a `loop: range(0, n)` on purpose. A conditional on a LOOPED include_tasks
+# is inherited by the included tasks instead of skipping the include, so a fixed-length loop keeps
+# iterating after the run has finished -- printing six "skipping" lines per unused tick, hundreds
+# of them for a converge that beat its timeout, and burying the output this file exists to show.
+# A bare `when:` on a non-looped include is evaluated on the include itself, so this simply stops.
+
+- name: Count this poll
+  ansible.builtin.set_fact:
+    bastion_run_polls_done: "{{ (bastion_run_polls_done | default(0) | int) + 1 }}"
+
+- name: Measure the remote log
+  ansible.builtin.stat:
+    path: "{{ bastion_run_log }}"
+  register: bastion_poll_stat
+
+# Byte offsets, taken from stat rather than from the length of the last chunk: stdout comes back
+# as text, so counting its characters would drift past any non-ASCII byte and start slicing the
+# log mid-character.
+- name: Read what is new
+  ansible.builtin.command:
+    cmd: >-
+      tail -c +{{ bastion_run_offset }} {{ bastion_run_log }}
+  register: bastion_poll_chunk
+  changed_when: false
+  when:
+    - bastion_poll_stat.stat.exists | default(false)
+    - (bastion_poll_stat.stat.size | default(0) | int) >= bastion_run_offset | int
+
+- name: Show it
+  ansible.builtin.debug:
+    msg: "{{ bastion_poll_chunk.stdout_lines }}"
+  when: bastion_poll_chunk.stdout | default('') | length > 0
+
+- name: Advance the offset
+  ansible.builtin.set_fact:
+    bastion_run_offset: "{{ (bastion_poll_stat.stat.size | int) + 1 }}"
+  when: bastion_poll_stat.stat.exists | default(false)
+
+# The rc file is written only after ansible-playbook returns, so its existence is the completion
+# signal. Checked after the tail above so the last chunk of output is never lost.
+- name: Has it finished
+  ansible.builtin.stat:
+    path: "{{ bastion_run_rc_file }}"
+  register: bastion_poll_rc_stat
+
+- name: Note that it finished
+  ansible.builtin.set_fact:
+    bastion_run_finished: true
+  when: bastion_poll_rc_stat.stat.exists | default(false)
+
+- name: Wait before looking again
+  ansible.builtin.wait_for:
+    timeout: 15
+  when:
+    - not bastion_run_finished
+    - (bastion_run_polls_done | int) < (bastion_run_polls | int)
+
+# Stops on its own the moment the rc file appears; the poll ceiling is only there so a run that
+# hangs forever still ends, and bastion-run.yml turns that into a named failure.
+- name: Keep following
+  ansible.builtin.include_tasks: bastion-poll.yml
+  when:
+    - not bastion_run_finished
+    - (bastion_run_polls_done | int) < (bastion_run_polls | int)

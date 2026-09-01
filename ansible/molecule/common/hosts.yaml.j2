@@ -10,9 +10,15 @@
 
   Both are slices of master_nodes_list / worker_nodes_list, which proxmox-provision.yml sets.
 
-  ansible_host is the public address molecule connects over; ip is the LAN address every cluster
-  component binds to -- etcd_initial_cluster, the kubelet and the ctrp record all read it. Same
-  split the Hetzner scenarios had (public ipv4_address vs private_networks_info[0].ip).
+  ansible_host and ip are now the SAME address, and that is the point of the bastion. The nodes
+  have no public leg any more -- net0 is the NAT bridge, which gets them to apt and
+  registry.k8s.io and nothing back -- so the only address anything connects to them on is the LAN
+  one, and the only host on that LAN with an ansible on it is the bastion this file is written to.
+  `ip` keeps its old meaning: what every cluster component binds to (etcd_initial_cluster, the
+  kubelet, the ctrp record).
+
+  This file is rendered ONTO THE BASTION, not into the local scenario directory. Molecule's own
+  inventory is bastion-hosts.yaml.j2 instead.
 #}
 all:
   children:
@@ -20,7 +26,7 @@ all:
       hosts:
 {% for node in inv_masters %}
         {{ node.name }}:
-          ansible_host: {{ node_public_addresses[node.name] }}
+          ansible_host: {{ node_lan_addresses[node.name] }}
           ip: {{ node_lan_addresses[node.name] }}
           ansible_user: cluster
           ansible_ssh_private_key_file: keys/vm_node
@@ -35,7 +41,7 @@ all:
       hosts:
 {% for node in inv_workers %}
         {{ node.name }}:
-          ansible_host: {{ node_public_addresses[node.name] }}
+          ansible_host: {{ node_lan_addresses[node.name] }}
           ip: {{ node_lan_addresses[node.name] }}
           ansible_user: cluster
           ansible_ssh_private_key_file: keys/vm_node

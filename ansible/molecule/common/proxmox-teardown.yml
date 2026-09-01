@@ -1,22 +1,10 @@
 ---
 
-- name: Build the master node list
-  ansible.builtin.set_fact:
-    cluster_nodes: >-
-      {{ cluster_nodes | default([])
-         + [{'name': 'master-node-' ~ (item + 1),
-             'vmid': (pve_vmid_base | int) + item + 1,
-             'role': 'master'}] }}
-  loop: "{{ range(0, num_master_nodes) | list }}"
-
-- name: Add the worker nodes to the list
-  ansible.builtin.set_fact:
-    cluster_nodes: >-
-      {{ cluster_nodes
-         + [{'name': 'worker-node-' ~ (item + 1),
-             'vmid': (pve_vmid_base | int) + 10 + item + 1,
-             'role': 'worker'}] }}
-  loop: "{{ range(0, num_worker_nodes) | list }}"
+# The same list provisioning built, from the same file -- including the bastion. This used to be a
+# hand-copied duplicate of those two loops, which meant every VM added to provisioning had to be
+# remembered here too or it leaked, along with its cloud-init snippet.
+- name: Build the list of VMs this scenario owns
+  ansible.builtin.import_tasks: node-list.yml
 
 # vmid-range ownership check (#486). Provisioning tags every VM it creates with pve_tags plus
 # snippet_prefix, but until now nothing read the tag back: proxmox_kvm adopts an existing VM on a

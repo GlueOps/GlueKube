@@ -1,0 +1,201 @@
+---
+# Turns the freshly booted bastion into a GlueKube controller: the toolchain, this repo, and the
+# .env the remote runs source. Imported by every scenario's create.yml from a `hosts: bastion`
+# play, after the first play has written inventory/hosts.yaml and refreshed the inventory.
+#
+# The order below is load-bearing and is called out at each step.
+#
+# The play that imports this must load ../common/bastion-vars.yml, and the names below come from
+# there.
+
+# The variables carried verbatim from the molecule controller's environment into the bastion's
+# .env. Everything inventory/group_vars/{all,masters}.yaml looks up, minus the three handled
+# specially in bastion-env.j2. Kept as a list rather than spelled out in the template so adding a
+# group_vars lookup is a one-line change in one place.
+- name: Name the environment this scenario carries to the bastion
+  ansible.builtin.set_fact:
+    bastion_env_passthrough:
+      - kubernetes_version
+      - kubernetes_package_version
+      - loadbalancer_apiserver
+      - domain_name
+      - CERTIFICATE_KEY
+      - RANDOM_TOKEN
+      - network_service_cidr
+      - calico_chart_version
+      - calico_tigera_operator_version
+      - calico_network_calico_cidr
+      - calico_nodeAddressAutodetectionV4
+      - AUTOGLUE_BASE_URL
+      - AUTOGLUE_ORG_KEY
+      - AUTOGLUE_ORG_SECRET
+      - AUTOGLUE_CLUSTER_ID
+
+# proxmox-provision.yml set these on localhost. set_fact facts persist across plays for the host
+# they were set on, so the second play reaches them through hostvars -- once, here, rather than in
+# three copies of create.yml.
+- name: Adopt what provisioning discovered
+  ansible.builtin.set_fact:
+    node_lan_addresses: "{{ hostvars['localhost']['node_lan_addresses'] }}"
+    master_nodes_list: "{{ hostvars['localhost']['master_nodes_list'] }}"
+    worker_nodes_list: "{{ hostvars['localhost']['worker_nodes_list'] }}"
+    bastion_node: "{{ hostvars['localhost']['bastion_node'] }}"
+
+# SSH opens before cloud-init has finished: package_upgrade is still running, and apt is locked.
+# This replaces the blind `pause: seconds: 60` the scale and rotate scenarios carried (and that
+# test-cluster never had), and it waits for the real condition instead of a guess.
+- name: Wait for cloud-init to finish
+  ansible.builtin.command: cloud-init status --wait
+  register: bastion_cloud_init
+  # 2 is "done, with recoverable errors" -- a warning from something like a slow mirror, not a
+  # reason to abandon the run. Anything else means cloud-init genuinely failed, and every
+  # assumption below (the cluster user, the guest agent, /opt/gluekube) is then unsafe.
+  failed_when: bastion_cloud_init.rc not in [0, 2]
+  changed_when: false
+  timeout: 900
+
+# dnsutils is NOT optional. roles/master/tasks/rotate-master-nodes.yaml runs the rotation under
+# `delegate_to: localhost`, and master-node-rotation/update-dns-records.yaml's two `dig` tasks do
+# not override that -- so they execute on the CONTROLLER, which is now this host. Without dig,
+# "Refuse to continue without the zone's authoritative nameservers" fails the rotation after the
+# incoming master has already joined.
+- name: Install the controller's system packages
+  ansible.builtin.apt:
+    name:
+      - dnsutils
+      - jq
+      - python3-pip
+      - rsync
+    state: present
+    update_cache: true
+  become: true
+  register: bastion_apt
+  retries: 5
+  delay: 15
+  until: bastion_apt is succeeded
+
+# One tarball rather than a file-by-file copy: tar preserves the 0600 on keys/vm_node, and the
+# whole tree is a few hundred kilobytes.
+#
+# The LAYOUT is the point. Everything downstream -- keys/vm_node in the inventory,
+# `import_playbook: ../../../playbooks/sync-resources.yaml` in the side effects, the first_found
+# on inventory/hosts.old.yaml in rotate-master-nodes' health test -- is a relative path that
+# resolves only because molecule runs with the scenario directory as its cwd. Mirroring
+# ansible/ at /opt/gluekube/ansible and running with the same cwd is what lets those files run
+# on the bastion completely unmodified.
+- name: Make somewhere to build the tarball
+  ansible.builtin.tempfile:
+    state: directory
+    suffix: gluekube-ship
+  delegate_to: localhost
+  register: bastion_local_tmp
+  changed_when: false
+
+- name: Pack the GlueKube tree
+  community.general.archive:
+    path: "{{ bastion_local_ansible_root }}"
+    dest: "{{ bastion_local_tmp.path }}/gluekube-ansible.tar.gz"
+    format: gz
+    # exclusion_patterns, not exclude_path: the latter only filters the top-level path list and
+    # would silently keep everything below it.
+    #
+    # ansible.log is excluded because .gitignore documents that it holds the join token, the
+    # certificate key and the AutoGlue org secret -- it must not be copied onto a host with a
+    # publicly reachable address. The other scenarios go too: their throwaway keys and stale
+    # inventories have no business here, and the exclusion makes it obvious that a run only ever
+    # ships its own.
+    exclusion_patterns: "{{ ['*/ansible.log'] + other_scenarios }}"
+    mode: "0600"
+  vars:
+    other_scenarios: >-
+      {{ ['test-cluster', 'scale-cluster', 'rotate-master-nodes']
+         | reject('equalto', bastion_scenario_name)
+         | map('regex_replace', '^(.*)$', '*/molecule/\\g<1>/*')
+         | list }}
+  delegate_to: localhost
+  changed_when: false
+
+- name: Unpack it at /opt/gluekube/ansible
+  ansible.builtin.unarchive:
+    src: "{{ bastion_local_tmp.path }}/gluekube-ansible.tar.gz"
+    dest: "{{ bastion_gluekube_root }}"
+    owner: cluster
+    group: cluster
+
+- name: Drop the local tarball
+  ansible.builtin.file:
+    path: "{{ bastion_local_tmp.path }}"
+    state: absent
+  delegate_to: localhost
+  changed_when: false
+
+# After the tree, because requirements.txt and requirements.yml are in it. --break-system-packages
+# because Ubuntu 24.04 marks its python externally managed (PEP 668) and pip refuses otherwise;
+# apt's own ansible-core on noble is 2.16, which is below what community.general 13.2.0 and
+# ansible.utils 6.0.3 need.
+- name: Install the pinned python controller dependencies
+  ansible.builtin.pip:
+    requirements: "{{ bastion_gluekube_root }}/ansible/requirements.txt"
+    extra_args: --break-system-packages
+  become: true
+
+- name: Install the pinned collections
+  ansible.builtin.command:
+    cmd: ansible-galaxy collection install -r {{ bastion_gluekube_root }}/ansible/requirements.yml
+  changed_when: true
+
+# roles/common/tasks/prepare-node.yaml copies this onto every node from an absolute CONTROLLER
+# path. Until now only the CI runner and the container image had it; the controller is this host
+# now, so it needs its own copy or every node fails at "Copy Kubernetes GPG key".
+- name: Fetch the Kubernetes apt release key
+  ansible.builtin.get_url:
+    url: "https://pkgs.k8s.io/core:/stable:/v{{ k8s_minor }}/deb/Release.key"
+    dest: "{{ bastion_gluekube_root }}/kubernetes-release.key"
+    mode: "0644"
+  become: true
+  vars:
+    k8s_minor: "{{ (lookup('env', 'kubernetes_version') | regex_replace('^v', '') | split('.'))[0:2] | join('.') }}"
+
+# The check proxmox-provision.yml can no longer make from the machine running molecule: a node's
+# net0 is on the NAT bridge and answers nothing from outside. From here the LAN addresses are one
+# hop away, so a node that never came up fails now, with its name, rather than fifteen minutes
+# into a converge.
+- name: Wait for SSH on every cluster node
+  ansible.builtin.wait_for:
+    host: "{{ item.value }}"
+    port: 22
+    timeout: 300
+  loop: "{{ node_lan_addresses | dict2items | rejectattr('key', 'equalto', bastion_node.name) | list }}"
+  loop_control:
+    label: "{{ item.key }} ({{ item.value }})"
+
+- name: Make the remote log directory
+  ansible.builtin.file:
+    path: "{{ bastion_log_dir }}"
+    state: directory
+    owner: cluster
+    group: cluster
+    mode: "0755"
+  become: true
+
+# Last, because it carries the id of the AutoGlue record create.yml's first play just made:
+# playbooks/preflight.yaml fails every master on an empty autoglue_record_id, so writing this
+# before the record exists would produce a .env that looks complete and breaks the converge.
+#
+# lookup() always evaluates on the ansible controller -- the machine running molecule -- so both
+# the environment and the file read below are the local ones, which is exactly what has to be
+# carried across.
+- name: Write the environment the remote runs source
+  ansible.builtin.template:
+    src: "{{ bastion_local_ansible_root }}/molecule/common/bastion-env.j2"
+    dest: "{{ bastion_env_file }}"
+    owner: cluster
+    group: cluster
+    mode: "0600"
+  become: true
+  no_log: true
+  vars:
+    autoglue_record_id_for_run: >-
+      {{ (lookup('file', bastion_local_scenario_dir ~ '/autoglue-record-id', errors='ignore')
+          | default('', true) | trim)
+         or lookup('env', 'AUTOGLUE_RECORD_ID') }}

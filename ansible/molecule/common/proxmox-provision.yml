@@ -14,6 +14,50 @@
       CIDR, beats building them all and then finding no address can be classified.
     quiet: true
 
+# Classification is LAN-vs-not-LAN and nothing else, so an overlap does not fail -- it puts a
+# node's NAT address into `ip`, and etcd, the kubelet and Calico then all bind to an address the
+# other nodes cannot reach. That surfaces as a cluster that half-forms an hour later.
+# Skipped when PROXMOX_NAT_CIDR is unset, which is the only reason it is optional.
+- name: The NAT and LAN subnets do not overlap
+  ansible.builtin.assert:
+    that:
+      - not (pve_nat_cidr | ansible.utils.network_in_network(pve_lan_cidr))
+      - not (pve_lan_cidr | ansible.utils.network_in_network(pve_nat_cidr))
+    fail_msg: >-
+      PROXMOX_NAT_CIDR={{ pve_nat_cidr }} and PROXMOX_LAN_CIDR={{ pve_lan_cidr }} overlap. The
+      guest agent reports both of a node's addresses in one list with no hint which NIC each came
+      from, so the LAN CIDR is the only thing that tells them apart -- an overlap silently maps a
+      NAT address into the inventory's `ip`.
+    quiet: true
+  when: pve_nat_cidr | length > 0
+
+# The bridges, before anything is built. A VM created on a bridge that does not exist starts
+# happily and simply never takes a lease, which surfaces ten minutes later at "Wait for the guest
+# agent to report an address" -- whose fail_msg blames cloud-init and the cloud-init drive.
+- name: Read the node's network interfaces
+  ansible.builtin.uri:
+    url: "{{ pve_api_url }}/nodes/{{ pve_node }}/network"
+    method: GET
+    headers: "{{ pve_auth_header }}"
+    validate_certs: "{{ pve_validate_certs }}"
+    return_content: true
+  register: node_networks
+
+- name: The three bridges exist on the node
+  ansible.builtin.assert:
+    that:
+      - pve_bridge_public in bridge_names
+      - pve_bridge_nat in bridge_names
+      - pve_bridge_lan in bridge_names
+    fail_msg: >-
+      One of PROXMOX_BRIDGE_PUBLIC={{ pve_bridge_public }}, PROXMOX_BRIDGE_NAT={{ pve_bridge_nat }}
+      or PROXMOX_BRIDGE_LAN={{ pve_bridge_lan }} is not on node {{ pve_node }}. Interfaces found:
+      {{ bridge_names | join(', ') | default('none', true) }}. The NAT bridge is what gives the
+      cluster nodes their only route out -- they have no public leg any more.
+    quiet: true
+  vars:
+    bridge_names: "{{ node_networks.json.data | default([]) | map(attribute='iface') | list }}"
+
 # Both of these fail with the candidates listed rather than letting the create call answer with a
 # bare "storage does not exist" or an import error, and both run before anything is written to
 # the hypervisor, so a wrong value costs two API calls.
@@ -95,24 +139,9 @@
   vars:
     import_volids: "{{ import_volumes.json.data | map(attribute='volid') | list }}"
 
-# One list, used by every loop below and rebuilt identically in proxmox-teardown.yml.
-- name: Build the master node list
-  ansible.builtin.set_fact:
-    cluster_nodes: >-
-      {{ cluster_nodes | default([])
-         + [{'name': 'master-node-' ~ (item + 1),
-             'vmid': (pve_vmid_base | int) + item + 1,
-             'role': 'master'}] }}
-  loop: "{{ range(0, num_master_nodes) | list }}"
-
-- name: Add the worker nodes to the list
-  ansible.builtin.set_fact:
-    cluster_nodes: >-
-      {{ cluster_nodes
-         + [{'name': 'worker-node-' ~ (item + 1),
-             'vmid': (pve_vmid_base | int) + 10 + item + 1,
-             'role': 'worker'}] }}
-  loop: "{{ range(0, num_worker_nodes) | list }}"
+# One list, shared with proxmox-teardown.yml so the two cannot drift -- see node-list.yml.
+- name: Build the list of VMs this scenario owns
+  ansible.builtin.import_tasks: node-list.yml
 
 
 - name: Read the cluster's VM inventory
@@ -151,11 +180,6 @@
       pve_vmid_offset, or remove those VMs.
     quiet: true
 
-- name: Split the node list by role
-  ansible.builtin.set_fact:
-    master_nodes_list: "{{ cluster_nodes | selectattr('role', 'equalto', 'master') | list }}"
-    worker_nodes_list: "{{ cluster_nodes | selectattr('role', 'equalto', 'worker') | list }}"
-
 # The hypervisor as an ansible host, so the snippet tasks can delegate_to it. In memory only;
 # nothing is written to an inventory file.
 - name: Register the Proxmox host for the snippet upload
@@ -181,9 +205,13 @@
 #
 # The template is addressed through playbook_dir rather than a bare relative path: this task file
 # lives in common/, so `cloudinit/...` would be looked for next to *this* file first.
+#
+# item.cloudinit, not one shared template: the bastion is not a Kubernetes node. It must not get
+# the k8s sysctls, the swap removal or /etc/glueops/public-interface, and it does need a place to
+# put the GlueKube checkout. cloudinit_template stays as the scenario-level override.
 - name: Render a cloud-init snippet for each node
   ansible.builtin.template:
-    src: "{{ cloudinit_template | default(playbook_dir ~ '/../common/cloud-init.yaml.j2', true) }}"
+    src: "{{ cloudinit_template | default(playbook_dir ~ '/../common/' ~ item.cloudinit, true) }}"
     dest: "{{ pve_snippet_dir }}/{{ snippet_prefix }}-{{ item.name }}.yaml"
     mode: "0644"
   vars:
@@ -191,7 +219,7 @@
   delegate_to: pve_host
   loop: "{{ cluster_nodes }}"
   loop_control:
-    label: "{{ item.name }}"
+    label: "{{ item.name }} ({{ item.cloudinit }})"
 
 # The write above went to a filesystem over SSH; this asks the API whether the node that will run
 # the VMs can actually resolve those files as volumes. They are not the same question: `local` is
@@ -242,9 +270,9 @@
     node: "{{ pve_node }}"
     vmid: "{{ item.vmid }}"
     name: "{{ item.name }}"
-    cores: "{{ pve_cores | int }}"
+    cores: "{{ item.cores | int }}"
     cpu: "{{ pve_cpu }}"
-    memory: "{{ pve_memory | int }}"
+    memory: "{{ item.memory | int }}"
     ostype: l26
     scsihw: virtio-scsi-single
     # UEFI, replicating the Terraform module: q35 + OVMF with its own EFI disk. The efidisk is
@@ -276,8 +304,11 @@
     ide:
       ide2: "{{ pve_storage }}:cloudinit"
     boot: order=virtio0
+    # net0 is per-VM: the bastion lands on the public bridge, every cluster node on the NAT
+    # bridge. net1 is the LAN for all of them. Both still DHCP -- the addresses are read back out
+    # of the guest agent below.
     net:
-      net0: "virtio,bridge={{ pve_bridge_public }}{{ public_tag }}"
+      net0: "virtio,bridge={{ item.bridge0 }}{{ net0_tag }}"
       net1: "virtio,bridge={{ pve_bridge_lan }}{{ lan_tag }}"
     # cicustom below replaces only user-data, so Proxmox still builds network-config from these
     # two. That is also why the snippet must not configure networking itself.
@@ -287,7 +318,7 @@
     cicustom: "user={{ pve_snippet_storage }}:snippets/{{ snippet_prefix }}-{{ item.name }}.yaml"
     timeout: 600
   vars:
-    public_tag: "{{ ',tag=' ~ pve_bridge_public_vlan if pve_bridge_public_vlan | length > 0 else '' }}"
+    net0_tag: "{{ ',tag=' ~ item.vlan0 if item.vlan0 | length > 0 else '' }}"
     lan_tag: "{{ ',tag=' ~ pve_bridge_lan_vlan if pve_bridge_lan_vlan | length > 0 else '' }}"
   loop: "{{ cluster_nodes }}"
   loop_control:
@@ -298,11 +329,11 @@
   community.proxmox.proxmox_disk:
     vmid: "{{ item.vmid }}"
     disk: virtio0
-    size: "{{ pve_disk_size }}"
+    size: "{{ item.disk_size }}"
     state: resized
   loop: "{{ cluster_nodes }}"
   loop_control:
-    label: "{{ item.name }} ({{ pve_disk_size }})"
+    label: "{{ item.name }} ({{ item.disk_size }})"
 
 - name: Start each node
   community.proxmox.proxmox_kvm:
@@ -336,7 +367,7 @@
          | selectattr('ip-address-type', 'equalto', 'ipv4') | map(attribute='ip-address')
          | reject('match', '^(127\.|169\.254\.)') | list }}
   # Both leases, not just one: net0 usually comes up first, and stopping there would map a node's
-  # public address into `ip` on the run where the LAN lease was a second slower.
+  # egress address into `ip` on the run where the LAN lease was a second slower.
   until: >-
     (agent_ipv4 | ansible.utils.ipaddr(pve_lan_cidr) | length) > 0
     and
@@ -366,6 +397,10 @@
 # guarantee, and the guest agent gives no hint which NIC an address belongs to. The two tasks are
 # separate so a node that got only one of its two leases still lands in the map it did get --
 # which is what makes the asserts below able to say which lease is missing.
+#
+# "egress" rather than "public": net0 is the public bridge only on the bastion. On a master or a
+# worker it is the NAT bridge, and that address is reachable from nothing -- it exists so the node
+# can reach apt, registry.k8s.io and the Helm repos, not so anything can reach the node.
 - name: Map each node to its LAN address (net1)
   ansible.builtin.set_fact:
     node_lan_addresses: "{{ node_lan_addresses | default({}) | combine({item.key: lan | first}) }}"
@@ -376,28 +411,29 @@
   loop_control:
     label: "{{ item.key }}"
 
-- name: Map each node to its public address (net0)
+- name: Map each node to its egress address (net0)
   ansible.builtin.set_fact:
-    node_public_addresses: "{{ node_public_addresses | default({}) | combine({item.key: public | first}) }}"
+    node_egress_addresses: "{{ node_egress_addresses | default({}) | combine({item.key: egress | first}) }}"
   vars:
-    public: "{{ item.value | difference(item.value | ansible.utils.ipaddr(pve_lan_cidr)) }}"
-  when: public | length > 0
+    egress: "{{ item.value | difference(item.value | ansible.utils.ipaddr(pve_lan_cidr)) }}"
+  when: egress | length > 0
   loop: "{{ node_agent_ipv4 | dict2items }}"
   loop_control:
     label: "{{ item.key }}"
 
 # Without this the missing node surfaces much later as an inventory that is quietly one host
 # short, or as an AnsibleUndefinedVariable with no host name in it.
-- name: Every node reported a public address
+- name: Every VM reported an egress address
   ansible.builtin.assert:
     that:
-      - node_public_addresses | default({}) | length == cluster_nodes | length
+      - node_egress_addresses | default({}) | length == cluster_nodes | length
     fail_msg: >-
       No address outside {{ pve_lan_cidr }} came back for
-      {{ cluster_nodes | map(attribute='name') | difference(node_public_addresses | default({}) | list) | sort }}.
+      {{ cluster_nodes | map(attribute='name') | difference(node_egress_addresses | default({}) | list) | sort }}.
       Either the qemu-guest-agent never answered -- so cloud-init did not run; check that ide2
-      carries the cloud-init drive, and `qm cloudinit dump <vmid> user` -- or
-      {{ pve_bridge_public }} handed out no lease.
+      carries the cloud-init drive, and `qm cloudinit dump <vmid> user` -- or the VM's net0 bridge
+      handed out no lease. That is {{ pve_bridge_public }} for bastion-node and
+      {{ pve_bridge_nat }} for every master and worker.
     quiet: true
 
 # Split from the assert above because the two failures have completely different causes, and the
@@ -413,11 +449,20 @@
       against `ip -4 addr` on a node -- or that bridge has no DHCP server on it.
     quiet: true
 
-- name: Wait for SSH on every node
+# The two addresses the rest of create.yml is written in terms of. Named separately because the
+# bastion is the only VM whose egress address means anything to the caller: it is what molecule
+# SSHes to, and the only address in the whole scenario that is reachable from outside.
+- name: Note the bastion's two addresses
+  ansible.builtin.set_fact:
+    bastion_public_ip: "{{ node_egress_addresses[bastion_node.name] }}"
+    bastion_lan_ip: "{{ node_lan_addresses[bastion_node.name] }}"
+
+# The bastion only. A master's or worker's net0 is on the NAT bridge, so from here those addresses
+# answer nothing -- looping over them would burn the full 300s timeout per node and then fail with
+# a message about SSH rather than about routing. Their readiness is checked from the bastion
+# instead, in bastion-prepare.yml, where the LAN addresses are actually reachable.
+- name: Wait for SSH on the bastion
   ansible.builtin.wait_for:
-    host: "{{ item.value }}"
+    host: "{{ bastion_public_ip }}"
     port: 22
     timeout: 300
-  loop: "{{ node_public_addresses | dict2items }}"
-  loop_control:
-    label: "{{ item.key }} ({{ item.value }})"
