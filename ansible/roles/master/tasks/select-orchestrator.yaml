@@ -6,6 +6,16 @@
 # working whenever that node is down or excluded by --limit, even though the cluster itself is
 # healthy. So probe the masters and take the first one whose apiserver answers /readyz.
 #
+# The probe is pinned to https://127.0.0.1:6443 rather than going through the kubeconfig's server
+# (#486). admin.conf carries the cluster-wide controlPlaneEndpoint -- the multi-value ctrp A record
+# holding every master's address -- so an unpinned `kubectl get --raw=/readyz` asked "can SOMEONE
+# serve?" and came back rc 0 on every master as long as any one of them was healthy. The election
+# then always picked groups['masters'][0], the exact positional behaviour this file exists to
+# replace, and did it while reporting that it had probed. 127.0.0.1 under `delegate_to: {{ item }}`
+# is that node's own apiserver, which is the question the header asks. Same reasoning, and the same
+# pin, as master-node-rotation/remove-single-master.yaml and common/tasks/collect-node-lists.yaml;
+# certSANs already carries 127.0.0.1, so the existing certificate covers it.
+#
 # On a fresh cluster no apiserver is up yet, so nothing answers and this falls back to
 # groups['masters'][0] - the bootstrap behaviour, unchanged.
 #
@@ -22,9 +32,14 @@
 # every host, and the adopt task below hands the fact to whichever hosts are missing it.
 
 - name: Probe each control-plane node for apiserver readiness
-  ansible.builtin.shell: |
-    export KUBECONFIG=/etc/kubernetes/admin.conf
-    kubectl get --raw='/readyz'
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      export KUBECONFIG=/etc/kubernetes/admin.conf
+      kubectl --server https://127.0.0.1:6443 --request-timeout=10s get --raw='/readyz'
+    executable: /bin/bash
+  # Bounded: an unreachable or wedged apiserver has to answer "not this one" quickly, because this
+  # loop runs once per master before anything else in the run can start.
   delegate_to: "{{ item }}"
   loop: "{{ groups['masters'] }}"
   register: control_plane_probe

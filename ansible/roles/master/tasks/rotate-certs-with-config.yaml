@@ -224,10 +224,19 @@
   changed_when: false
   tags: rotate-certs-with-config
 
+# Pinned to the LOCAL apiserver (#486). admin.conf's server is the cluster-wide
+# controlPlaneEndpoint -- the multi-value ctrp record -- and this playbook is `serial: 1`, so every
+# other master is still healthy while this one's apiserver is being recreated. Unpinned, this wait
+# was answered by a sibling on the first try and returned `ok` whether or not the node it is
+# guarding had come back: the play then moved on to park the NEXT master's apiserver with the
+# previous one still down, which is how a serial rotation loses more than one control plane at a
+# time. 127.0.0.1 is the node whose manifest was just restored, which is the question being asked.
+# --request-timeout also bounds it: kubectl defaults to no timeout, so a wedged apiserver that
+# accepts the connection and never answers hung here forever instead of consuming a retry.
 - name: Wait for API server to become ready
   ansible.builtin.shell: |
     export KUBECONFIG=/etc/kubernetes/admin.conf
-    kubectl get --raw='/readyz'
+    kubectl --server https://127.0.0.1:6443 --request-timeout=10s get --raw='/readyz'
   register: apiserver_ready
   retries: 18
   delay: 10
@@ -292,10 +301,11 @@
   loop: [etcd, kube-controller-manager, kube-scheduler]
   tags: rotate-certs-with-config
 
+# Local apiserver and a bounded request, for the same reason as the wait after the park above.
 - name: Wait for the API server to become ready again
   ansible.builtin.shell: |
     export KUBECONFIG=/etc/kubernetes/admin.conf
-    kubectl get --raw='/readyz'
+    kubectl --server https://127.0.0.1:6443 --request-timeout=10s get --raw='/readyz'
   register: apiserver_ready_after_restart
   retries: 18
   delay: 10
