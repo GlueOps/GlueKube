@@ -32,14 +32,17 @@ pve_import_storage: "{{ pve_import_from.split(':')[0] }}"
 pve_storage: "{{ lookup('env', 'PROXMOX_STORAGE') | default('local', true) }}"
 
 
-# Three bridges now, not two, because the cluster nodes lost their public leg:
+# Three bridges, and which VM sits on which is the whole topology:
 #
-#   public  only the bastion sits on it. It is the one address reachable from the machine running
-#           molecule, and the only inbound path into the whole scenario.
-#   nat     every master and worker's net0. Outbound internet (apt, registry.k8s.io, the Helm
-#           repos, GitHub releases) and nothing inbound.
-#   lan     net1 on all of them, including the bastion: the address the cluster actually runs on
-#           and the one the bastion SSHes to.
+#   public  the bastion's net0, and nothing else's. The one address reachable from the machine
+#           running molecule, and the only inbound path into the scenario.
+#   lan     the bastion's net1. Routed to the NAT segment, which is how it reaches the nodes.
+#   nat     a cluster node's ONLY NIC. Outbound internet -- apt, registry.k8s.io, the Helm repos,
+#           GitHub releases -- and the segment the cluster itself runs on: etcd peers, the
+#           kubelet, Calico, and what the ctrp record resolves to.
+#
+# Masters and workers have one NIC and one address. There is no separate "private" leg any more:
+# the NAT address IS the cluster address, and is both `ansible_host` and `ip` in the inventory.
 pve_bridge_public: "{{ lookup('env', 'PROXMOX_BRIDGE_PUBLIC') | default('vmbr_public', true) }}"
 pve_bridge_nat: "{{ lookup('env', 'PROXMOX_BRIDGE_NAT') | default('vmbr_nat', true) }}"
 pve_bridge_lan: "{{ lookup('env', 'PROXMOX_BRIDGE_LAN') | default('vmbr_lan', true) }}"
@@ -50,15 +53,20 @@ pve_bridge_lan: "{{ lookup('env', 'PROXMOX_BRIDGE_LAN') | default('vmbr_lan', tr
 pve_bridge_public_vlan: "{{ lookup('env', 'PROXMOX_BRIDGE_PUBLIC_VLAN') }}"
 pve_bridge_nat_vlan: "{{ lookup('env', 'PROXMOX_BRIDGE_NAT_VLAN') }}"
 pve_bridge_lan_vlan: "{{ lookup('env', 'PROXMOX_BRIDGE_LAN_VLAN') | default('101', true) }}"
-# Required, and the only thing that tells the two leases apart: the guest agent reports both
-# addresses in one list with nothing to say which NIC they came from.
+# REQUIRED, and it is only about the BASTION. That is the one VM with two NICs, and the guest
+# agent reports both of its addresses in one list with nothing to say which came from which: in
+# this range is the LAN address it reaches the cluster over, outside it is the public address
+# molecule connects to. A cluster node has a single NIC and needs no such disambiguation.
 pve_lan_cidr: "{{ lookup('env', 'PROXMOX_LAN_CIDR') }}"
-# Optional, and only used to fail early with a useful message. Address classification is
-# LAN-vs-not-LAN, so a NAT scope that overlaps the LAN scope would silently put a node's NAT
-# address into `ip` -- etcd, the kubelet and Calico would then all bind to an address the other
-# nodes cannot reach. Set it and provisioning asserts the two do not overlap before it builds
-# anything; leave it empty and that check is skipped.
+# REQUIRED. The subnet the NAT bridge hands out, and now the cluster's own subnet.
+#
+# Two jobs. Provisioning asserts every master and worker came up inside it, which is how a node
+# that landed on the wrong bridge fails immediately instead of being written into the inventory
+# with an address nothing can reach. And it is what Calico's nodeAddressAutodetectionV4 is pinned
+# to, via inventory/group_vars/masters.yaml -- unset, calico.yaml.j2 omits the block and falls
+# back to firstFound.
 pve_nat_cidr: "{{ lookup('env', 'PROXMOX_NAT_CIDR') }}"
+
 
 pve_snippet_storage: "{{ lookup('env', 'PROXMOX_SNIPPET_STORAGE') | default('local', true) }}"
 # Not defaulted to /var/lib/vz/snippets: that is only right when the storage happens to be PVE's

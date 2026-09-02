@@ -153,11 +153,16 @@ jobs:
           # Must advertise x86-64-v2 or better: Calico's binaries are built with GOAMD64=v2
           # and abort on the `kvm64` model Proxmox otherwise defaults to.
           PROXMOX_CPU: ${{ vars.PROXMOX_CPU || secrets.PROXMOX_CPU || 'x86-64-v2-AES' }}
-          # Three bridges. Only the bastion sits on the public one -- it is the single address this
-          # runner can reach, and everything past `create` runs over that hop. Masters and workers
-          # get net0 on the NAT bridge, which is outbound-only, and net1 on the LAN, which is what
-          # the cluster runs on. PROXMOX_LAN_CIDR is what create.yml uses to tell a VM's two DHCP
-          # leases apart, so an unset value fails the run up front rather than mis-assigning
+          # Three bridges, but no VM sits on all three. The bastion has two NICs -- public, the
+          # single address this runner can reach and the hop everything past `create` runs over,
+          # and LAN, which is routed to the NAT segment and is how it reaches the cluster. A
+          # master or worker has ONE, on the NAT bridge: its route out and the address it is
+          # reached on, both.
+          #
+          # PROXMOX_LAN_CIDR tells the BASTION's two DHCP leases apart. PROXMOX_NAT_CIDR is the
+          # cluster's own subnet -- create.yml asserts every node came up inside it, and
+          # inventory/group_vars/masters.yaml pins Calico's nodeAddressAutodetectionV4 to it.
+          # Both are required; an unset value fails the run up front rather than mis-assigning
           # addresses.
           PROXMOX_BRIDGE_PUBLIC: ${{ vars.PROXMOX_BRIDGE_PUBLIC || secrets.PROXMOX_BRIDGE_PUBLIC || 'vmbr_public' }}
           PROXMOX_BRIDGE_NAT: ${{ vars.PROXMOX_BRIDGE_NAT || secrets.PROXMOX_BRIDGE_NAT || 'vmbr_nat' }}
@@ -168,8 +173,7 @@ jobs:
           PROXMOX_BRIDGE_NAT_VLAN: ${{ vars.PROXMOX_BRIDGE_NAT_VLAN || secrets.PROXMOX_BRIDGE_NAT_VLAN || '' }}
           PROXMOX_BRIDGE_LAN_VLAN: ${{ vars.PROXMOX_BRIDGE_LAN_VLAN || secrets.PROXMOX_BRIDGE_LAN_VLAN || '101' }}
           PROXMOX_LAN_CIDR: ${{ vars.PROXMOX_LAN_CIDR || secrets.PROXMOX_LAN_CIDR || '' }}
-          # Optional. Only used to assert up front that the NAT scope does not overlap the LAN
-          # scope, which would silently put a NAT address into the inventory's `ip`.
+          # REQUIRED, alongside PROXMOX_LAN_CIDR -- see the note above.
           PROXMOX_NAT_CIDR: ${{ vars.PROXMOX_NAT_CIDR || secrets.PROXMOX_NAT_CIDR || '' }}
           PROXMOX_SNIPPET_STORAGE: ${{ vars.PROXMOX_SNIPPET_STORAGE || secrets.PROXMOX_SNIPPET_STORAGE || 'local' }}
           PROXMOX_VMID_BASE: ${{ vars.PROXMOX_VMID_BASE || secrets.PROXMOX_VMID_BASE || '9000' }}

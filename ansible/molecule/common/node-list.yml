@@ -10,9 +10,12 @@
 #
 # Every entry carries what the create call needs, because the VMs are no longer homogeneous:
 #
-#   bridge0 / vlan0   which bridge net0 lands on. The bastion is the only VM with a leg on the
-#                     public bridge; cluster nodes get the NAT bridge, which gives them outbound
-#                     internet and nothing inbound. net1 is the LAN bridge for all of them.
+#   bridge0 / vlan0   which bridge net0 lands on. The bastion's is the public bridge -- the one
+#                     inbound address in the scenario; a cluster node's is the NAT bridge.
+#   bridge1 / vlan1   net1, and ONLY the bastion has one: the LAN bridge, routed to the NAT
+#                     segment, which is how it reaches the nodes. Absent on a master or worker,
+#                     and proxmox-provision.yml omits net1 entirely when it is not set -- a
+#                     cluster node has exactly one NIC and one address.
 #   cloudinit         the snippet template rendered for this VM. The bastion is not a Kubernetes
 #                     node and must not get the kubelet-shaped cloud-init.
 #   cores/memory/disk the bastion is a controller, not a worker, and rotate-master-nodes is
@@ -32,6 +35,8 @@
            'role': 'bastion',
            'bridge0': pve_bridge_public,
            'vlan0': pve_bridge_public_vlan,
+           'bridge1': pve_bridge_lan,
+           'vlan1': pve_bridge_lan_vlan,
            'cloudinit': 'bastion-cloud-init.yaml.j2',
            'cores': pve_bastion_cores,
            'memory': pve_bastion_memory,

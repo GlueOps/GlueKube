@@ -7,17 +7,18 @@
       - pve_token_id | length > 0
       - pve_token_secret | length > 0
       - pve_lan_cidr | length > 0
+      - pve_nat_cidr | length > 0
     fail_msg: >-
-      PROXMOX_HOST, PROXMOX_NODE, PROXMOX_TOKEN_ID, PROXMOX_TOKEN_SECRET and PROXMOX_LAN_CIDR
-      must all be set. See ansible/molecule/readme.md. Failing here beats failing inside a
-      module with "api_host is required" after some of the VMs already exist -- and, for the
-      CIDR, beats building them all and then finding no address can be classified.
+      PROXMOX_HOST, PROXMOX_NODE, PROXMOX_TOKEN_ID, PROXMOX_TOKEN_SECRET, PROXMOX_LAN_CIDR and
+      PROXMOX_NAT_CIDR must all be set. See ansible/molecule/readme.md. Failing here beats failing
+      inside a module with "api_host is required" after some of the VMs already exist -- and, for
+      the two CIDRs, beats building them all and then finding no address can be classified.
     quiet: true
 
-# Classification is LAN-vs-not-LAN and nothing else, so an overlap does not fail -- it puts a
-# node's NAT address into `ip`, and etcd, the kubelet and Calico then all bind to an address the
-# other nodes cannot reach. That surfaces as a cluster that half-forms an hour later.
-# Skipped when PROXMOX_NAT_CIDR is unset, which is the only reason it is optional.
+# The bastion's two leases are told apart by "in PROXMOX_LAN_CIDR or not", so if the NAT subnet
+# fell inside the LAN one, its NAT-side address would be read as its LAN address and molecule
+# would try to SSH to the cluster's own subnet. An overlap does not fail on its own -- it
+# misclassifies silently, and surfaces as an unreachable bastion or a cluster that half-forms.
 - name: The NAT and LAN subnets do not overlap
   ansible.builtin.assert:
     that:
@@ -25,11 +26,9 @@
       - not (pve_lan_cidr | ansible.utils.network_in_network(pve_nat_cidr))
     fail_msg: >-
       PROXMOX_NAT_CIDR={{ pve_nat_cidr }} and PROXMOX_LAN_CIDR={{ pve_lan_cidr }} overlap. The
-      guest agent reports both of a node's addresses in one list with no hint which NIC each came
-      from, so the LAN CIDR is the only thing that tells them apart -- an overlap silently maps a
-      NAT address into the inventory's `ip`.
+      guest agent reports both of the bastion's addresses in one list with no hint which NIC each
+      came from, so the LAN CIDR is the only thing that tells them apart.
     quiet: true
-  when: pve_nat_cidr | length > 0
 
 # The bridges, before anything is built. A VM created on a bridge that does not exist starts
 # happily and simply never takes a lease, which surfaces ten minutes later at "Wait for the guest
@@ -52,8 +51,9 @@
     fail_msg: >-
       One of PROXMOX_BRIDGE_PUBLIC={{ pve_bridge_public }}, PROXMOX_BRIDGE_NAT={{ pve_bridge_nat }}
       or PROXMOX_BRIDGE_LAN={{ pve_bridge_lan }} is not on node {{ pve_node }}. Interfaces found:
-      {{ bridge_names | join(', ') | default('none', true) }}. The NAT bridge is what gives the
-      cluster nodes their only route out -- they have no public leg any more.
+      {{ bridge_names | join(', ') | default('none', true) }}. The NAT bridge is a cluster node's
+      ONLY NIC -- both its route out and the address it is reached on; the public and LAN bridges
+      are the bastion's two.
     quiet: true
   vars:
     bridge_names: "{{ node_networks.json.data | default([]) | map(attribute='iface') | list }}"
@@ -304,22 +304,25 @@
     ide:
       ide2: "{{ pve_storage }}:cloudinit"
     boot: order=virtio0
-    # net0 is per-VM: the bastion lands on the public bridge, every cluster node on the NAT
-    # bridge. net1 is the LAN for all of them. Both still DHCP -- the addresses are read back out
-    # of the guest agent below.
-    net:
-      net0: "virtio,bridge={{ item.bridge0 }}{{ net0_tag }}"
-      net1: "virtio,bridge={{ pve_bridge_lan }}{{ lan_tag }}"
-    # cicustom below replaces only user-data, so Proxmox still builds network-config from these
-    # two. That is also why the snippet must not configure networking itself.
-    ipconfig:
-      ipconfig0: "ip=dhcp"
-      ipconfig1: "ip=dhcp"
+    # Per-VM, and not the same COUNT per VM. The bastion has two NICs -- public for the inbound
+    # hop from molecule, LAN for reaching the cluster; a master or worker has exactly one, on the
+    # NAT bridge, which is both how it gets out and how it is reached. net1 is omitted entirely
+    # for those, rather than pointed somewhere harmless: an extra NIC on a bridge with a DHCP
+    # server would give the node a second address and a second candidate default route, which is
+    # exactly the ambiguity /etc/glueops/public-interface used to have to work around.
+    net: "{{ {'net0': 'virtio,bridge=' ~ item.bridge0 ~ net0_tag}
+             | combine({'net1': 'virtio,bridge=' ~ item.bridge1 ~ net1_tag}
+                       if item.bridge1 is defined else {}) }}"
+    # cicustom below replaces only user-data, so Proxmox still builds network-config from these.
+    # That is also why the snippet must not configure networking itself. One entry per NIC: an
+    # ipconfig1 with no net1 is accepted and then silently ignored.
+    ipconfig: "{{ {'ipconfig0': 'ip=dhcp'}
+                  | combine({'ipconfig1': 'ip=dhcp'} if item.bridge1 is defined else {}) }}"
     cicustom: "user={{ pve_snippet_storage }}:snippets/{{ snippet_prefix }}-{{ item.name }}.yaml"
     timeout: 600
   vars:
     net0_tag: "{{ ',tag=' ~ item.vlan0 if item.vlan0 | length > 0 else '' }}"
-    lan_tag: "{{ ',tag=' ~ pve_bridge_lan_vlan if pve_bridge_lan_vlan | length > 0 else '' }}"
+    net1_tag: "{{ ',tag=' ~ item.vlan1 if item.vlan1 | default('') | length > 0 else '' }}"
   loop: "{{ cluster_nodes }}"
   loop_control:
     label: "{{ item.name }} ({{ item.vmid }})"
@@ -366,12 +369,19 @@
          | selectattr('ip-addresses', 'defined') | map(attribute='ip-addresses') | flatten
          | selectattr('ip-address-type', 'equalto', 'ipv4') | map(attribute='ip-address')
          | reject('match', '^(127\.|169\.254\.)') | list }}
-  # Both leases, not just one: net0 usually comes up first, and stopping there would map a node's
-  # egress address into `ip` on the run where the LAN lease was a second slower.
+  # Per role, because the VMs no longer have the same number of NICs.
+  #
+  # A master or worker has one, on the NAT bridge: wait for an address inside PROXMOX_NAT_CIDR.
+  # Waiting for "any address" would accept a 169.254 or a stale lease from the wrong bridge and
+  # write it into the inventory.
+  #
+  # The bastion has two, and needs BOTH: net0 usually comes up first, and stopping there would
+  # leave bastion_lan_ip undefined on the run where the LAN lease was a second slower.
   until: >-
-    (agent_ipv4 | ansible.utils.ipaddr(pve_lan_cidr) | length) > 0
-    and
-    (agent_ipv4 | difference(agent_ipv4 | ansible.utils.ipaddr(pve_lan_cidr)) | length) > 0
+    {{ (agent_ipv4 | ansible.utils.ipaddr(pve_lan_cidr) | length) > 0
+       and (agent_ipv4 | difference(agent_ipv4 | ansible.utils.ipaddr(pve_lan_cidr)) | length) > 0
+       if item.role == 'bastion'
+       else (agent_ipv4 | ansible.utils.ipaddr(pve_nat_cidr) | length) > 0 }}
   retries: 40
   delay: 15
   loop: "{{ cluster_nodes }}"
@@ -393,69 +403,66 @@
   loop_control:
     label: "{{ item.item.name }}"
 
-# Split by CIDR rather than by interface name: ens18/ens19 is a Proxmox naming convention, not a
-# guarantee, and the guest agent gives no hint which NIC an address belongs to. The two tasks are
-# separate so a node that got only one of its two leases still lands in the map it did get --
-# which is what makes the asserts below able to say which lease is missing.
+# By CIDR rather than by interface name: ens18/ens19 is a Proxmox naming convention, not a
+# guarantee, and the guest agent gives no hint which NIC an address belongs to.
 #
-# "egress" rather than "public": net0 is the public bridge only on the bastion. On a master or a
-# worker it is the NAT bridge, and that address is reachable from nothing -- it exists so the node
-# can reach apt, registry.k8s.io and the Helm repos, not so anything can reach the node.
-- name: Map each node to its LAN address (net1)
+# One map for the cluster and two scalars for the bastion, because they are different questions.
+# A master or worker has a single NIC on the NAT bridge, so it has exactly one address and that
+# address is everything -- what ansible connects to, what etcd and the kubelet bind to, what ctrp
+# resolves to. Only the bastion needs anything disambiguated.
+- name: Map each cluster node to its address
   ansible.builtin.set_fact:
-    node_lan_addresses: "{{ node_lan_addresses | default({}) | combine({item.key: lan | first}) }}"
+    node_addresses: "{{ node_addresses | default({}) | combine({item.key: nat | first}) }}"
   vars:
-    lan: "{{ item.value | ansible.utils.ipaddr(pve_lan_cidr) }}"
-  when: lan | length > 0
-  loop: "{{ node_agent_ipv4 | dict2items }}"
-  loop_control:
-    label: "{{ item.key }}"
-
-- name: Map each node to its egress address (net0)
-  ansible.builtin.set_fact:
-    node_egress_addresses: "{{ node_egress_addresses | default({}) | combine({item.key: egress | first}) }}"
-  vars:
-    egress: "{{ item.value | difference(item.value | ansible.utils.ipaddr(pve_lan_cidr)) }}"
-  when: egress | length > 0
+    nat: "{{ item.value | ansible.utils.ipaddr(pve_nat_cidr) }}"
+  when:
+    - item.key != bastion_node.name
+    - nat | length > 0
   loop: "{{ node_agent_ipv4 | dict2items }}"
   loop_control:
     label: "{{ item.key }}"
 
 # Without this the missing node surfaces much later as an inventory that is quietly one host
 # short, or as an AnsibleUndefinedVariable with no host name in it.
-- name: Every VM reported an egress address
+- name: Every cluster node reported an address on the NAT bridge
   ansible.builtin.assert:
     that:
-      - node_egress_addresses | default({}) | length == cluster_nodes | length
+      - node_addresses | default({}) | length == (cluster_nodes | length) - 1
     fail_msg: >-
-      No address outside {{ pve_lan_cidr }} came back for
-      {{ cluster_nodes | map(attribute='name') | difference(node_egress_addresses | default({}) | list) | sort }}.
+      No address inside {{ pve_nat_cidr }} came back for
+      {{ cluster_nodes | rejectattr('role', 'equalto', 'bastion') | map(attribute='name')
+         | difference(node_addresses | default({}) | list) | sort }}.
       Either the qemu-guest-agent never answered -- so cloud-init did not run; check that ide2
-      carries the cloud-init drive, and `qm cloudinit dump <vmid> user` -- or the VM's net0 bridge
-      handed out no lease. That is {{ pve_bridge_public }} for bastion-node and
-      {{ pve_bridge_nat }} for every master and worker.
+      carries the cloud-init drive, and `qm cloudinit dump <vmid> user` -- or
+      {{ pve_bridge_nat }} handed out no lease, or PROXMOX_NAT_CIDR does not describe what it
+      hands out. Compare it against `ip -4 addr` on a node.
     quiet: true
 
-# Split from the assert above because the two failures have completely different causes, and the
-# LAN one is almost always a wrong PROXMOX_LAN_CIDR rather than a broken VM.
-- name: Every node reported a LAN address
-  ansible.builtin.assert:
-    that:
-      - node_lan_addresses | default({}) | length == cluster_nodes | length
-    fail_msg: >-
-      No address inside {{ pve_lan_cidr }} came back for
-      {{ cluster_nodes | map(attribute='name') | difference(node_lan_addresses | default({}) | list) | sort }}.
-      Either PROXMOX_LAN_CIDR does not describe what {{ pve_bridge_lan }} hands out -- compare it
-      against `ip -4 addr` on a node -- or that bridge has no DHCP server on it.
-    quiet: true
-
-# The two addresses the rest of create.yml is written in terms of. Named separately because the
-# bastion is the only VM whose egress address means anything to the caller: it is what molecule
-# SSHes to, and the only address in the whole scenario that is reachable from outside.
+# The bastion's two, split from the cluster's because the failure has a different cause: it is
+# almost always a wrong PROXMOX_LAN_CIDR rather than a broken VM. The public one is what molecule
+# SSHes to -- the only address in the scenario reachable from outside; the LAN one is what it
+# reaches the cluster over, the LAN being routed to the NAT segment.
 - name: Note the bastion's two addresses
   ansible.builtin.set_fact:
-    bastion_public_ip: "{{ node_egress_addresses[bastion_node.name] }}"
-    bastion_lan_ip: "{{ node_lan_addresses[bastion_node.name] }}"
+    bastion_lan_ip: "{{ (bastion_ipv4 | ansible.utils.ipaddr(pve_lan_cidr) | first) | default('', true) }}"
+    bastion_public_ip: >-
+      {{ (bastion_ipv4 | difference(bastion_ipv4 | ansible.utils.ipaddr(pve_lan_cidr)) | first)
+         | default('', true) }}
+  vars:
+    bastion_ipv4: "{{ node_agent_ipv4[bastion_node.name] | default([]) }}"
+
+- name: The bastion reported both of its addresses
+  ansible.builtin.assert:
+    that:
+      - bastion_lan_ip | length > 0
+      - bastion_public_ip | length > 0
+    fail_msg: >-
+      bastion-node reported {{ node_agent_ipv4[bastion_node.name] | default([]) }}. It needs one
+      address inside PROXMOX_LAN_CIDR={{ pve_lan_cidr }} -- its {{ pve_bridge_lan }} lease, which
+      is how it reaches the cluster -- and one outside it, its {{ pve_bridge_public }} lease,
+      which is the address molecule connects to. Check PROXMOX_LAN_CIDR describes what
+      {{ pve_bridge_lan }} hands out, and that both bridges have a DHCP server.
+    quiet: true
 
 # The bastion only. A master's or worker's net0 is on the NAT bridge, so from here those addresses
 # answer nothing -- looping over them would burn the full 300s timeout per node and then fail with

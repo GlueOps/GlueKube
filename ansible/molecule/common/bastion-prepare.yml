@@ -36,7 +36,7 @@
 # three copies of create.yml.
 - name: Adopt what provisioning discovered
   ansible.builtin.set_fact:
-    node_lan_addresses: "{{ hostvars['localhost']['node_lan_addresses'] }}"
+    node_addresses: "{{ hostvars['localhost']['node_addresses'] }}"
     master_nodes_list: "{{ hostvars['localhost']['master_nodes_list'] }}"
     worker_nodes_list: "{{ hostvars['localhost']['worker_nodes_list'] }}"
     bastion_node: "{{ hostvars['localhost']['bastion_node'] }}"
@@ -156,16 +156,16 @@
   vars:
     k8s_minor: "{{ (lookup('env', 'kubernetes_version') | regex_replace('^v', '') | split('.'))[0:2] | join('.') }}"
 
-# The check proxmox-provision.yml can no longer make from the machine running molecule: a node's
-# net0 is on the NAT bridge and answers nothing from outside. From here the LAN addresses are one
-# hop away, so a node that never came up fails now, with its name, rather than fifteen minutes
-# into a converge.
+# The check proxmox-provision.yml can no longer make from the machine running molecule: a node
+# sits on the NAT bridge and answers nothing from outside. From here it is one hop away -- this
+# host's LAN leg is routed to that segment -- so a node that never came up fails now, with its
+# name, rather than fifteen minutes into a converge.
 - name: Wait for SSH on every cluster node
   ansible.builtin.wait_for:
     host: "{{ item.value }}"
     port: 22
     timeout: 300
-  loop: "{{ node_lan_addresses | dict2items | rejectattr('key', 'equalto', bastion_node.name) | list }}"
+  loop: "{{ node_addresses | dict2items }}"
   loop_control:
     label: "{{ item.key }} ({{ item.value }})"
 

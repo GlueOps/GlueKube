@@ -40,9 +40,9 @@
     - name: Create the DNS domain and ctrp record
       ansible.builtin.import_tasks: ../common/autoglue-create.yml
       vars:
-        # The three masters the scenario starts with, on the LAN.
+        # The three masters the scenario starts with.
         autoglue_record_values: >-
-          {{ master_nodes_list[:3] | map(attribute='name') | map('extract', node_lan_addresses) | list }}
+          {{ master_nodes_list[:3] | map(attribute='name') | map('extract', node_addresses) | list }}
 
     - name: Store the bastion inventory
       ansible.builtin.template:

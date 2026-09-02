@@ -21,11 +21,15 @@
 # is what the master role uses.
 AUTOGLUE_RECORD_ID='{{ autoglue_record_id_for_run }}'
 
-# PROXMOX_LAN_CIDR is easy to overlook in a list of Kubernetes settings, and it is not optional:
+# PROXMOX_NAT_CIDR is easy to overlook in a list of Kubernetes settings, and it is not optional:
 # inventory/group_vars/masters.yaml feeds it to calico_node_address_autodetection_v4. Unset, the
-# block is omitted from calico.yaml.j2, Calico falls back to firstFound, and VXLAN comes up on the
-# NAT interface instead of the LAN.
-PROXMOX_LAN_CIDR='{{ lookup('env', 'PROXMOX_LAN_CIDR') }}'
+# block is omitted from calico.yaml.j2 and Calico falls back to firstFound. It is the cluster's
+# own subnet now -- the nodes have a single NIC, on the NAT bridge.
+#
+# PROXMOX_LAN_CIDR is deliberately NOT here: it only ever described the bastion's second lease,
+# which is a provisioning concern on the machine running molecule, not something any playbook
+# running on this host reads.
+PROXMOX_NAT_CIDR='{{ lookup('env', 'PROXMOX_NAT_CIDR') }}'
 
 # Roles are searched at <playbook_dir>/roles, i.e. ansible/playbooks/roles, which does not exist.
 # ansible.cfg's ANSIBLE_ROLES_PATH= line looks like it covers this but is an env-var name used as

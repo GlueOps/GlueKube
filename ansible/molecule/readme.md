@@ -32,14 +32,24 @@ molecule (laptop / CI runner)
         │  ssh, vmbr_public          ← the only inbound path into the scenario
         ▼
    bastion-node          net0 vmbr_public   net1 vmbr_lan
-   /opt/gluekube/ansible │                  │
-   ansible-playbook ─────┼──────────────────┘  ssh over the LAN address
-                         │
+   /opt/gluekube/ansible                    │
+   ansible-playbook                         │  vmbr_lan is routed to vmbr_nat
+                         ┌──────────────────┘
         ┌────────────────┴───────────────────────────┐
         ▼                                            ▼
    master-node-N                               worker-node-N
-   net0 vmbr_nat (egress only)  net1 vmbr_lan  ← no inbound from anywhere
+   net0 vmbr_nat  ─ one NIC, one address ─     net0 vmbr_nat
 ```
+
+A cluster node has **exactly one NIC**, on `vmbr_nat`. That single address is everything: its
+route out to apt and `registry.k8s.io`, the address the bastion SSHes to, and what etcd, the
+kubelet, Calico and the `ctrp` record all bind to — `ansible_host` and `ip` in the inventory are
+the same value. Nothing outside the scenario can reach it. The bastion can, because its LAN leg is
+routed to the NAT segment.
+
+The bastion is the only VM with two NICs, and `$PROXMOX_LAN_CIDR` exists solely to tell its two
+DHCP leases apart: in range is the LAN address it reaches the cluster over, out of range is the
+public address molecule connects to.
 
 This is the production topology. AutoGlue SSHes into a cluster's bastion and runs GlueKube there
 as a container, and `parser.py` writes the nodes' **private** addresses into `ansible_host`; until
@@ -47,9 +57,9 @@ now molecule tested the exact opposite, connecting straight to a wide-open publi
 
 Mechanically:
 
-- `create.yml`'s first play builds the VMs, makes the DNS record, and writes
-  `inventory/hosts.yaml` — which now holds **the bastion and nothing else**. That is the file
-  `molecule.yml` links.
+- `create.yml`'s first play builds the VMs — the bastion with two NICs, every master and worker
+  with one on the NAT bridge — makes the DNS record, and writes `inventory/hosts.yaml`, which now
+  holds **the bastion and nothing else**. That is the file `molecule.yml` links.
 - `create.yml`'s second play (`hosts: bastion`) installs the toolchain, copies the whole `ansible/`
   tree to `/opt/gluekube/ansible`, writes a root-only `/opt/gluekube/.env`, and templates the
   cluster inventories into the **mirrored** scenario directory on the bastion.
@@ -190,15 +200,16 @@ export PROXMOX_STORAGE="local"
 # this matches the Terraform module. use "host" only on a single-host cluster.
 export PROXMOX_CPU="x86-64-v2-AES"
 
-# every VM gets two NICs, and every bridge involved has to serve DHCP -- create.yml reads the
-# addresses back out of the qemu guest agent.
-#   net0, public bridge: the BASTION only. the address molecule SSHes to, and the only inbound
-#                        path into the scenario.
-#   net0, NAT bridge:    every master and worker. outbound internet -- apt, registry.k8s.io, the
-#                        helm repos, github releases -- and nothing inbound.
-#   net1, LAN bridge:    all of them. the address the cluster runs on -- kubelet, etcd, Calico
-#                        VXLAN, and what the ctrp record resolves to. this is the inventory's
-#                        `ip`, and now also its ansible_host, because the bastion is on this LAN.
+# the bridges. every one involved has to serve DHCP -- create.yml reads the addresses back out of
+# the qemu guest agent. note the VMs do NOT all have the same number of NICs:
+#   bastion, net0 on the public bridge: the address molecule SSHes to, and the only inbound path
+#                        into the scenario.
+#   bastion, net1 on the LAN bridge:    how it reaches the cluster. the LAN has to be routed to
+#                        the NAT segment; nothing here sets that up.
+#   node,    net0 on the NAT bridge:    a master or worker's ONLY NIC. outbound internet -- apt,
+#                        registry.k8s.io, the helm repos, github releases -- and the address the
+#                        cluster runs on: kubelet, etcd, Calico VXLAN, and what ctrp resolves to.
+#                        it is both `ansible_host` and `ip` in the inventory.
 export PROXMOX_BRIDGE_PUBLIC="vmbr_public"
 export PROXMOX_BRIDGE_NAT="vmbr_nat"
 export PROXMOX_BRIDGE_LAN="vmbr_lan"
@@ -211,18 +222,19 @@ export PROXMOX_BRIDGE_PUBLIC_VLAN=""
 export PROXMOX_BRIDGE_NAT_VLAN=""
 export PROXMOX_BRIDGE_LAN_VLAN="101"
 
-# REQUIRED. the subnet the LAN bridge hands out. the guest agent reports both of a VM's addresses
-# in one list with no hint which NIC each came from, so this is the only thing that tells them
-# apart: in-range is `ip`, out-of-range is the egress address. get it wrong and every node fails
-# the LAN assert after all the VMs are already built. it is also what Calico's
-# nodeAddressAutodetectionV4 is pinned to, via inventory/group_vars/masters.yaml.
+# REQUIRED, and it is only about the BASTION -- the one VM with two NICs. the guest agent reports
+# both of its addresses in one list with no hint which came from which, so this is the only thing
+# that tells them apart: in-range is the LAN address it reaches the cluster over, out-of-range is
+# the public address molecule connects to. a cluster node has a single NIC and needs no such
+# disambiguation.
 export PROXMOX_LAN_CIDR="10.10.0.0/16"
 
-# optional, and only used for one preflight: create.yml asserts the NAT scope does not overlap the
-# LAN scope. an overlap does not fail on its own -- it silently puts a node's NAT address into the
-# inventory's `ip`, and etcd, the kubelet and Calico then bind to an address the other nodes
-# cannot reach.
-export PROXMOX_NAT_CIDR=""
+# REQUIRED. the subnet the NAT bridge hands out, which is now the cluster's own subnet. create.yml
+# asserts every master and worker came up inside it -- that is how a node which landed on the
+# wrong bridge fails immediately instead of being written into the inventory with an address
+# nothing can reach. it is also what Calico's nodeAddressAutodetectionV4 is pinned to, via
+# inventory/group_vars/masters.yaml. must not overlap PROXMOX_LAN_CIDR; create.yml checks.
+export PROXMOX_NAT_CIDR="10.20.0.0/16"
 
 # storage with the "snippets" content type enabled, and where that storage keeps them on disk.
 export PROXMOX_SNIPPET_STORAGE="local"
@@ -299,19 +311,26 @@ can:
   node and the run dies at *Wait for the guest agent to report an address*. `create.yml` checks the
   bridge exists; it cannot check that it NATs. The `test_nodes_pingable` step right after `create`
   is the thing that does — it probes `repo.gpkg.io:443` and `pkgs.k8s.io:443` from every node.
-- **no default gateway in the LAN bridge's DHCP scope.** Unchanged, and now more load-bearing than
-  before: it is what keeps a node's single default route on the NAT NIC. Two default routes make
-  the outbound path nondeterministic, and `/etc/glueops/public-interface` — derived from the
-  default route in `common/cloud-init.yaml.j2` — stops naming a predictable NIC. Hand out an
-  address and a netmask on `$PROXMOX_BRIDGE_LAN`, nothing else.
+- **`$PROXMOX_BRIDGE_LAN` must be routed to `$PROXMOX_BRIDGE_NAT`.** The bastion sits on the LAN
+  and every node sits on the NAT segment, so that route is the only way it reaches them. Nothing
+  here builds it. If it is missing, `create` gets as far as *Wait for SSH on every cluster node*
+  in `common/bastion-prepare.yml` and times out there — which is deliberately early, and names the
+  node it could not reach.
+- **no default gateway in the LAN bridge's DHCP scope.** This now applies to the bastion alone —
+  it is the only VM left with two NICs, and a second default route would make its outbound path,
+  and the return path for molecule's own SSH, nondeterministic. Hand out an address and a netmask
+  on `$PROXMOX_BRIDGE_LAN`, nothing else. The cluster nodes have a single NIC and a single default
+  route, so `/etc/glueops/public-interface` is unambiguous on them for the first time.
 
 > **What is exposed.** Nothing here builds a PVE firewall: no NIC carries `firewall=1`, no per-VM
 > ruleset is written, and the datacenter firewall is neither read nor required. What changed is
 > that there is now only **one** VM with a publicly reachable address — the bastion — and all it
-> answers on is `22`. The masters and workers are on `$PROXMOX_BRIDGE_NAT` and
-> `$PROXMOX_BRIDGE_LAN` only, so `6443`, `10250`, etcd's unauthenticated metrics port `2381` and
-> the NodePort range are no longer reachable from outside the scenario's own network. They are
-> still wide open *within* it: anything else on `$PROXMOX_BRIDGE_LAN` can reach them unfiltered.
+> answers on is `22`. The masters and workers are on `$PROXMOX_BRIDGE_NAT` only, so `6443`,
+> `10250`, etcd's unauthenticated metrics port `2381` and the NodePort range are no longer
+> reachable from outside that segment. They are still wide open *within* it, and note that the
+> cluster's own traffic now runs on the NAT segment rather than an isolated LAN — anything else
+> with a route to `$PROXMOX_NAT_CIDR`, the bastion's LAN included, can reach those ports
+> unfiltered.
 
 `domain_name` is required — `kubeadm-stacked-config.yaml.j2` puts `kube-api.$domain_name` in the
 apiserver certSANs and `authentication-configuration.yaml.j2` builds the Dex issuer from it.
@@ -345,8 +364,9 @@ in `common/bastion-run.yml` as `bastion_run_assert_no_changes`, which reads the 
 ## DNS lifecycle
 
 `create.yml` creates the AutoGlue DNS domain named by `$domain_name`, then creates the `ctrp` A
-record inside it pointing at the master node addresses. Every scenario uses the private address,
-never the public one — the `$PROXMOX_LAN_CIDR` address. That is the same value as the inventory's `ip`, which is what the apiserver listens on:
+record inside it pointing at the master node addresses — their `$PROXMOX_NAT_CIDR` addresses, the
+only ones they have. That is the same value as the inventory's `ip`, which is what the apiserver
+listens on:
 
 ```
 POST /api/v1/dns/domains                        {credential_id, domain_name, zone_id}

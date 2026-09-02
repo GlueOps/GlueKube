@@ -10,7 +10,8 @@ calico_chart_version: "{{ lookup('env', 'calico_chart_version') }}" #"v3.29.3"
 calico_tigera_operator_version: "{{ lookup('env', 'calico_tigera_operator_version') }}" #"v1.36.7"
 calico_network_calico_cidr: "172.16.0.0/16"
 
-calico_node_address_autodetection_v4: "{{ lookup('env', 'PROXMOX_LAN_CIDR') }}"
+# The nodes have ONE NIC, on the NAT bridge -- that subnet is the cluster's.
+calico_node_address_autodetection_v4: "{{ lookup('env', 'PROXMOX_NAT_CIDR') }}"
 
 etcd_initial_cluster: "{{ groups['masters'] | map('extract', hostvars, 'ip') | list }}"
 etcd_secret_namespace: "glueops-core-kube-prometheus-stack"
