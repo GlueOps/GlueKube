@@ -608,14 +608,31 @@ on does not work, so it cannot be triggered on demand, and a master rotation doe
 orchestrator (`rotate-nodes.yaml` excludes it from the remove list). nothing is broken while
 waiting: a cluster built before this change is still scraping `https://<node>:2379` with its
 existing `etcd-client-certs` secret. verify on the node (`curl -sS http://<master ip>:2381/health`)
-before repointing anything. the full migration, with rollback, is in `epic-c-status.md` under
-"After the merge".
 
 the cluster no longer publishes an `etcd-client-certs` secret into the monitoring namespace: the
 task that minted it is gone, because `http://<node>:2381` is all Prometheus needs. the
 kube-prometheus-stack serviceMonitor in glueops-core has to be pointed there — a serviceMonitor
 still scraping `https://<node>:2379` with `etcd-client-certs` will find neither the secret nor a
 reason to hold one.
+
+### migrating an existing cluster, in order
+
+no single step does this on its own — 2 uploads the config and 3 is what actually re-renders the
+etcd static pod. run them in this order:
+
+
+1. **`rotate-certs-with-config.yaml`** — this uploads the `kubeadm-config`
+   ConfigMap with `listen-metrics-urls`; it does **not** change the running etcd, which is parked
+   and restored from the same manifest.
+2. **the next real version upgrade** (`upgrade-cluster.yaml`). `kubeadm upgrade apply` re-renders
+   `etcd.yaml` from the ConfigMap uploaded in 3, and the listener comes up. a same-version upgrade
+   does not work, so this cannot be forced — the cluster keeps scraping 2379 until then.
+3. **verify on each master**: `curl -sS http://<master ip>:2381/health`.
+4. **repoint the glueops-core serviceMonitor** to `http://<node>:2381`.
+5. **delete the leftover `etcd-client-certs` secret** from the monitoring namespace.
+
+running 3 without 2 is the failure case worth naming: the upgrade re-renders from the old ConfigMap
+and etcd comes back on kubeadm's default `http://127.0.0.1:2381`, which Prometheus cannot reach.
 
 ## Migrate local-path-provisioner to Helm
 
