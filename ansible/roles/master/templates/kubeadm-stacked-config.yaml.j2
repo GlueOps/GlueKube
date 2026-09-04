@@ -48,7 +48,6 @@ apiServer:
   certSANs:
     - "{{ loadbalancer_apiserver }}"
     - "127.0.0.1"
-    - "0.0.0.0"
     - "kube-api.{{ domain_name }}"
 {% for ip in etcd_initial_cluster %}
     - "{{ ip }}"
@@ -78,6 +77,8 @@ etcd:
         value: "33554432"   # 32MB to allow larger object sizes
       - name: "auto-compaction-retention"
         value: "1h"         # Prevent database bloat
+      - name: "listen-metrics-urls"
+        value: "http://0.0.0.0:2381"
     serverCertSANs: 
     {% for ip in etcd_initial_cluster %}
       - {{ ip }}

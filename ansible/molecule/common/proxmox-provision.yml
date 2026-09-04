@@ -1,0 +1,475 @@
+---
+- name: Required Proxmox variables are set
+  ansible.builtin.assert:
+    that:
+      - pve_api_host | length > 0
+      - pve_node | length > 0
+      - pve_token_id | length > 0
+      - pve_token_secret | length > 0
+      - pve_lan_cidr | length > 0
+      - pve_nat_cidr | length > 0
+    fail_msg: >-
+      PROXMOX_HOST, PROXMOX_NODE, PROXMOX_TOKEN_ID, PROXMOX_TOKEN_SECRET, PROXMOX_LAN_CIDR and
+      PROXMOX_NAT_CIDR must all be set. See ansible/molecule/readme.md. Failing here beats failing
+      inside a module with "api_host is required" after some of the VMs already exist -- and, for
+      the two CIDRs, beats building them all and then finding no address can be classified.
+    quiet: true
+
+# The bastion's two leases are told apart by "in PROXMOX_LAN_CIDR or not", so if the NAT subnet
+# fell inside the LAN one, its NAT-side address would be read as its LAN address and molecule
+# would try to SSH to the cluster's own subnet. An overlap does not fail on its own -- it
+# misclassifies silently, and surfaces as an unreachable bastion or a cluster that half-forms.
+- name: The NAT and LAN subnets do not overlap
+  ansible.builtin.assert:
+    that:
+      - not (pve_nat_cidr | ansible.utils.network_in_network(pve_lan_cidr))
+      - not (pve_lan_cidr | ansible.utils.network_in_network(pve_nat_cidr))
+    fail_msg: >-
+      PROXMOX_NAT_CIDR={{ pve_nat_cidr }} and PROXMOX_LAN_CIDR={{ pve_lan_cidr }} overlap. The
+      guest agent reports both of the bastion's addresses in one list with no hint which NIC each
+      came from, so the LAN CIDR is the only thing that tells them apart.
+    quiet: true
+
+# The bridges, before anything is built. A VM created on a bridge that does not exist starts
+# happily and simply never takes a lease, which surfaces ten minutes later at "Wait for the guest
+# agent to report an address" -- whose fail_msg blames cloud-init and the cloud-init drive.
+- name: Read the node's network interfaces
+  ansible.builtin.uri:
+    url: "{{ pve_api_url }}/nodes/{{ pve_node }}/network"
+    method: GET
+    headers: "{{ pve_auth_header }}"
+    validate_certs: "{{ pve_validate_certs }}"
+    return_content: true
+  register: node_networks
+
+- name: The three bridges exist on the node
+  ansible.builtin.assert:
+    that:
+      - pve_bridge_public in bridge_names
+      - pve_bridge_nat in bridge_names
+      - pve_bridge_lan in bridge_names
+    fail_msg: >-
+      One of PROXMOX_BRIDGE_PUBLIC={{ pve_bridge_public }}, PROXMOX_BRIDGE_NAT={{ pve_bridge_nat }}
+      or PROXMOX_BRIDGE_LAN={{ pve_bridge_lan }} is not on node {{ pve_node }}. Interfaces found:
+      {{ bridge_names | join(', ') | default('none', true) }}. The NAT bridge is a cluster node's
+      ONLY NIC -- both its route out and the address it is reached on; the public and LAN bridges
+      are the bastion's two.
+    quiet: true
+  vars:
+    bridge_names: "{{ node_networks.json.data | default([]) | map(attribute='iface') | list }}"
+
+# Both of these fail with the candidates listed rather than letting the create call answer with a
+# bare "storage does not exist" or an import error, and both run before anything is written to
+# the hypervisor, so a wrong value costs two API calls.
+- name: Read the node's storage list
+  ansible.builtin.uri:
+    url: "{{ pve_api_url }}/nodes/{{ pve_node }}/storage"
+    method: GET
+    headers: "{{ pve_auth_header }}"
+    validate_certs: "{{ pve_validate_certs }}"
+    return_content: true
+  register: node_storage
+
+- name: The configured storages exist
+  ansible.builtin.assert:
+    that:
+      - pve_storage in storage_names
+      - pve_import_storage in storage_names
+      - pve_snippet_storage in storage_names
+    fail_msg: >-
+      One of PROXMOX_STORAGE={{ pve_storage }}, the import volume's storage
+      ({{ pve_import_storage }}) or PROXMOX_SNIPPET_STORAGE={{ pve_snippet_storage }} is not on
+      node {{ pve_node }}. Storages found: {{ storage_names | join(', ') }}.
+    quiet: true
+  vars:
+    storage_names: "{{ node_storage.json.data | map(attribute='storage') | list }}"
+
+# cicustom takes a VOLUME id (storage:snippets/file), not a path, and PVE only resolves one if
+# the storage carries the "snippets" content type. Without it the file is written to the
+# hypervisor happily and then every VM refuses to start with "volume ... does not exist" --
+# which is what happened before this check existed, six times over, after the VMs were built.
+- name: Read the snippet storage's configuration
+  ansible.builtin.uri:
+    url: "{{ pve_api_url }}/storage/{{ pve_snippet_storage }}"
+    method: GET
+    headers: "{{ pve_auth_header }}"
+    validate_certs: "{{ pve_validate_certs }}"
+    return_content: true
+  register: snippet_storage_cfg
+
+- name: The snippet storage accepts snippets
+  ansible.builtin.assert:
+    that:
+      - "'snippets' in (snippet_storage_cfg.json.data.content | default('') | split(','))"
+    fail_msg: >-
+      Storage {{ pve_snippet_storage }} does not have the "snippets" content type, so cicustom
+      cannot reference the cloud-init files. It currently allows:
+      {{ snippet_storage_cfg.json.data.content | default('nothing') }}. Add it once with
+      `pvesm set {{ pve_snippet_storage }} --content
+      {{ snippet_storage_cfg.json.data.content | default('') }},snippets`.
+    quiet: true
+
+# The API reports where the storage keeps its files; the snippets live in a subdirectory of it.
+# Deriving this beats assuming /var/lib/vz.
+- name: Resolve the snippet directory
+  ansible.builtin.set_fact:
+    pve_snippet_dir: >-
+      {{ pve_snippet_dir_override
+         | default((snippet_storage_cfg.json.data.path | default('/var/lib/vz')) ~ '/snippets', true) }}
+
+- name: Read the import volumes
+  ansible.builtin.uri:
+    url: "{{ pve_api_url }}/nodes/{{ pve_node }}/storage/{{ pve_import_storage }}/content?content=import"
+    method: GET
+    headers: "{{ pve_auth_header }}"
+    validate_certs: "{{ pve_validate_certs }}"
+    return_content: true
+  register: import_volumes
+
+- name: The cloud image to import exists
+  ansible.builtin.assert:
+    that:
+      - pve_import_from in import_volids
+    fail_msg: >-
+      PROXMOX_IMPORT_FROM={{ pve_import_from }} is not an import volume on
+      {{ pve_import_storage }}. Found: {{ import_volids | join(', ') | default('none', true) }}.
+      Upload an Ubuntu 24.04 cloud image to that storage's "import" content type, or point
+      PROXMOX_IMPORT_FROM at one of the above.
+    quiet: true
+  vars:
+    import_volids: "{{ import_volumes.json.data | map(attribute='volid') | list }}"
+
+# One list, shared with proxmox-teardown.yml so the two cannot drift -- see node-list.yml.
+- name: Build the list of VMs this scenario owns
+  ansible.builtin.import_tasks: node-list.yml
+
+
+- name: Read the cluster's VM inventory
+  ansible.builtin.uri:
+    url: "{{ pve_api_url }}/cluster/resources?type=vm"
+    method: GET
+    headers: "{{ pve_auth_header }}"
+    validate_certs: "{{ pve_validate_certs }}"
+    return_content: true
+  register: pve_vm_inventory
+
+- name: Find what already occupies this scenario's vmid range
+  ansible.builtin.set_fact:
+    vms_in_scenario_range: >-
+      {{ (pve_vm_inventory.json.data | default([]))
+         | selectattr('vmid', 'defined')
+         | selectattr('vmid', 'in', cluster_nodes | map(attribute='vmid') | map('int') | list)
+         | list }}
+
+- name: Separate this scenario's own VMs from foreign ones
+  ansible.builtin.set_fact:
+    foreign_vms: >-
+      {{ (vms_in_scenario_range | rejectattr('tags', 'defined') | list)
+         + (vms_in_scenario_range | selectattr('tags', 'defined')
+            | rejectattr('tags', 'search', snippet_prefix) | list) }}
+
+- name: The scenario's vmid range holds nothing that is not ours
+  ansible.builtin.assert:
+    that:
+      - foreign_vms | length == 0
+    fail_msg: >-
+      {{ foreign_vms | length }} VM(s) occupy this scenario's vmid range without its
+      "{{ snippet_prefix }}" tag: {{ foreign_vms | map(attribute='vmid') | zip(foreign_vms
+      | map(attribute='name') | list) | list }}. Provisioning would adopt them -- resizing their
+      root disk and starting them. Move this scenario's range with PROXMOX_VMID_BASE /
+      pve_vmid_offset, or remove those VMs.
+    quiet: true
+
+# The hypervisor as an ansible host, so the snippet tasks can delegate_to it. In memory only;
+# nothing is written to an inventory file.
+- name: Register the Proxmox host for the snippet upload
+  ansible.builtin.add_host:
+    name: pve_host
+    ansible_host: "{{ pve_ssh_host }}"
+    ansible_user: "{{ pve_ssh_user }}"
+    ansible_ssh_private_key_file: "{{ pve_ssh_key_file | default(omit, true) }}"
+    ansible_python_interpreter: /usr/bin/python3
+  changed_when: false
+
+- name: Ensure the snippet directory exists
+  ansible.builtin.file:
+    path: "{{ pve_snippet_dir }}"
+    state: directory
+    mode: "0755"
+  delegate_to: pve_host
+
+# One snippet per node, not one shared file: cicustom user= REPLACES the user-data Proxmox
+# generates rather than merging with it, so the hostname qm would normally inject is lost. VMs
+# that all carry the image's hostname register as a single Kubernetes node and
+# tests/test_cluster_healthy.yaml fails its "every inventory node is present" assert.
+#
+# The template is addressed through playbook_dir rather than a bare relative path: this task file
+# lives in common/, so `cloudinit/...` would be looked for next to *this* file first.
+#
+# item.cloudinit, not one shared template: the bastion is not a Kubernetes node. It must not get
+# the k8s sysctls, the swap removal or /etc/glueops/public-interface, and it does need a place to
+# put the GlueKube checkout. cloudinit_template stays as the scenario-level override.
+- name: Render a cloud-init snippet for each node
+  ansible.builtin.template:
+    src: "{{ cloudinit_template | default(playbook_dir ~ '/../common/' ~ item.cloudinit, true) }}"
+    dest: "{{ pve_snippet_dir }}/{{ snippet_prefix }}-{{ item.name }}.yaml"
+    mode: "0644"
+  vars:
+    node_name: "{{ item.name }}"
+  delegate_to: pve_host
+  loop: "{{ cluster_nodes }}"
+  loop_control:
+    label: "{{ item.name }} ({{ item.cloudinit }})"
+
+# The write above went to a filesystem over SSH; this asks the API whether the node that will run
+# the VMs can actually resolve those files as volumes. They are not the same question: `local` is
+# node-local storage, so a snippet written on one node is invisible to a VM on another, and the
+# VMs then fail to START -- after all of them have been built -- with "volume ... does not exist"
+# and nothing pointing at why.
+- name: Read the snippet volumes the node can see
+  ansible.builtin.uri:
+    url: "{{ pve_api_url }}/nodes/{{ pve_node }}/storage/{{ pve_snippet_storage }}/content?content=snippets"
+    method: GET
+    headers: "{{ pve_auth_header }}"
+    validate_certs: "{{ pve_validate_certs }}"
+    return_content: true
+  register: snippet_volumes
+
+- name: The node can see every snippet
+  ansible.builtin.assert:
+    that:
+      - expected_volids | difference(seen_volids) | length == 0
+    fail_msg: >-
+      Node {{ pve_node }} cannot see {{ expected_volids | difference(seen_volids) | join(', ') }}.
+      They were written to {{ pve_snippet_dir }} on {{ pve_ssh_host }}, and that host reported
+      the directory already present. {{ pve_snippet_storage }} on {{ pve_node }} currently holds:
+      {{ seen_volids | join(', ') | default('nothing', true) }}.
+      A directory storage is node-local, so the usual cause is PROXMOX_HOST (or PROXMOX_SSH_HOST)
+      being a different node from PROXMOX_NODE={{ pve_node }} -- point them at the same machine.
+      Otherwise {{ pve_snippet_storage }}'s path on this node is not {{ pve_snippet_dir | dirname }};
+      set PROXMOX_SNIPPET_DIR to the real one.
+    quiet: true
+  vars:
+    seen_volids: "{{ snippet_volumes.json.data | map(attribute='volid') | list }}"
+    expected_volids: >-
+      {{ cluster_nodes
+         | map(attribute='name')
+         | map('regex_replace', '^(.*)$', pve_snippet_storage ~ ':snippets/' ~ snippet_prefix ~ '-\1.yaml')
+         | list }}
+
+# Idempotent the same way hetzner.hcloud.server was, just keyed on the vmid rather than the name:
+# proxmox_kvm returns changed=false when the vmid already exists. So a create re-run after a
+# partial failure picks up where it left off. It also means a *stale* VM on one of our vmids is
+# silently adopted -- see the warning at the top of ansible/molecule/readme.md.
+#
+# Everything is set in this ONE call on purpose. proxmox_kvm silently DROPS net, virtio, ide,
+# sata and scsi from an `update: true` call unless update_unsafe is also set -- so configuring
+# the NICs in a second pass, the way the clone-based version did, left the nodes with no net1.
+- name: Create each node from the cloud image
+  community.proxmox.proxmox_kvm:
+    node: "{{ pve_node }}"
+    vmid: "{{ item.vmid }}"
+    name: "{{ item.name }}"
+    cores: "{{ item.cores | int }}"
+    cpu: "{{ pve_cpu }}"
+    memory: "{{ item.memory | int }}"
+    ostype: l26
+    scsihw: virtio-scsi-single
+    # UEFI, replicating the Terraform module: q35 + OVMF with its own EFI disk. The efidisk is
+    # not optional under OVMF -- without it the firmware has nowhere to persist its boot entries.
+    # pre_enrolled_keys=0 leaves Secure Boot off, which is what the stock cloud image expects;
+    # the module rejects efidisk0 unless bios is ovmf.
+    machine: q35
+    bios: ovmf
+    # snippet_prefix as a second tag so a leaked VM says which scenario leaked it -- the three
+    # scenarios otherwise share PROXMOX_TAGS and are only told apart by their vmid range.
+    tags: "{{ (pve_tags | split(',') | map('trim') | select | list) + [snippet_prefix] }}"
+    efidisk0:
+      storage: "{{ pve_storage }}"
+      format: qcow2
+      efitype: 4m
+      pre_enrolled_keys: 0
+    # "1", not "enabled": the module runs this through ansible's boolean() and only converts
+    # recognised booleans to the 1/0 the API wants. Anything else is passed through verbatim, so
+    # `agent: enabled` reaches PVE as agent=enabled -- which it parses as enabled=enabled and
+    # rejects.
+    agent: "1"
+    onboot: false
+    # ":0" is the size: with import-from the disk is created from the image's own virtual size,
+    # so the number is ignored. Grown to pve_disk_size by the next task.
+    virtio:
+      virtio0: "{{ pve_storage }}:0,import-from={{ pve_import_from }},iothread=1,discard=on"
+    # The cloud-init drive. Without it cicustom and ipconfig0 are accepted and then silently
+    # ignored, and nothing works -- the same trap the template had to avoid.
+    ide:
+      ide2: "{{ pve_storage }}:cloudinit"
+    boot: order=virtio0
+    # Per-VM, and not the same COUNT per VM. The bastion has two NICs -- public for the inbound
+    # hop from molecule, LAN for reaching the cluster; a master or worker has exactly one, on the
+    # NAT bridge, which is both how it gets out and how it is reached. net1 is omitted entirely
+    # for those, rather than pointed somewhere harmless: an extra NIC on a bridge with a DHCP
+    # server would give the node a second address and a second candidate default route, which is
+    # exactly the ambiguity /etc/glueops/public-interface used to have to work around.
+    net: "{{ {'net0': 'virtio,bridge=' ~ item.bridge0 ~ net0_tag}
+             | combine({'net1': 'virtio,bridge=' ~ item.bridge1 ~ net1_tag}
+                       if item.bridge1 is defined else {}) }}"
+    # cicustom below replaces only user-data, so Proxmox still builds network-config from these.
+    # That is also why the snippet must not configure networking itself. One entry per NIC: an
+    # ipconfig1 with no net1 is accepted and then silently ignored.
+    ipconfig: "{{ {'ipconfig0': 'ip=dhcp'}
+                  | combine({'ipconfig1': 'ip=dhcp'} if item.bridge1 is defined else {}) }}"
+    cicustom: "user={{ pve_snippet_storage }}:snippets/{{ snippet_prefix }}-{{ item.name }}.yaml"
+    timeout: 600
+  vars:
+    net0_tag: "{{ ',tag=' ~ item.vlan0 if item.vlan0 | length > 0 else '' }}"
+    net1_tag: "{{ ',tag=' ~ item.vlan1 if item.vlan1 | default('') | length > 0 else '' }}"
+  loop: "{{ cluster_nodes }}"
+  loop_control:
+    label: "{{ item.name }} ({{ item.vmid }})"
+
+# No-op when the disk is already at size, so a re-run stays idempotent.
+- name: Grow the root disk
+  community.proxmox.proxmox_disk:
+    vmid: "{{ item.vmid }}"
+    disk: virtio0
+    size: "{{ item.disk_size }}"
+    state: resized
+  loop: "{{ cluster_nodes }}"
+  loop_control:
+    label: "{{ item.name }} ({{ item.disk_size }})"
+
+- name: Start each node
+  community.proxmox.proxmox_kvm:
+    node: "{{ pve_node }}"
+    vmid: "{{ item.vmid }}"
+    state: started
+  loop: "{{ cluster_nodes }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+# Replaces the old blind `pause: seconds: 60`. The nodes take a DHCP lease, so their addresses
+# are not known until the guest agent answers -- and the agent is installed by the snippet, so
+# this also proves cloud-init ran. proxmox_vm_info fail_json()s while the agent is still down,
+# hence ignore_errors alongside until.
+- name: Wait for the guest agent to report an address
+  community.proxmox.proxmox_vm_info:
+    node: "{{ pve_node }}"
+    type: qemu
+    vmid: "{{ item.vmid }}"
+    network: true
+  register: vm_net
+  ignore_errors: true
+  changed_when: false
+  # Templated lazily, after the register is set, so it sees this task's own result.
+  vars:
+    agent_ipv4: >-
+      {{ vm_net.proxmox_vms | default([])
+         | selectattr('network', 'defined') | map(attribute='network') | flatten
+         | rejectattr('name', 'equalto', 'lo')
+         | selectattr('ip-addresses', 'defined') | map(attribute='ip-addresses') | flatten
+         | selectattr('ip-address-type', 'equalto', 'ipv4') | map(attribute='ip-address')
+         | reject('match', '^(127\.|169\.254\.)') | list }}
+  # Per role, because the VMs no longer have the same number of NICs.
+  #
+  # A master or worker has one, on the NAT bridge: wait for an address inside PROXMOX_NAT_CIDR.
+  # Waiting for "any address" would accept a 169.254 or a stale lease from the wrong bridge and
+  # write it into the inventory.
+  #
+  # The bastion has two, and needs BOTH: net0 usually comes up first, and stopping there would
+  # leave bastion_lan_ip undefined on the run where the LAN lease was a second slower.
+  until: >-
+    {{ (agent_ipv4 | ansible.utils.ipaddr(pve_lan_cidr) | length) > 0
+       and (agent_ipv4 | difference(agent_ipv4 | ansible.utils.ipaddr(pve_lan_cidr)) | length) > 0
+       if item.role == 'bastion'
+       else (agent_ipv4 | ansible.utils.ipaddr(pve_nat_cidr) | length) > 0 }}
+  retries: 40
+  delay: 15
+  loop: "{{ cluster_nodes }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+# Collected once, then split, so the extraction expression lives in exactly one place.
+- name: Collect the addresses each agent reported
+  ansible.builtin.set_fact:
+    node_agent_ipv4: >-
+      {{ node_agent_ipv4 | default({}) | combine({item.item.name: (
+           item.proxmox_vms | default([])
+           | selectattr('network', 'defined') | map(attribute='network') | flatten
+           | rejectattr('name', 'equalto', 'lo')
+           | selectattr('ip-addresses', 'defined') | map(attribute='ip-addresses') | flatten
+           | selectattr('ip-address-type', 'equalto', 'ipv4') | map(attribute='ip-address')
+           | reject('match', '^(127\.|169\.254\.)') | list) }) }}
+  loop: "{{ vm_net.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+
+# By CIDR rather than by interface name: ens18/ens19 is a Proxmox naming convention, not a
+# guarantee, and the guest agent gives no hint which NIC an address belongs to.
+#
+# One map for the cluster and two scalars for the bastion, because they are different questions.
+# A master or worker has a single NIC on the NAT bridge, so it has exactly one address and that
+# address is everything -- what ansible connects to, what etcd and the kubelet bind to, what ctrp
+# resolves to. Only the bastion needs anything disambiguated.
+- name: Map each cluster node to its address
+  ansible.builtin.set_fact:
+    node_addresses: "{{ node_addresses | default({}) | combine({item.key: nat | first}) }}"
+  vars:
+    nat: "{{ item.value | ansible.utils.ipaddr(pve_nat_cidr) }}"
+  when:
+    - item.key != bastion_node.name
+    - nat | length > 0
+  loop: "{{ node_agent_ipv4 | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+# Without this the missing node surfaces much later as an inventory that is quietly one host
+# short, or as an AnsibleUndefinedVariable with no host name in it.
+- name: Every cluster node reported an address on the NAT bridge
+  ansible.builtin.assert:
+    that:
+      - node_addresses | default({}) | length == (cluster_nodes | length) - 1
+    fail_msg: >-
+      No address inside {{ pve_nat_cidr }} came back for
+      {{ cluster_nodes | rejectattr('role', 'equalto', 'bastion') | map(attribute='name')
+         | difference(node_addresses | default({}) | list) | sort }}.
+      Either the qemu-guest-agent never answered -- so cloud-init did not run; check that ide2
+      carries the cloud-init drive, and `qm cloudinit dump <vmid> user` -- or
+      {{ pve_bridge_nat }} handed out no lease, or PROXMOX_NAT_CIDR does not describe what it
+      hands out. Compare it against `ip -4 addr` on a node.
+    quiet: true
+
+# The bastion's two, split from the cluster's because the failure has a different cause: it is
+# almost always a wrong PROXMOX_LAN_CIDR rather than a broken VM. The public one is what molecule
+# SSHes to -- the only address in the scenario reachable from outside; the LAN one is what it
+# reaches the cluster over, the LAN being routed to the NAT segment.
+- name: Note the bastion's two addresses
+  ansible.builtin.set_fact:
+    bastion_lan_ip: "{{ (bastion_ipv4 | ansible.utils.ipaddr(pve_lan_cidr) | first) | default('', true) }}"
+    bastion_public_ip: >-
+      {{ (bastion_ipv4 | difference(bastion_ipv4 | ansible.utils.ipaddr(pve_lan_cidr)) | first)
+         | default('', true) }}
+  vars:
+    bastion_ipv4: "{{ node_agent_ipv4[bastion_node.name] | default([]) }}"
+
+- name: The bastion reported both of its addresses
+  ansible.builtin.assert:
+    that:
+      - bastion_lan_ip | length > 0
+      - bastion_public_ip | length > 0
+    fail_msg: >-
+      bastion-node reported {{ node_agent_ipv4[bastion_node.name] | default([]) }}. It needs one
+      address inside PROXMOX_LAN_CIDR={{ pve_lan_cidr }} -- its {{ pve_bridge_lan }} lease, which
+      is how it reaches the cluster -- and one outside it, its {{ pve_bridge_public }} lease,
+      which is the address molecule connects to. Check PROXMOX_LAN_CIDR describes what
+      {{ pve_bridge_lan }} hands out, and that both bridges have a DHCP server.
+    quiet: true
+
+# The bastion only. A master's or worker's net0 is on the NAT bridge, so from here those addresses
+# answer nothing -- looping over them would burn the full 300s timeout per node and then fail with
+# a message about SSH rather than about routing. Their readiness is checked from the bastion
+# instead, in bastion-prepare.yml, where the LAN addresses are actually reachable.
+- name: Wait for SSH on the bastion
+  ansible.builtin.wait_for:
+    host: "{{ bastion_public_ip }}"
+    port: 22
+    timeout: 300

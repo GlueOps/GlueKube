@@ -8,6 +8,7 @@
   retries: 10
   delay: 30
   until: calico_apiserver_wait.rc == 0
+  changed_when: false
   tags: install_calico
 
 - name: Wait for Calico v3 API Service to be available
@@ -40,6 +41,7 @@
     export KUBECONFIG=/etc/kubernetes/admin.conf
     kubectl get nodes -l use-as-loadbalancer --no-headers -o custom-columns=':metadata.name'
   register: loadbalancer_nodes
+  changed_when: false
   tags: install_calico
 
 - name: Read persisted public interface from each loadbalancer node

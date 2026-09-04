@@ -1,8 +1,7 @@
 ---
 
-- name: Set orchestrator node fact
-  set_fact:
-    orchestrator_node: "{{ groups['masters'][0] }}"
+- name: Select the orchestrator node
+  ansible.builtin.import_tasks: ../select-orchestrator.yaml
 
 - name: Display nodes to add/remove for debugging
   debug:
@@ -16,10 +15,21 @@
     nodes_to_add_list: "{{ hostvars[orchestrator_node]['nodes_to_add'].stdout | from_json }}"
     nodes_to_remove_list: "{{ hostvars[orchestrator_node]['nodes_to_remove'].stdout | from_json }}"
 
+# Which nodes are control plane is decided by the cluster's role label and by the inventory, not
+# by the string "master" appearing in a hostname (#506). The old filter skipped a control-plane
+# node named `cp-1` outright and put a worker named `master-of-puppets` through cordon, drain and
+# remove-single-master.yaml.
+#
+# The two lists are tested differently on purpose, and this is why #475's fix does not transfer:
+# a node being REMOVED is already in the cluster, so its role label is the authority; a node being
+# ADDED has no label and no etcd member yet, so the inventory group is the only thing that can
+# classify it.
 - name: Filter master nodes only
   set_fact:
-    master_nodes_to_add: "{{ nodes_to_add_list | select('search', 'master') | sort | list }}"
-    master_nodes_to_remove: "{{ nodes_to_remove_list | select('search', 'master') | sort | list }}"
+    master_nodes_to_add: "{{ nodes_to_add_list | intersect(groups['masters']) | sort | list }}"
+    master_nodes_to_remove: "{{ nodes_to_remove_list | intersect(control_plane_nodes) | sort | list }}"
+  vars:
+    control_plane_nodes: "{{ hostvars[orchestrator_node]['common_current_control_plane_nodes'].stdout | from_json }}"
 
 - name: Filter nodes to remove (excluding orchestrator)
   set_fact:

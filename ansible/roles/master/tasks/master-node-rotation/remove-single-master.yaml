@@ -1,6 +1,17 @@
 ---
-# Remove a single master node from the cluster
-# All commands run FROM the orchestrator
+# Remove a single master node from the cluster.
+#
+# Every kubectl below is pinned to https://127.0.0.1:6443 rather than going through the kubeconfig's
+# server, which is the ctrp name (kubeadm-stacked-config.yaml.j2 sets controlPlaneEndpoint). That
+# was not a style choice: with the DNS name, *which* apiserver serves a control-plane mutation is
+# decided by whatever DNS returns, and during a rotation the record is mid-update with a 60s TTL.
+# A run reached the apiserver of the very node whose etcd member had just been evicted -- an
+# apiserver that accepts the request and can never commit it -- and `kubectl delete node` came back
+# after 34s with "Timeout: request did not complete within requested timeout". execution_host is
+# always the orchestrator and never the node being removed, so 127.0.0.1 cannot land on the wrong
+# one. certSANs already carries 127.0.0.1, so the existing certificate covers it.
+#
+# All commands run FROM the orchestrator (execution_host).
 
 - name: "Removing master node: {{ node_to_remove }}"
   debug:
@@ -10,33 +21,51 @@
 - name: Cordon node {{ node_to_remove }}
   ansible.builtin.shell: |
     export KUBECONFIG=/etc/kubernetes/admin.conf
-    kubectl cordon {{ node_to_remove }}
+    kubectl --server https://127.0.0.1:6443 --request-timeout=30s \
+      cordon {{ node_to_remove }}
   delegate_to: "{{ execution_host }}"
+  register: cordon_result
+  retries: 3
+  delay: 5
+  until: cordon_result.rc == 0
 
 # Step 2: Drain the node
+#
+# Deliberately no --request-timeout here, unlike the other calls: drain watches evictions, and a
+# per-request timeout cuts that watch short rather than bounding the operation. Its own
+# --timeout=300s is what bounds it.
 - name: Drain node {{ node_to_remove }}
   ansible.builtin.shell: |
     export KUBECONFIG=/etc/kubernetes/admin.conf
-    kubectl drain {{ node_to_remove }} --ignore-daemonsets --delete-emptydir-data --grace-period=120 --timeout=300s
+    kubectl --server https://127.0.0.1:6443 \
+      drain {{ node_to_remove }} --ignore-daemonsets --delete-emptydir-data --grace-period=120 --timeout=300s
   delegate_to: "{{ execution_host }}"
 
 # Step 3: Remove etcd member
 - name: Get etcd member ID for {{ node_to_remove }}
+  # deliberately no `set -e`: grep legitimately misses when the member is already gone, and
+  # the next task guards on the captured id being non-empty rather than on this rc.
   ansible.builtin.shell: |
+    set -o pipefail
     export ETCDCTL_API=3
     etcdctl \
+      --command-timeout=30s --dial-timeout=10s \
       --cacert=/etc/kubernetes/pki/etcd/ca.crt \
       --cert=/etc/kubernetes/pki/etcd/server.crt \
       --key=/etc/kubernetes/pki/etcd/server.key \
       member list | grep -P '(?<![\w-]){{ node_to_remove }}(?![\w-])'  | awk '{print $1}' | tr -d ','
+  args:
+    executable: /bin/bash
   delegate_to: "{{ execution_host }}"
   register: etcd_member_id
+  changed_when: false
   failed_when: false
 
 - name: Remove etcd member {{ node_to_remove }}
   ansible.builtin.shell: |
     export ETCDCTL_API=3
     etcdctl member remove {{ etcd_member_id.stdout }} \
+      --command-timeout=30s --dial-timeout=10s \
       --cacert=/etc/kubernetes/pki/etcd/ca.crt \
       --cert=/etc/kubernetes/pki/etcd/server.crt \
       --key=/etc/kubernetes/pki/etcd/server.key \
@@ -45,13 +74,16 @@
   register: etcd_remove_result
   failed_when: etcd_remove_result.rc != 0 and 'member not found' not in etcd_remove_result.stderr | default('')
 
-# Step 4: Delete the node from Kubernetes
 - name: Delete node {{ node_to_remove }}
   ansible.builtin.shell: |
     export KUBECONFIG=/etc/kubernetes/admin.conf
-    kubectl delete node {{ node_to_remove }}
+    kubectl --server https://127.0.0.1:6443 --request-timeout=30s \
+      delete node {{ node_to_remove }} --ignore-not-found
   delegate_to: "{{ execution_host }}"
   register: delete_result
+  retries: 5
+  delay: 10
+  until: delete_result.rc == 0
 
 - name: "Successfully removed master node: {{ node_to_remove }}"
   debug:

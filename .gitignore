@@ -39,13 +39,41 @@ terraform.rc
 **/keys/**
 kubeconfig
 config.yaml
-# hosts.yaml
-scale-down-worker.yaml
-scale-up-worker.yaml
 hosts.old.yaml
-scale-down-ctrp.yaml
-scale-up-ctrp.yaml
-rotate-master-nodes.yaml
 hosts.ini
 .kube
 .env
+
+# ansible.cfg sends every task result here, including the join token, the certificate key and
+# the AutoGlue org secret. #433 (no_log + file modes) was closed as won't-do, so this file will
+# keep containing credentials -- and this repo is public. Never commit it, never upload it as a
+# CI artifact, never attach it to a support bundle.
+/ansible/ansible.log
+
+# operator inventory: contains private IPs, SSH users and key paths.
+# ship ansible/inventory/hosts.yaml.example instead, or generate it with terraform.
+/ansible/inventory/hosts.yaml
+
+# NOTE: /ansible/molecule/*/inventory/hosts.yaml is deliberately NOT listed here, even though
+# create.yml overwrites it with the bastion's live public IP, SSH user and key path. Molecule
+# resolves inventory.links.hosts before running anything and aborts with "The source path ... does
+# not exist" if the target is missing, so the empty placeholders have to stay tracked. After a
+# molecule run those files are dirty and contain real infrastructure data -- `git checkout` them
+# before committing, and never `git add -A` blind.
+#
+# It is only the bastion now. The cluster inventories -- hosts.yaml with the nodes in it, plus
+# scale-up-ctrp.yaml and the rest -- are templated straight onto the bastion by create.yml's
+# second play and never touch this working tree, so the six ignore lines that used to be here for
+# them are gone.
+
+# Remote-run logs, fetched back by common/bastion-run.yml so a failed step is diagnosable after
+# destroy has removed the bastion. Whatever else happens, /ansible/ansible.log above is NEVER
+# fetched or uploaded.
+/ansible/molecule/*/logs/
+
+# ids of the AutoGlue DNS domain and record that create.yml builds: the yaml one is handed to
+# destroy.yml, the bare one is read by inventory/group_vars/masters.yaml
+/ansible/molecule/*/autoglue-ids.yaml
+/ansible/molecule/*/autoglue-record-id
+
+/platform.json

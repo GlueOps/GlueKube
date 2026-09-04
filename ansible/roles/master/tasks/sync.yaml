@@ -1,16 +1,22 @@
 ---
-- name: Set orchestrator node fact
-  set_fact:
-    orchestrator_node: "{{ groups['masters'][0] }}"
-  run_once: true
+- name: Select the orchestrator node
+  ansible.builtin.import_tasks: select-orchestrator.yaml
+  vars:
+    orchestrator_in_play_required: true
 
+# check_mode: false propagates to every task in compare-node.yaml. The diff has to actually run
+# under --check or there is no plan to show: it only writes scratch lists under /opt/kubernetes
+# and runs read-only kubectl plus the two python diff scripts, so forcing it is safe.
 - name: Compare resources
   ansible.builtin.import_tasks: compare-node.yaml
   when: inventory_hostname == orchestrator_node
+  check_mode: false
 
 - name: Determine if resources are in sync
   set_fact:
-    resources_in_sync: "{{ hostvars[orchestrator_node]['nodes_to_add'].stdout == '[]' and hostvars[orchestrator_node]['nodes_to_remove'].stdout == '[]' }}"
+    resources_in_sync: >-
+      {{ (hostvars[orchestrator_node]['nodes_to_add'].stdout | default('[]', true)) == '[]'
+         and (hostvars[orchestrator_node]['nodes_to_remove'].stdout | default('[]', true)) == '[]' }}
   run_once: true
 
 - name: Report that resources are in sync
@@ -27,8 +33,8 @@
 
 - name: Parse nodes to add/remove as lists
   set_fact:
-    nodes_to_add_list: "{{ hostvars[orchestrator_node]['nodes_to_add'].stdout | from_json }}"
-    nodes_to_remove_list: "{{ hostvars[orchestrator_node]['nodes_to_remove'].stdout | from_json }}"
+    nodes_to_add_list: "{{ (hostvars[orchestrator_node]['nodes_to_add'].stdout | default('[]', true)) | from_json }}"
+    nodes_to_remove_list: "{{ (hostvars[orchestrator_node]['nodes_to_remove'].stdout | default('[]', true)) | from_json }}"
   run_once: true
 
 #scale up
@@ -49,10 +55,17 @@
     values: "{{ taint_label_values }}"
   when: inventory_hostname == orchestrator_node
 
+# Only the control-plane nodes among the removals belong in the ctrp record, and which ones those
+# are comes from the cluster's role label rather than the hostname (#506). nodes_to_remove_list is
+# what the cluster holds and the inventory no longer names, so every entry is a live node and the
+# label answers for all of them.
 - name: Update DNS records and wait for propagation
   ansible.builtin.include_tasks: master-node-rotation/update-dns-records.yaml
   vars:
-    nodes_to_remove: "{{ nodes_to_remove_list | select('search', 'master') | list }}"
+    nodes_to_remove: >-
+      {{ nodes_to_remove_list
+         | intersect(hostvars[orchestrator_node]['common_current_control_plane_nodes'].stdout | from_json)
+         | sort | list }}
   when: inventory_hostname == orchestrator_node
 
 # scale down

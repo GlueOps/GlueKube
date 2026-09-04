@@ -1,16 +1,18 @@
-- name: Print Kubeadm join node command
-  ansible.builtin.command: kubeadm token create --print-join-command --ttl 10m
-  when: inventory_hostname == groups['masters'][0]
-  register: join_command
+---
+# Worker side of the join: the same shared credentials as the control plane (#474), then the
+# worker JoinConfiguration -- which differs from the master one by carrying the containerd
+# criSocket and the kubelet patch directory instead of a controlPlane block.
+
+# The gate lives here rather than inside create-join-credentials.yaml (#486). This play is
+# per-host and spans workers and masters both, so inventory_hostname really is each node in turn
+# and the condition picks the orchestrator. The rotation caller cannot use this expression, since
+# run_once pins inventory_hostname to the play's first host -- see the note in that file.
+- name: Create the join credentials on the orchestrator
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: create-join-credentials.yaml
+  when: inventory_hostname == orchestrator_node
   tags: create_join_command
-
-
-- name: Get Join Token
-  ansible.builtin.command: kubeadm token create --ttl 10m
-  when: inventory_hostname == groups['masters'][0]
-  register: join_token
-  tags: create_join_command
-
 
 - name: Generate Kubeadm Join configuration
   ansible.builtin.template:

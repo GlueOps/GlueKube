@@ -1,0 +1,22 @@
+---
+# ansible-lint config. Run from the repo root:
+#
+#   ANSIBLE_ROLES_PATH=$PWD/ansible/roles ansible-lint ansible/playbooks ansible/roles
+#
+# `.ansible-lint-ignore` next to this file is a BASELINE, not a waiver. It records the 152
+# violations that existed when linting was first turned on (#460), as 68 file+rule entries, so
+# that CI could start gating immediately instead of waiting for the cleanup. The file is
+# expected to shrink; nothing should ever be added to it by hand.
+#
+# Known limitation, measured rather than assumed: entries are per file + rule, so once a file is
+# listed for a rule, a *second* violation of that same rule in that same file is silenced too.
+# Planting a no-changed-when task in join-nodes.yaml (already listed for it) passes; planting the
+# same task in install-calico.yaml (not listed for it) fails, as does any violation of a rule
+# nothing is listed for. `syntax-check` cannot be ignored at all, by design.
+
+profile: production
+
+exclude_paths:
+  - .github/
+  # generated at create time and overwritten with live infrastructure data
+  - ansible/molecule/*/inventory/hosts.yaml

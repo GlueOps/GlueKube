@@ -3,6 +3,26 @@
   hosts: masters
   become: true
   serial: 1
+  vars:
+    # Defaulted ON for this playbook (#486). The role task defaults it to false, which is the right
+    # default for the guard in isolation: it is what stops a stale .env from silently rewriting the
+    # cluster's kubeadm-config ConfigMap, the copy every later `kubeadm join` and `kubeadm upgrade`
+    # reads (#450).
+    #
+    # It is set true here because on every cluster built before the etcd listen-metrics-urls change
+    # the rendered config legitimately differs from the stored one, so the guard fires on the first
+    # run of an operation that is otherwise routine, and the documented answer was always "re-run
+    # with the flag". Defaulting it removes that step -- and the safety it bought.
+    #
+    # The trade this makes, stated plainly: the assert no longer blocks. The diff is still computed
+    # and still printed by "Report the configuration difference" whenever the two disagree, so the
+    # change is visible in the run output rather than silent -- but nothing stops it. Read that task's
+    # output. To get the guard back for a single run:
+    #
+    #   ansible-playbook ... playbooks/rotate-certs-with-config.yaml -e allow_config_change=false
+    #
+    # (extra-vars outrank play vars, so that override always wins.)
+    allow_config_change: true
   tasks:
     - name: Rotate certs with kubeadm config and refresh control plane
       ansible.builtin.include_role:

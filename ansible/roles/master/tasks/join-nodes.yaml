@@ -4,12 +4,13 @@
     kubectl get nodes --no-headers -o custom-columns=":metadata.name"
   tags: join_nodes
   register: current_cluster_nodes
-  when: inventory_hostname == groups['masters'][0]
+  changed_when: false
+  when: inventory_hostname == orchestrator_node
 
 - name: List of nodes will join the cluster
   ansible.builtin.debug:
     var: inventory_hostname
-  when: inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[groups['masters'][0]]['current_cluster_nodes'].stdout_lines
+  when: inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[orchestrator_node]['current_cluster_nodes'].stdout_lines
   tags: join_nodes
 
 - name: Create PKI directory
@@ -17,7 +18,7 @@
     path: /etc/kubernetes/pki/
     state: directory
     mode: '0755'
-  when: inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[groups['masters'][0]]['current_cluster_nodes'].stdout_lines
+  when: inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[orchestrator_node]['current_cluster_nodes'].stdout_lines
 
 - name: Generate Authentication Configuration
   ansible.builtin.template:
@@ -27,18 +28,30 @@
     group: root
     mode: "0644"
   tags: join_nodes
-  when: inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[groups['masters'][0]]['current_cluster_nodes'].stdout_lines
+  when: inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[orchestrator_node]['current_cluster_nodes'].stdout_lines
 
 
+# Re-render the per-node kubelet patch before the join. `patches.directory` in
+# kubeadm-join-config.j2 points here; without the file the join silently falls back to the
+# cluster-wide reservations sized from masters[0] (#449).
+- name: Render the per-node kubelet patch
+  ansible.builtin.import_tasks: ../../common/tasks/render-kubelet-patch.yaml
+  tags: join_master
+  when: inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[orchestrator_node]['current_cluster_nodes'].stdout_lines
+
+
+# join_master, not join_worker: this joins a control-plane node. `--tags join_worker` reaching
+# the control-plane join was the opposite of what anyone typing it intends -- the worker join
+# lives in roles/worker/tasks/join-nodes.yaml and keeps that tag (#476).
 - name: Join the control-node to the Kubernetes cluster
-  ansible.builtin.command: kubeadm join --config /opt/kubeadm_join.yaml 
-  args:
-    creates: /opt/kubernetes/join_command.sh
-  tags: join_worker
-  when: inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[groups['masters'][0]]['current_cluster_nodes'].stdout_lines
+  ansible.builtin.command: kubeadm join --config /opt/kubeadm_join.yaml
+  tags: join_master
+  when: inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[orchestrator_node]['current_cluster_nodes'].stdout_lines
 
 
-# create a directory for the kubeconfig file
+# kubeadm_config, not kubeconfig_setup: this renders the kubeadm ClusterConfiguration, not a
+# kubeconfig. kubeadm-init.yaml keeps kubeconfig_setup for the tasks that really do handle
+# admin.conf (#476).
 - name: Generate Kubeadm configuration
   ansible.builtin.template:
     src: "kubeadm-stacked-config.yaml.j2"
@@ -46,6 +59,6 @@
     owner: root
     group: root
     mode: "0644"
-  tags: kubeconfig_setup
+  tags: kubeadm_config
   when: 
-    - inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[groups['masters'][0]]['current_cluster_nodes'].stdout_lines
+    - inventory_hostname in groups['masters'] and inventory_hostname not in hostvars[orchestrator_node]['current_cluster_nodes'].stdout_lines

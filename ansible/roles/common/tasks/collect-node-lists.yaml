@@ -1,0 +1,91 @@
+
+---
+# Build the two lists every node diff is computed from: what the inventory says the cluster
+# should hold, and what kubectl says it holds right now. Shared by the sync diff and the rotation
+# diff (#474) -- those two files were 58 lines apart by four, and that gap is where the "refuse to
+# diff against an empty cluster" guard went missing from the rotation copy.
+#
+# Imported statically rather than via include_role: the sync path wraps its import in
+# `check_mode: false` (sync.yaml) and the rotation path in `run_once`/`delegate_to`
+# (rotate-master-nodes.yaml), and a static import keeps those keywords applying exactly as they
+# did when this lived inside each caller. Staying inside the caller's role also means
+# compare-to-add.py still resolves from roles/master/files/.
+
+- name: Current work nodes
+  ansible.builtin.debug:
+    var: groups['workers']
+
+# Same reason as first-node-upgrade.yaml (#486): the sync and rotation paths write their scratch
+# node lists here but never run prepare-nodes, so on a cluster built before this directory was
+# created on every master it exists only on the original `kubeadm init` node. lineinfile and copy
+# do not create parent directories, so without this the diff fails on whichever master the election
+# picks if that is not the original one.
+- name: Ensure the GlueKube state directory exists
+  ansible.builtin.file:
+    path: /opt/kubernetes
+    state: directory
+    mode: "0755"
+
+- name: Remove the stale desired-node list
+  ansible.builtin.file:
+    path: "/opt/kubernetes/new_nodes_list"
+    state: absent
+
+- name: Remove the stale current-node list
+  ansible.builtin.file:
+    path: "/opt/kubernetes/current_nodes_list"
+    state: absent
+
+- name: Write new nodes list
+  ansible.builtin.lineinfile:
+    path: "/opt/kubernetes/new_nodes_list"
+    line: "{{ item }}"
+    create: true
+    state: present
+    mode: "0644"
+  with_items: "{{ groups['workers'] + groups['masters'] }}"
+
+- name: Write current nodes list
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      export KUBECONFIG=/etc/kubernetes/admin.conf
+      kubectl get nodes -o json | jq -r '.items[].metadata.name' | sort \
+        | tee /opt/kubernetes/current_nodes_list
+    executable: /bin/bash
+  register: common_current_nodes_list
+  changed_when: false
+
+# Without this an empty kubectl result reads as "the cluster holds nothing", which makes every
+# inventory node look like an addition and -- on the rotation path -- every cluster node look like
+# a removal.
+- name: Refuse to diff against an empty cluster
+  ansible.builtin.assert:
+    that: common_current_nodes_list.stdout_lines | length > 0
+    fail_msg: >-
+      kubectl returned no nodes - refusing to compute a node diff.
+
+- name: Copy the add-diff script
+  ansible.builtin.copy:
+    src: "compare-to-add.py"
+    dest: "/opt/kubernetes/compare-to-add.py"
+    mode: "0644"
+
+# The cluster's own answer to "which of these nodes are control plane", registered here so both
+# diffs read it from one place (#506). The alternative both callers used to use -- matching the
+# string "master" in the hostname -- silently skipped a control-plane node named `cp-1` and
+# selected a worker named `master-of-puppets` for cordon, drain and removal.
+#
+# Local apiserver and a bounded request, like the rest of the rotation: everything downstream is
+# derived from this list, so it stalling is worse than it failing.
+- name: Register the control-plane nodes the cluster reports
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      export KUBECONFIG=/etc/kubernetes/admin.conf
+      kubectl --server https://127.0.0.1:6443 --request-timeout=30s \
+        get nodes -l node-role.kubernetes.io/control-plane -o json \
+        | jq -c '[.items[].metadata.name] | sort'
+    executable: /bin/bash
+  register: common_current_control_plane_nodes
+  changed_when: false

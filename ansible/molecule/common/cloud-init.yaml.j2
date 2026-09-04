@@ -1,0 +1,68 @@
+#cloud-config
+# Shared by all three molecule scenarios. Rendered once per node by
+# common/proxmox-provision.yml and uploaded to the Proxmox host as
+# <snippet storage>:snippets/<snippet_prefix>-<node_name>.yaml, then attached with
+# `cicustom: user=...`. A scenario that needs its own can set `cloudinit_template` to a path.
+#
+# IMPORTANT: cicustom user= REPLACES the user-data Proxmox generates -- it does not merge with
+# it. Everything qm would normally inject (hostname, ciuser, cipassword, sshkeys) is gone unless
+# it is in this file. That is why `hostname` is here and why the file is rendered per node
+# instead of once: without it all six VMs boot with the template's hostname, they register as one
+# node, and tests/test_cluster_healthy.yaml fails its "every inventory node is present" assert.
+#
+# ipconfig0 is a separate cloud-init file (network-config), so DHCP is still configured by
+# Proxmox and must NOT be repeated here.
+hostname: {{ node_name }}
+manage_etc_hosts: true
+package_reboot_if_required: true
+package_update: true
+package_upgrade: true
+packages:
+  - curl
+  # create.yml reads the node addresses back out of the guest agent -- without this the whole
+  # inventory never gets built.
+  - qemu-guest-agent
+ssh_pwauth: false
+users:
+  - name: cluster
+    groups: sudo
+    ssh_authorized_keys:
+      - "{{ public_key }}"
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+write_files:
+  - content: |
+      net.bridge.bridge-nf-call-iptables   = 1
+      net.bridge.bridge-nf-call-ip6tables  = 1
+      net.ipv4.ip_forward                  = 1
+    path: /etc/sysctl.d/k8s.conf
+mounts:
+  - [ swap, null ]
+runcmd:
+  - sudo sysctl --system
+  - sudo passwd -d root
+  - sudo systemctl enable --now qemu-guest-agent
+  # roles/master/tasks/apply-calico-firewall.yaml reads this to build the Calico HostEndpoint's
+  # interfaceName for nodes labelled use-as-loadbalancer. It used to be the literal "eth0", which
+  # is a Hetzner-ism -- a virtio NIC on Proxmox comes up as ens18. Derive it from the default
+  # route instead so the file is right on any provider.
+  #
+  # A molecule node now has exactly ONE NIC, on the NAT bridge, so there is exactly one default
+  # route and `head -n1` is no longer picking between two. That ambiguity -- and the prerequisite
+  # about the LAN bridge's DHCP scope offering no router option -- is gone from the nodes; it now
+  # applies only to the bastion, which is the one VM left with two NICs.
+  #
+  # WHAT THIS NAMES CHANGED. It used to be the public bridge's interface; it is now the NAT
+  # bridge's, the node's only one. So here this file names the interface the node reaches the
+  # internet THROUGH, not one anything outside reaches it on -- and the HostEndpoint policy it
+  # drives (calico-global-network-policy.yaml.j2: preDNAT, allow 80/443/ICMP, then deny) would be
+  # an ingress default-deny on that path.
+  #
+  # It is inert here: no molecule inventory labels a node use-as-loadbalancer, so
+  # apply-calico-firewall.yaml's loop is empty. In production, where nodes DO carry that label and
+  # net0 is a real public NIC, the meaning is unchanged. Worth knowing before anyone adds the
+  # label to a scenario.
+  - mkdir -p /etc/glueops
+  - ip route show default | awk '{print $5}' | head -n1 > /etc/glueops/public-interface
+  - chmod 0644 /etc/glueops/public-interface
+  - sudo systemctl disable --now unattended-upgrades.service apt-daily.timer apt-daily-upgrade.timer apt-daily.service apt-news.service

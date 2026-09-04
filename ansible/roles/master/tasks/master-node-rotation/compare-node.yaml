@@ -1,56 +1,33 @@
-- name: Current work nodes
-  ansible.builtin.debug:
-    var: groups['workers']
+---
+# The rotation diff. It shares its node lists with the sync diff (#474) but deliberately computes
+# nodes_to_remove differently: a rotation replaces the whole control plane, so every node the
+# cluster currently holds is a removal candidate and rotate-nodes.yaml narrows that to the masters
+# and drops the orchestrator. Only nodes_to_add is a real inventory-vs-cluster diff.
+#
+# Keep this asymmetry in mind before merging the two files further -- they are not the same
+# operation, which is why only the list-building half is shared.
 
-- name: Remove file (delete file)
-  ansible.builtin.file:
-    path: "/opt/kubernetes/new_nodes_list"
-    state: absent
+- name: Collect the inventory and cluster node lists
+  ansible.builtin.import_tasks: ../../../common/tasks/collect-node-lists.yaml
 
-
-- name: Remove file (delete file)
-  ansible.builtin.file:
-    path: "/opt/kubernetes/current_nodes_list"
-    state: absent
-
-
-- name: Write new nodes list
-  ansible.builtin.lineinfile:
-    path: "/opt/kubernetes/new_nodes_list"
-    line: "{{ item }}"
-    create: true
-    state: present
-    mode: "0644"
-  with_items: "{{ groups['workers'] + groups['masters'] }}"
-
-- name: Write current nodes list
+- name: Register current master nodes for removal(filter for master nodes will applied alter)
   ansible.builtin.shell: |
+    set -euo pipefail
     export KUBECONFIG=/etc/kubernetes/admin.conf
-    kubectl get nodes -o json | jq -r '.items[] | select(.metadata.labels["kubernetes.io/hostname"]) | .metadata.name' | sort > /opt/kubernetes/current_nodes_list
-
-- name: Copy Compare python script
-  ansible.builtin.copy:
-    src: "compare-to-add.py"
-    dest: "/opt/kubernetes/compare-to-add.py"
-    mode: "0644"
-
-
-- name: Copy Compare python script
-  ansible.builtin.copy:
-    src: "compare-to-remove.py"
-    dest: "/opt/kubernetes/compare-to-remove.py"
-    mode: "0644"
-
-- name: Register worker nodes to remove
-  ansible.builtin.shell: |
-    export KUBECONFIG=/etc/kubernetes/admin.conf
-    kubectl get nodes -o json | jq -c '[.items[] | select(.metadata.labels["kubernetes.io/hostname"]) | .metadata.name] | sort'
+    # Local apiserver and a bounded request, like the rest of the rotation: this list is what the
+    # whole plan is derived from, so it stalling is worse than it failing.
+    kubectl --server https://127.0.0.1:6443 --request-timeout=30s \
+      get nodes -o json | jq -c '[.items[].metadata.name] | sort'
+  args:
+    executable: /bin/bash
   register: nodes_to_remove
+  changed_when: false
 
 
-- name: Register worker nodes to add
+- name: Register master nodes to replace with above master nodes
   ansible.builtin.command: python3 /opt/kubernetes/compare-to-add.py
   register: nodes_to_add
+  changed_when: false
 
 # debug
 - name: List of nodes changes

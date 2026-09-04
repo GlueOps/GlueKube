@@ -1,0 +1,35 @@
+---
+# Everything the two bastion-side task files share. Loaded with
+# `vars_files: [../common/bastion-vars.yml]` by every play that targets `hosts: bastion` --
+# create.yml's second play, and the converge/verify/side-effect wrappers.
+
+# Where the shipped GlueKube tree lives on the bastion. /opt/gluekube on purpose: it is the same
+# path the hosted flow uses (the Dockerfile's WORKDIR), which is what makes
+# roles/common/tasks/prepare-node.yaml's `copy: src=/opt/gluekube/kubernetes-release.key` -- an
+# absolute CONTROLLER path -- work here with no change to the role.
+bastion_gluekube_root: /opt/gluekube
+
+# Sourced by every remote ansible-playbook. Root-only and written with no_log, because
+# inventory/group_vars reads CERTIFICATE_KEY, RANDOM_TOKEN and AUTOGLUE_ORG_SECRET out of the
+# environment: putting them in a task's `environment:` instead would print them in molecule's
+# output, which is `log: true` on two of the three scenarios.
+bastion_env_file: "{{ bastion_gluekube_root }}/.env"
+
+# The scenario, on both sides. MOLECULE_SCENARIO_NAME is exported into every playbook molecule
+# runs -- create, converge, each side effect, verify -- which `playbook_dir | basename` is not:
+# the side-effect wrappers live one directory deeper.
+bastion_scenario_name: "{{ lookup('env', 'MOLECULE_SCENARIO_NAME') }}"
+bastion_local_scenario_dir: "{{ lookup('env', 'MOLECULE_SCENARIO_DIRECTORY') }}"
+# realpath, not a bare "/../..": community.general.archive names its members relative to the
+# PARENT of the path it is given, and the parent of an unnormalised ".../test-cluster/../.." is
+# ".../test-cluster/..", which would put every file in the tarball under a literal "..".
+bastion_local_ansible_root: "{{ (bastion_local_scenario_dir ~ '/../..') | realpath }}"
+
+# The mirrored scenario directory. Every remote ansible-playbook chdirs here, so that the repo's
+# relative paths -- keys/vm_node, ../inventory/scale-up-ctrp.yaml, the ../../../playbooks/ imports
+# in the side effects -- resolve exactly as they do under molecule locally.
+bastion_scenario_dir: "{{ bastion_gluekube_root }}/ansible/molecule/{{ bastion_scenario_name }}"
+
+# Where a remote run's stdout goes. Fetched back to the scenario directory so a failure is
+# diagnosable even when the bastion is gone; NEVER ansible.log, which holds the join token.
+bastion_log_dir: "{{ bastion_gluekube_root }}/logs"

@@ -16,12 +16,21 @@
 # Tasks that run ON the orchestrator
 - name: Copy join command and reupload certs on orchestrator
   block:
-    - name: Copy join command on orchestrator
-      ansible.builtin.include_tasks: master-node-rotation/copy-join-command.yaml
+    # No join config is rendered here: master-node-rotation/join-nodes.yaml renders it on the
+    # joining node itself, so the rotation only needs the credentials (#474).
+    # No `when: inventory_hostname == orchestrator_node` here, unlike the steady-state callers:
+    # this whole file runs under `run_once`, so inventory_hostname is the play's first host
+    # (groups['masters'][0]) no matter which node the block delegates to. The block's delegate_to
+    # below is what puts these commands on the orchestrator, and run_once broadcasts the registered
+    # results to every host in the play, so hostvars[orchestrator_node] carries them.
+    - name: Create the join credentials on orchestrator
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: create-join-credentials.yaml
 
     - name: Reupload certs on orchestrator
       ansible.builtin.include_tasks: reupload-certs.yaml
-  delegate_to: "{{ execution_host | default(groups['masters'][0]) }}"
+  delegate_to: "{{ execution_host | default(orchestrator_node) }}"
 
 - name: Join new node to cluster
   block:
@@ -31,15 +40,19 @@
       ansible.builtin.include_tasks: master-node-rotation/join-nodes.yaml
   delegate_to: "{{ node_to_add }}"
 
+# Pinned to the local apiserver for the same reason remove-single-master.yaml is: the kubeconfig's
+# server is the ctrp name, and during a rotation that record is mid-update.
 - name: Wait for new master to be ready
   ansible.builtin.shell: |
     export KUBECONFIG=/etc/kubernetes/admin.conf
-    kubectl wait --for=condition=Ready node/{{ node_to_add }} --timeout=120s
-  delegate_to: "{{ execution_host | default(groups['masters'][0]) }}"
+    kubectl --server https://127.0.0.1:6443 --request-timeout=30s \
+      wait --for=condition=Ready node/{{ node_to_add }} --timeout=120s
+  delegate_to: "{{ execution_host | default(orchestrator_node) }}"
   register: node_ready
   retries: 5
   delay: 10
   until: node_ready.rc == 0
+  changed_when: false
 
 - name: "Successfully added master node: {{ node_to_add }}"
   debug:

@@ -23,10 +23,15 @@
   tags: join_nodes
 
 
+# Same patch the steady-state join renders -- a rotation replaces control-plane hardware, which
+# is exactly the case where the incoming node's size differs from the cluster-wide config (#449).
+- name: Render the per-node kubelet patch
+  ansible.builtin.import_tasks: ../../../common/tasks/render-kubelet-patch.yaml
+  tags: join_nodes
+
+
 - name: Join the control-node to the Kubernetes cluster
   ansible.builtin.command: kubeadm join --config /opt/kubeadm_join.yaml
-  args:
-    creates: /opt/kubernetes/join_command.sh
   tags: join_nodes
 
 - name: Generate Kubeadm configuration
@@ -36,4 +41,4 @@
     owner: root
     group: root
     mode: "0644"
-  tags: kubeconfig_setup
+  tags: kubeadm_config

@@ -1,0 +1,20 @@
+---
+# Molecule runs this; the bastion runs tests/test_scale_down_worker.yaml.
+#
+# The cluster nodes have no address molecule can reach, so every step that touches them is a
+# thin play against the bastion that shells out to ansible-playbook there. The playbook it
+# runs is unchanged and unaware -- common/bastion-prepare.yml mirrors the repo at
+# /opt/gluekube/ansible and the remote run chdirs to the scenario directory, so its relative paths
+# resolve exactly as they do locally.
+- name: Check the workers scaled down from the bastion
+  hosts: bastion
+  gather_facts: false
+  vars_files:
+    - ../../common/bastion-vars.yml
+  tasks:
+    - name: Run tests/test_scale_down_worker.yaml on the bastion
+      ansible.builtin.include_tasks: ../../common/bastion-run.yml
+      vars:
+        bastion_run_name: test_scale_down_worker
+        bastion_run_playbook: tests/test_scale_down_worker.yaml
+        bastion_run_timeout: 900

@@ -1,3 +1,6 @@
+- name: Select the orchestrator node
+  ansible.builtin.import_tasks: select-orchestrator.yaml
+
 - name: Generate Kubeadm configuration
   ansible.builtin.template:
     src: "kubeadm-stacked-config.yaml.j2"
@@ -16,6 +19,123 @@
     mode: "0644"
   tags: rotate-certs-with-config
 
+# The kubeadm config above was re-rendered from this run's environment and inventory. Uploading
+# it replaces the cluster's authoritative kubeadm-config ConfigMap, so an operator running with a
+# stale .env -- an older kubernetes_version, a different service_subnet, a domain_name that has
+# since changed -- would silently rewrite what every subsequent join and upgrade reads. Compare
+# first and refuse unless the change is deliberate (#450).
+#
+# The comparison is limited to the fields this template actually derives from the environment.
+# kubeadm normalises the stored ClusterConfiguration and fills in defaults, so a whole-document
+# equality check would fail on every run and teach everyone to pass the override reflexively.
+- name: Guard the cluster's kubeadm configuration against local drift
+  vars:
+    live_cc: "{{ (live_cluster_config.stdout | default('', true) | from_yaml) | default({}, true) }}"
+    rendered_cc: "{{ (rendered_kubeadm_config.content | b64decode | from_yaml_all | list)
+                     | selectattr('kind', 'defined')
+                     | selectattr('kind', 'equalto', 'ClusterConfiguration')
+                     | first | default({}, true) }}"
+    # certSANs are compared with "0.0.0.0" rejected from BOTH sides (#486). Every cluster built
+    # before this branch has it in the stored ConfigMap -- it was in the template and was removed
+    # here -- so comparing the raw lists would make this guard hard-fail on the first cert
+    # rotation of every existing cluster. The only documented escape, -e allow_config_change=true,
+    # also un-gates the upload at the bottom of this file, so the operator's way past a spurious
+    # diff was to overwrite the cluster's authoritative config. "0.0.0.0" is inert as an apiserver
+    # SAN either way, so dropping it from the comparison is the narrow fix; keeping it in the
+    # template would have been the other.
+    #
+    # etcd is compared too, narrowed the same way apiServer is. The etcd extraArgs carry
+    # listen-metrics-urls, which this branch changes cluster-wide -- without it here the guard
+    # asserted on a subset of what the upload would actually rewrite and reported "no drift" while
+    # silently carrying that change through on an allow_config_change run. dataDir and
+    # imageRepository are deliberately excluded: kubeadm fills them in as defaults and the
+    # template never sets them, so including them would be permanent false drift.
+    live_etcd: "{{ ((live_cc.get('etcd', {}) or {}).get('local', {}) or {}) }}"
+    rendered_etcd: "{{ ((rendered_cc.get('etcd', {}) or {}).get('local', {}) or {}) }}"
+    live_significant: "{{ {'kubernetesVersion': live_cc.get('kubernetesVersion', ''),
+        'controlPlaneEndpoint': live_cc.get('controlPlaneEndpoint', ''),
+        'networking': live_cc.get('networking', {}),
+        'certSANs': (live_cc.get('apiServer', {}) or {}).get('certSANs', [])
+                    | reject('equalto', '0.0.0.0') | sort,
+        'apiServerExtraArgs': (live_cc.get('apiServer', {}) or {}).get('extraArgs', []),
+        'etcd': {'extraArgs': live_etcd.get('extraArgs', []),
+                 'serverCertSANs': live_etcd.get('serverCertSANs', []) | sort,
+                 'peerCertSANs': live_etcd.get('peerCertSANs', []) | sort}} }}"
+    rendered_significant: "{{ {'kubernetesVersion': rendered_cc.get('kubernetesVersion', ''),
+        'controlPlaneEndpoint': rendered_cc.get('controlPlaneEndpoint', ''),
+        'networking': rendered_cc.get('networking', {}),
+        'certSANs': (rendered_cc.get('apiServer', {}) or {}).get('certSANs', [])
+                    | reject('equalto', '0.0.0.0') | sort,
+        'apiServerExtraArgs': (rendered_cc.get('apiServer', {}) or {}).get('extraArgs', []),
+        'etcd': {'extraArgs': rendered_etcd.get('extraArgs', []),
+                 'serverCertSANs': rendered_etcd.get('serverCertSANs', []) | sort,
+                 'peerCertSANs': rendered_etcd.get('peerCertSANs', []) | sort}} }}"
+  tags: rotate-certs-with-config
+  block:
+    # failed_when: false, not ignore_errors -- a missing ConfigMap is a legitimate state to
+    # report through the assert below rather than a task failure with no explanation.
+    - name: Fetch the live ClusterConfiguration from the cluster
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - --kubeconfig=/etc/kubernetes/admin.conf
+          - --namespace=kube-system
+          - get
+          - configmap
+          - kubeadm-config
+          - --output=jsonpath={.data.ClusterConfiguration}
+      register: live_cluster_config
+      changed_when: false
+      failed_when: false
+
+    - name: Read the ClusterConfiguration this run rendered
+      ansible.builtin.slurp:
+        src: "{{ kubeadm_config_file }}"
+      register: rendered_kubeadm_config
+
+    - name: Report the configuration difference
+      ansible.builtin.debug:
+        msg:
+          - "cluster:  {{ live_significant }}"
+          - "rendered: {{ rendered_significant }}"
+      when: live_significant != rendered_significant
+
+    - name: Refuse to silently change the cluster's kubeadm configuration
+      ansible.builtin.assert:
+        that:
+          - live_significant == rendered_significant
+        fail_msg: >-
+          The kubeadm configuration rendered on {{ inventory_hostname }} does not match the
+          cluster's kubeadm-config ConfigMap (the difference is in the task above). Rotating
+          certs would overwrite the cluster's copy with this one. If that is what you want --
+          adding a certSAN, for instance -- re-run with -e allow_config_change=true. If it is
+          not, your local variables are stale: regenerate .env from platform.json with parser.py
+          and source it before running again.
+        quiet: true
+      when: not (allow_config_change | default(false) | bool)
+
+
+# The whole PKI, not just the apiserver (#486). Everything below this task used to be the only
+# certificate work the playbook did -- it regenerated apiserver.{crt,key} and nothing else -- while
+# `playbooks/rotate-certs.yaml`, `roles/master/tasks/rotate-certs.yaml` and `make rotate-certs` were
+# deleted on this branch and readme.md's day-2 table now sends "rotate the control-plane
+# certificates" here. An operator following that renewed one certificate of eleven and was left with
+# etcd/server, etcd/peer, apiserver-etcd-client, front-proxy and the controller-manager/scheduler
+# kubeconfigs expiring on their original schedule.
+#
+# Ordering: this runs BEFORE the apiserver-specific regeneration below, not after. `certs renew`
+# rebuilds apiserver.crt from the cluster's STORED kubeadm-config, so running it last would
+# overwrite the cert the `--config` render produces and silently drop any certSAN change on a run
+# with -e allow_config_change=false, where the upload is skipped and the stored copy is stale.
+# Renewing first and letting the config-driven regeneration have the last word on the apiserver
+# keeps both behaviours.
+#
+# `certs renew all` also rewrites /etc/kubernetes/admin.conf, which is why the kubeconfig copy is
+# refreshed further down.
+- name: Renew the full control-plane PKI
+  ansible.builtin.command: kubeadm certs renew all
+  tags: rotate-certs-with-config
+
 - name: Remove existing API server cert files to force regeneration from config
   ansible.builtin.file:
     path: "{{ item }}"
@@ -29,9 +149,15 @@
   ansible.builtin.command: "kubeadm init phase certs apiserver --config {{ kubeadm_config_file }}"
   tags: rotate-certs-with-config
 
+# Only ever runs on an explicit opt-in -- see the guard above. If the rendered configuration
+# already matches the cluster's there is nothing to upload, and if it does not, rewriting the
+# authoritative kubeadm-config ConfigMap is a cluster-wide change that every later `kubeadm join`
+# and `kubeadm upgrade` reads (#450).
 - name: Upload kubeadm ClusterConfiguration to kubeadm-config ConfigMap
   ansible.builtin.command: "kubeadm init phase upload-config kubeadm --config {{ kubeadm_config_file }}"
-  when: inventory_hostname == groups['masters'][0]
+  when:
+    - inventory_hostname == orchestrator_node
+    - allow_config_change | default(false) | bool
   tags: rotate-certs-with-config
 
 - name: Regenerate API server static pod manifest from kubeadm config
@@ -45,27 +171,52 @@
     mode: "0755"
   tags: rotate-certs-with-config
 
-- name: Force restart of kube-apiserver static pod
-  ansible.builtin.command: "mv /etc/kubernetes/manifests/kube-apiserver.yaml /opt/kubernetes/manifests/kube-apiserver.yaml"
+# Parking the manifest is what restarts the apiserver, and it is the one window in this playbook
+# where a host has no control plane. Two things make that window recoverable by re-running rather
+# than a brick that fails at the same task every time (#426):
+#
+#   block/always -- the restore runs even when the wait below exhausts its retries or the block is
+#   interrupted, so the apiserver comes back on the way out instead of staying down until someone
+#   moves the file back by hand on every master.
+#
+#   creates:/removes: on the park -- a recovery run finds the manifest already in /opt and walks
+#   past the task, instead of failing on an `mv` whose source no longer exists and never reaching
+#   the restore. Either guard alone is enough; both are stated because they describe the two
+#   different states a half-finished run can leave behind.
+- name: Restart the kube-apiserver static pod onto the new certificate
   tags: rotate-certs-with-config
+  block:
+    - name: Force restart of kube-apiserver static pod
+      ansible.builtin.command: "mv /etc/kubernetes/manifests/kube-apiserver.yaml /opt/kubernetes/manifests/kube-apiserver.yaml"
+      args:
+        creates: /opt/kubernetes/manifests/kube-apiserver.yaml
+        removes: /etc/kubernetes/manifests/kube-apiserver.yaml
 
-- name: Wait until old kube-apiserver container is removed
-  ansible.builtin.shell: "ctr -n k8s.io containers list | grep kube-apiserver || true"
-  register: old_apiserver_container
-  retries: 18
-  delay: 5
-  until: old_apiserver_container.stdout == ""
-  changed_when: false
-  tags: rotate-certs-with-config
-
-- name: Restore kube-apiserver manifest to recreate static pod
-  ansible.builtin.command: "mv /opt/kubernetes/manifests/kube-apiserver.yaml /etc/kubernetes/manifests/kube-apiserver.yaml"
-  args:
-    removes: /opt/kubernetes/manifests/kube-apiserver.yaml
-  tags: rotate-certs-with-config
+    - name: Wait until old kube-apiserver container is removed
+      ansible.builtin.shell: |
+        set -o pipefail
+        ctr -n k8s.io containers list | grep kube-apiserver || true
+      args:
+        executable: /bin/bash
+      register: old_apiserver_container
+      retries: 18
+      delay: 5
+      until: old_apiserver_container.stdout == ""
+      changed_when: false
+  always:
+    # No condition on this task beyond the file existing: `always` is what makes it run after a
+    # failed wait, and `removes` is what keeps it a no-op when the park itself was skipped.
+    - name: Restore kube-apiserver manifest to recreate static pod
+      ansible.builtin.command: "mv /opt/kubernetes/manifests/kube-apiserver.yaml /etc/kubernetes/manifests/kube-apiserver.yaml"
+      args:
+        removes: /opt/kubernetes/manifests/kube-apiserver.yaml
 
 - name: Verify kube-apiserver static pod container is recreated
-  ansible.builtin.shell: "ctr -n k8s.io containers list | grep kube-apiserver || true"
+  ansible.builtin.shell: |
+    set -o pipefail
+    ctr -n k8s.io containers list | grep kube-apiserver || true
+  args:
+    executable: /bin/bash
   register: new_apiserver_container
   retries: 18
   delay: 5
@@ -73,13 +224,128 @@
   changed_when: false
   tags: rotate-certs-with-config
 
+# Pinned to the LOCAL apiserver (#486). admin.conf's server is the cluster-wide
+# controlPlaneEndpoint -- the multi-value ctrp record -- and this playbook is `serial: 1`, so every
+# other master is still healthy while this one's apiserver is being recreated. Unpinned, this wait
+# was answered by a sibling on the first try and returned `ok` whether or not the node it is
+# guarding had come back: the play then moved on to park the NEXT master's apiserver with the
+# previous one still down, which is how a serial rotation loses more than one control plane at a
+# time. 127.0.0.1 is the node whose manifest was just restored, which is the question being asked.
+# --request-timeout also bounds it: kubectl defaults to no timeout, so a wedged apiserver that
+# accepts the connection and never answers hung here forever instead of consuming a retry.
 - name: Wait for API server to become ready
   ansible.builtin.shell: |
     export KUBECONFIG=/etc/kubernetes/admin.conf
-    kubectl get --raw='/readyz'
+    kubectl --server https://127.0.0.1:6443 --request-timeout=10s get --raw='/readyz'
   register: apiserver_ready
   retries: 18
   delay: 10
   until: apiserver_ready.rc == 0 and ('ok' in apiserver_ready.stdout)
   changed_when: false
+  tags: rotate-certs-with-config
+
+# The apiserver picked up its new certificate by being parked above; the other three static pods
+# hold the certs `certs renew all` just replaced -- etcd/server and etcd/peer on etcd,
+# controller-manager.conf and scheduler.conf on the other two -- and keep serving the old ones
+# until their containers are recreated. Same park/restore shape as the apiserver, and for the same
+# reason: `always` restores the manifests even if the wait exhausts its retries, and
+# `creates:`/`removes:` make a recovery run walk past a half-finished park instead of failing on an
+# `mv` with no source.
+#
+# Deliberately after the apiserver is confirmed ready, not alongside it. On this `serial: 1` play
+# only one master's etcd member is down at a time, so a 3-node cluster keeps quorum -- but this
+# node's apiserver talks to 127.0.0.1:2379 only, so overlapping the two windows would take the
+# local control plane down twice over rather than once.
+- name: Restart the remaining control-plane static pods onto the renewed certificates
+  tags: rotate-certs-with-config
+  vars:
+    remaining_static_pods: [etcd, kube-controller-manager, kube-scheduler]
+  block:
+    - name: Park the remaining static pod manifests
+      ansible.builtin.command: "mv /etc/kubernetes/manifests/{{ item }}.yaml /opt/kubernetes/manifests/{{ item }}.yaml"
+      args:
+        creates: "/opt/kubernetes/manifests/{{ item }}.yaml"
+        removes: "/etc/kubernetes/manifests/{{ item }}.yaml"
+      loop: "{{ remaining_static_pods }}"
+
+    - name: Wait until the parked containers are removed
+      ansible.builtin.shell: |
+        set -o pipefail
+        ctr -n k8s.io containers list | grep {{ item }} || true
+      args:
+        executable: /bin/bash
+      register: old_static_pod_container
+      retries: 18
+      delay: 5
+      until: old_static_pod_container.stdout == ""
+      changed_when: false
+      loop: "{{ remaining_static_pods }}"
+  always:
+    - name: Restore the remaining static pod manifests
+      ansible.builtin.command: "mv /opt/kubernetes/manifests/{{ item }}.yaml /etc/kubernetes/manifests/{{ item }}.yaml"
+      args:
+        removes: "/opt/kubernetes/manifests/{{ item }}.yaml"
+      loop: "{{ remaining_static_pods }}"
+
+- name: Verify the remaining static pod containers are recreated
+  ansible.builtin.shell: |
+    set -o pipefail
+    ctr -n k8s.io containers list | grep {{ item }} || true
+  args:
+    executable: /bin/bash
+  register: new_static_pod_container
+  retries: 18
+  delay: 5
+  until: new_static_pod_container.stdout != ""
+  changed_when: false
+  loop: [etcd, kube-controller-manager, kube-scheduler]
+  tags: rotate-certs-with-config
+
+# Local apiserver and a bounded request, for the same reason as the wait after the park above.
+- name: Wait for the API server to become ready again
+  ansible.builtin.shell: |
+    export KUBECONFIG=/etc/kubernetes/admin.conf
+    kubectl --server https://127.0.0.1:6443 --request-timeout=10s get --raw='/readyz'
+  register: apiserver_ready_after_restart
+  retries: 18
+  delay: 10
+  until: apiserver_ready_after_restart.rc == 0 and ('ok' in apiserver_ready_after_restart.stdout)
+  changed_when: false
+  tags: rotate-certs-with-config
+
+# `certs renew all` rewrote /etc/kubernetes/admin.conf with a fresh client certificate. Without this
+# the copy at /opt/kubernetes/.kube/config -- the one kubeadm-init.yaml puts there and the one an
+# operator on the box actually uses -- keeps the pre-rotation credential and starts failing when the
+# old certificate expires. Same tasks as kubeadm-init.yaml:44-58, so the file ends up identical
+# whichever path wrote it last.
+- name: Create kubeconfig directory
+  ansible.builtin.file:
+    path: /opt/kubernetes/.kube
+    state: directory
+    mode: "0755"
+  tags: rotate-certs-with-config
+
+- name: Refresh the operator kubeconfig with the renewed credential
+  ansible.builtin.copy:
+    src: /etc/kubernetes/admin.conf
+    dest: /opt/kubernetes/.kube/config
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0644"
+  tags: rotate-certs-with-config
+
+# The outcome, printed rather than asserted. What counts as "long enough" depends on when the
+# operator plans to run this again, so this reports the expiry dates and leaves the judgement to
+# them -- but it makes a rotation that silently renewed nothing impossible to mistake for a good
+# run, which is what the old apiserver-only behaviour looked like from the log.
+- name: Read the certificate expiry dates
+  ansible.builtin.command: kubeadm certs check-expiration
+  register: certs_expiration
+  changed_when: false
+  tags: rotate-certs-with-config
+
+- name: Report the certificate expiry dates
+  ansible.builtin.debug:
+    msg: "{{ certs_expiration.stdout_lines }}"
   tags: rotate-certs-with-config

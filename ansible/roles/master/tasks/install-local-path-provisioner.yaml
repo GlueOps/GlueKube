@@ -1,0 +1,81 @@
+# Ownership check before the helm task (#486). The manifest install this chart replaces left
+# deployment/local-path-provisioner, configmap/local-path-config and storageclass/local-path behind
+# with no Helm metadata on them, so on every cluster built before this branch an unguarded
+# `helm install` collides by name and fails. That failure is worse than it looks: install-addons is
+# gated on `inventory_hostname == orchestrator_node`, so it takes the orchestrator out of the run
+# and the two later `hosts: orchestrator` plays in setup-cluster.yaml -- node labels/taints and the
+# Calico firewall -- are skipped rather than reported. `make setup` on an existing cluster failed
+# AND left work undone without saying so.
+#
+# Skipping rather than adopting is deliberate. The StorageClass can be adopted with an annotate and
+# a label, but the Deployment cannot -- spec.selector is immutable and the chart uses different
+# labels -- so a real adoption has to delete the running provisioner first. That is a destructive
+# act, and it is not what a routine `make setup` should do behind the operator's back. It belongs in
+# playbooks/migrate-local-path-provisioner.yaml, which does exactly that, on purpose, once.
+#
+# argv:, not cmd:, for the same reason as the migration playbook: ansible.builtin.command shlex
+# splits cmd and eats the escapes in a jsonpath.
+- name: Look up who owns the local-path storage class
+  ansible.builtin.command:
+    argv:
+      - kubectl
+      - --kubeconfig=/etc/kubernetes/admin.conf
+      - get
+      - storageclass
+      - local-path
+      - -o
+      - jsonpath={.metadata.labels.app\.kubernetes\.io/managed-by}
+  register: master_lpp_storageclass_owner
+  changed_when: false
+  failed_when: false
+  tags: install_local-path-provisioner
+
+# Absent (rc != 0) is a fresh cluster and installs normally; "Helm" is this chart already in place
+# and reconciles normally. Anything else is the manifest install.
+- name: Determine whether a manifest based install is in the way
+  ansible.builtin.set_fact:
+    master_lpp_unowned: >-
+      {{ master_lpp_storageclass_owner.rc == 0
+         and (master_lpp_storageclass_owner.stdout | trim) != 'Helm' }}
+  tags: install_local-path-provisioner
+
+- name: Report that local-path-provisioner needs migrating before Helm can manage it
+  ansible.builtin.debug:
+    msg: >-
+      storageclass/local-path exists and is not managed by Helm
+      (app.kubernetes.io/managed-by={{ master_lpp_storageclass_owner.stdout | trim | default('unset', true) }}),
+      so this cluster still has the manifest based install. Skipping the Helm release rather than
+      failing the play on a name collision -- the existing provisioner keeps running and nothing
+      here is changed. To move it onto the chart, run `make migrate-local-path-provisioner` once
+      (or, from ansible/, `ansible-playbook -i inventory/hosts.yaml
+      playbooks/migrate-local-path-provisioner.yaml`); it adopts the storage class, removes the
+      manifest resources and installs the release.
+  when: master_lpp_unowned | bool
+  tags: install_local-path-provisioner
+
+- name: Create local-path-provisioner values file
+  ansible.builtin.template:
+    src: local-path-provisioner-values.yaml.j2
+    dest: /opt/kubernetes/local-path-provisioner-values.yaml
+    mode: "0644"
+  when: not (master_lpp_unowned | bool)
+  tags: install_local-path-provisioner
+
+- name: Deploy local-path-provisioner with Helm
+  kubernetes.core.helm:
+    name: local-path-provisioner
+    chart_ref: local-path-provisioner
+    chart_version: 0.0.30
+    chart_repo_url: https://charts.containeroo.ch
+    release_namespace: local-path-storage
+    create_namespace: true
+    values_files:
+      - /opt/kubernetes/local-path-provisioner-values.yaml
+    kubeconfig: /etc/kubernetes/admin.conf
+    wait: "{{ master_lpp_helm_wait | default(false) | bool }}"
+    force: "{{ master_lpp_helm_force | default(false) | bool }}"
+  # The migration playbook adopts the storage class and deletes the manifest resources BEFORE it
+  # includes this file, so master_lpp_unowned is false by the time it gets here and the release
+  # installs as it should. This gate only ever fires on the steady-state path.
+  when: not (master_lpp_unowned | bool)
+  tags: install_local-path-provisioner

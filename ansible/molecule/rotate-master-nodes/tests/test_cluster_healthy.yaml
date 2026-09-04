@@ -4,19 +4,142 @@
   become: true
   gather_facts: true
   tasks:
-    - name: Get Kubernetes Nodes Status
+    # A point-in-time Ready check fails on a legitimate reconvergence. Removing a control-plane
+    # node does not stop its apiserver, so a worker whose kubelet is pinned to that apiserver
+    # keeps talking to it until the connection breaks: the node misses heartbeats and the node
+    # controller marks it NotReady for one nodeMonitorGracePeriod (~50s) before the kubelet
+    # re-resolves the ctrp record onto a surviving master and recovers. A scale-cluster run
+    # failed here on exactly that, twelve seconds after this same assertion had passed against
+    # the same cluster.
+    #
+    # Retrying IS the assertion: the cluster is required to reach all-Ready, not to have been
+    # all-Ready at the first instant it was asked.
+    - name: Wait for every node to report Ready
       ansible.builtin.shell: |
         export KUBECONFIG=/etc/kubernetes/admin.conf
         kubectl get nodes --no-headers
       register: kube_nodes
       changed_when: false
+      retries: 12
+      delay: 10
+      # The node count is part of the condition on purpose: a kubectl that fails outright
+      # reject()s to length 0 exactly like an all-Ready cluster does, so emptiness alone would
+      # satisfy the loop on the first attempt and pass this test on no evidence whatsoever.
+      until: >-
+        kube_nodes.stdout_lines | default([]) | length > 0 and
+        kube_nodes.stdout_lines | default([]) | reject('search', ' Ready ') | list | length == 0
+      # Not fatal on its own. Failing here would abort the play before the diagnostics below
+      # ran, on exactly the runs that need them; the two fail tasks after them decide the result.
+      ignore_errors: true
 
     - name: Debug Node Status Output
       ansible.builtin.debug:
         msg: "{{ kube_nodes.stdout_lines }}"
 
+    # The loop below iterates the node list, so an empty list is a vacuous pass: a kubectl that
+    # never answered would report the cluster healthy. Checked separately so the two say what
+    # actually went wrong.
+    - name: Fail if the node list could not be read
+      ansible.builtin.fail:
+        msg: >-
+          kubectl get nodes returned no nodes after 120s
+          (rc {{ kube_nodes.rc | default('n/a') }}):
+          {{ kube_nodes.stderr | default('') | trim }}
+      when: kube_nodes.stdout_lines | default([]) | length == 0
+
     - name: Fail if any node is not Ready
       ansible.builtin.fail:
-        msg: "One or more Kubernetes nodes are NOT in Ready state!"
+        msg: "Node is still not Ready after 120s: {{ item }}"
       when: "' Ready ' not in item"
       loop: "{{ kube_nodes.stdout_lines }}"
+    
+
+    - name: Get node names
+      ansible.builtin.shell: |
+        export KUBECONFIG=/etc/kubernetes/admin.conf
+        kubectl get nodes --no-headers -o custom-columns=':metadata.name'
+      register: nodes
+      changed_when: false
+
+    # A rotate does not converge the cluster onto the masters group: compare-node.yaml marks
+    # *every* node currently in the cluster for removal and only the inventory masters that are
+    # not in the cluster yet for addition, so what survives a rotation is the newly added masters
+    # plus the workers -- never the whole masters group. After `rotate_master_nodes` the inventory
+    # lists master-node-1..6 while the cluster holds 4,5,6; after `second_rotate_master_nodes` it
+    # lists 4..9 while the cluster holds 7,8,9. The inventory the side_effect replaced, saved
+    # alongside as hosts.old.yaml, is what tells the new masters from the rotated-out ones.
+    - name: Locate the inventory the last rotation replaced
+      ansible.builtin.set_fact:
+        previous_inventory: "{{ lookup('first_found', candidate_paths, errors='ignore') | default('', true) }}"
+      vars:
+        # This playbook runs both directly (side_effect, playbook_dir is tests/) and imported by
+        # verify.yaml (playbook_dir is the scenario root).
+        candidate_paths:
+          - "{{ playbook_dir }}/inventory/hosts.old.yaml"
+          - "{{ playbook_dir }}/../inventory/hosts.old.yaml"
+          - "{{ playbook_dir }}/../../inventory/hosts.old.yaml"
+          - "inventory/hosts.old.yaml"
+          - "../inventory/hosts.old.yaml"
+
+    # .get() rather than [...] all the way down so a missing or half-written old inventory
+    # degrades to "nothing was rotated out" instead of an undefined-variable traceback.
+    - name: Read the masters the replaced inventory listed
+      ansible.builtin.set_fact:
+        previous_masters: "{{ (lookup('file', previous_inventory) | from_yaml | default({}, true)).get('all', {}).get('children', {}).get('masters', {}).get('hosts', {}) | list if previous_inventory | length > 0 else [] }}"
+
+    - name: Work out which masters the last rotation added
+      ansible.builtin.set_fact:
+        rotated_masters: "{{ groups['masters'] | difference(previous_masters) }}"
+
+    - name: Debug the rotation the cluster is being checked against
+      ansible.builtin.debug:
+        msg: >-
+          previous inventory: {{ previous_inventory | default('none', true) }},
+          masters it listed: {{ previous_masters }},
+          masters this rotation added: {{ rotated_masters }}
+
+    # Empty difference means no rotation has happened yet -- the first health check of the
+    # sequence, or a hosts.old.yaml left behind by an earlier run -- and then the cluster is
+    # expected to hold the full masters group.
+    - name: Build the expected node set
+      ansible.builtin.set_fact:
+        expected_masters: "{{ rotated_masters if rotated_masters | length > 0 else groups['masters'] }}"
+
+    - name: Every inventory node is present and Ready
+      ansible.builtin.assert:
+        that:
+          - nodes.stdout_lines | sort == (expected_masters + groups['workers']) | sort
+        fail_msg: >-
+          Expected {{ (expected_masters + groups['workers']) | sort }},
+          got {{ nodes.stdout_lines | sort }}
+
+    # masters[0] is this play's host, but after a rotation that is a master the cluster no longer
+    # has: the inventory lists 1..6 while the cluster holds 4,5,6. kubectl still answers there
+    # because admin.conf points at the control-plane endpoint, but etcdctl talks to localhost:2379
+    # and that node's etcd stopped the moment its member was removed -- so the member list has to
+    # be asked of a master the rotation kept. `set -o pipefail` is what makes that failure visible:
+    # without it the pipeline exits with jq's rc, jq is handed no input, and the task reports ok
+    # with an empty stdout that the assert below then compares as "found ".
+    - name: etcd membership matches the control-plane count
+      ansible.builtin.shell: |
+        set -o pipefail
+        ETCDCTL_API=3 etcdctl member list --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+          --cert=/etc/kubernetes/pki/etcd/server.crt \
+          --key=/etc/kubernetes/pki/etcd/server.key -w json | jq '.members | length'
+      args:
+        executable: /bin/bash
+      delegate_to: "{{ expected_masters | first }}"
+      register: etcd_members
+      changed_when: false
+
+    # Same expectation as above: one member per master the cluster is actually left with, which
+    # after a rotation is the added masters, not every master the inventory names.
+    - name: Etcd membership matches the number of masters in the inventory
+      ansible.builtin.assert:
+        that:
+          - etcd_members.stdout | trim | length > 0
+          - etcd_members.stdout | int == expected_masters | length
+        fail_msg: >-
+          Expected {{ expected_masters | length }} etcd members on
+          {{ expected_masters | first }}, found '{{ etcd_members.stdout | trim }}'
+          (stderr: {{ etcd_members.stderr | default('') | trim }})

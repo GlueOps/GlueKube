@@ -1,0 +1,42 @@
+---
+# Copy to hosts.yaml and fill in. hosts.yaml is gitignored on purpose: a real inventory
+# carries private IPs, SSH usernames and private key paths.
+#
+# In the hosted flow you do not write this by hand: AutoGlue drops a platform.json and
+# parser.py generates hosts.yaml from it (`make .env`). The opentofu modules that provision
+# the VMs live in opentofu-module-GlueKube-AWS / -Proxmox, not in this repository.
+#
+#   ansible all -i inventory/hosts.yaml -m ping
+#
+# `ansible_host` is the address ansible connects to. `ip` is the address the cluster itself
+# uses -- etcd peers, the kubeadm join endpoint and the ctrp DNS record are all built from
+# it, so it must be the private/internal address, not the public one.
+#
+# There is no loadbalancer group: the API servers are reached through the multi-value ctrp
+# DNS record, not through an haproxy tier. See the readme.
+
+all:
+  children:
+    masters:
+      hosts:
+        # the number of control-plane nodes must be odd
+        master-node-1:
+          ansible_host: PUBLIC_IP
+          ansible_user: cluster
+          ip: PRIVATE_IP
+          ansible_ssh_private_key_file: ../keys/master_node
+          extra:
+            taints:
+              # trailing "-" removes the taint, i.e. makes the master schedulable
+              - node-role.kubernetes.io/control-plane:NoSchedule-
+
+    workers:
+      hosts:
+        worker-node-1:
+          ansible_host: PUBLIC_IP
+          ansible_user: cluster
+          ip: PRIVATE_IP
+          ansible_ssh_private_key_file: ../keys/worker_node
+          extra:
+            taints:
+              - glueops.dev/role=glueops-platform:NoSchedule
