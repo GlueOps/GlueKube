@@ -1,0 +1,103 @@
+---
+# Creates the DNS the apiserver is reached through, and records the ids destroy.yml needs.
+#
+# AutoGlue owns that DNS. The domain and the ctrp record are both created here rather than
+# assumed to exist, and autoglue-destroy.yml removes them again, so a run leaves nothing behind.
+# The ids go to autoglue-ids.yaml because destroy runs as a separate playbook and cannot see
+# these registers.
+#
+# Required from the importing play:
+#   autoglue_record_values   the addresses ctrp should resolve to. This differs per scenario --
+#                            test-cluster points it at all three masters, scale-cluster at the
+#                            one master its first converge builds, rotate-master-nodes at its
+#                            starting three -- so it is passed in rather than derived here.
+#                            They must be LAN addresses: this is what the apiserver listens on
+#                            and what every node resolves ctrp to, so it has to match the
+#                            inventory's `ip`.
+
+- name: Create the DNS domain via AutoGlue API
+  ansible.builtin.uri:
+    url: "{{ lookup('env', 'AUTOGLUE_BASE_URL') }}/api/v1/dns/domains"
+    method: POST
+    headers:
+      accept: application/json
+      content-type: application/json
+      x-org-key: "{{ lookup('env', 'AUTOGLUE_ORG_KEY') }}"
+      x-org-secret: "{{ lookup('env', 'AUTOGLUE_ORG_SECRET') }}"
+    body_format: json
+    body:
+      credential_id: "{{ lookup('env', 'AUTOGLUE_CREDENTIAL_ID') }}"
+      domain_name: "{{ lookup('env', 'domain_name') }}"
+      zone_id: "{{ lookup('env', 'AUTOGLUE_ZONE_ID') }}"
+    status_code: [200, 201]
+  register: autoglue_domain
+
+# Fail here with the body in the message rather than three tasks later with an empty URL, if the
+# response ever stops carrying `id` at the top level.
+- name: Confirm AutoGlue returned a domain id
+  ansible.builtin.assert:
+    that:
+      - autoglue_domain.json.id is defined
+      - autoglue_domain.json.id | string | length > 0
+    fail_msg: "AutoGlue did not return an id for the domain: {{ autoglue_domain.json }}"
+
+# Written the moment the domain exists, not once the record does too (#486). autoglue-destroy.yml
+# gates every DELETE on this file, so any failure between the domain POST and the record POST --
+# the record call itself, an assert, an interrupted CI job -- used to orphan the domain with
+# nothing recording its id. All three scenarios POST the same domain_name, so one orphan then
+# fails the next run of ANY of them at its first AutoGlue task, after the VMs are already built.
+# The record id is deliberately empty here: destroy gates the two DELETEs separately, so a file
+# holding only the domain id cleans up exactly what exists.
+- name: Hand the domain id to destroy before anything else can fail
+  ansible.builtin.copy:
+    content: |
+      ---
+      autoglue_domain_id: "{{ autoglue_domain.json.id }}"
+      autoglue_record_id: ""
+    dest: "./autoglue-ids.yaml"
+    mode: "0644"
+
+- name: Create the ctrp A record in the new domain via AutoGlue API
+  ansible.builtin.uri:
+    url: "{{ lookup('env', 'AUTOGLUE_BASE_URL') }}/api/v1/dns/domains/{{ autoglue_domain.json.id }}/records"
+    method: POST
+    headers:
+      accept: application/json
+      content-type: application/json
+      x-org-key: "{{ lookup('env', 'AUTOGLUE_ORG_KEY') }}"
+      x-org-secret: "{{ lookup('env', 'AUTOGLUE_ORG_SECRET') }}"
+    body_format: json
+    body:
+      name: ctrp
+      ttl: 60
+      type: A
+      values: "{{ autoglue_record_values }}"
+    status_code: [200, 201]
+  register: autoglue_record
+
+- name: Confirm AutoGlue returned a record id
+  ansible.builtin.assert:
+    that:
+      - autoglue_record.json.id is defined
+      - autoglue_record.json.id | string | length > 0
+    fail_msg: "AutoGlue did not return an id for the record: {{ autoglue_record.json }}"
+
+# Rewrites the file the domain task above already created, now that the record id exists too.
+- name: Hand the AutoGlue ids to destroy
+  ansible.builtin.copy:
+    content: |
+      ---
+      autoglue_domain_id: "{{ autoglue_domain.json.id }}"
+      autoglue_record_id: "{{ autoglue_record.json.id }}"
+    dest: "./autoglue-ids.yaml"
+    mode: "0644"
+
+# The same id again, bare, because inventory/group_vars/masters.yaml reads it with
+# lookup('file') to give the master role an autoglue_record_id that actually exists. A plain file
+# rather than parsing the YAML above: lookup('file', errors='ignore') returns None when the file
+# is missing, and from_yaml would then blow up instead of falling back.
+- name: Hand the record id to the inventory
+  ansible.builtin.copy:
+    content: "{{ autoglue_record.json.id }}"
+    dest: "./autoglue-record-id"
+    mode: "0644"

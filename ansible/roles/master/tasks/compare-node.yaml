@@ -1,54 +1,27 @@
-- name: Current work nodes
-  ansible.builtin.debug:
-    var: groups['workers']
+---
+# The sync diff: both directions, computed from the shared node lists (#474).
+# nodes_to_remove is what the cluster has and the inventory does not name; nodes_to_add is the
+# reverse. sync.yaml reads both off the orchestrator's hostvars.
 
-- name: Remove file (delete file)
-  ansible.builtin.file:
-    path: "/opt/kubernetes/new_nodes_list"
-    state: absent
+- name: Collect the inventory and cluster node lists
+  ansible.builtin.import_tasks: ../../common/tasks/collect-node-lists.yaml
 
-
-- name: Remove file (delete file)
-  ansible.builtin.file:
-    path: "/opt/kubernetes/current_nodes_list"
-    state: absent
-
-
-- name: Write new nodes list
-  ansible.builtin.lineinfile:
-    path: "/opt/kubernetes/new_nodes_list"
-    line: "{{ item }}"
-    create: true
-    state: present
-    mode: "0644"
-  with_items: "{{ groups['workers'] + groups['masters'] }}"
-
-- name: Write current nodes list
-  ansible.builtin.shell: |
-    export KUBECONFIG=/etc/kubernetes/admin.conf
-    kubectl get nodes -o json | jq -r '.items[] | select(.metadata.labels["kubernetes.io/hostname"]) | .metadata.name' | sort > /opt/kubernetes/current_nodes_list
-
-- name: Copy Compare python script
-  ansible.builtin.copy:
-    src: "compare-to-add.py"
-    dest: "/opt/kubernetes/compare-to-add.py"
-    mode: "0644"
-
-
-- name: Copy Compare python script
+- name: Copy the remove-diff script
   ansible.builtin.copy:
     src: "compare-to-remove.py"
     dest: "/opt/kubernetes/compare-to-remove.py"
     mode: "0644"
 
-- name: Register worker nodes to remove
+- name: Register nodes to remove
   ansible.builtin.command: python3 /opt/kubernetes/compare-to-remove.py
   register: nodes_to_remove
+  changed_when: false
 
 
-- name: Register worker nodes to add
+- name: Register nodes to add
   ansible.builtin.command: python3 /opt/kubernetes/compare-to-add.py
   register: nodes_to_add
+  changed_when: false
 
 # debug
 - name: List of nodes changes

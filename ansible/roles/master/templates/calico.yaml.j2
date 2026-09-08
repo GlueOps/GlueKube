@@ -1,4 +1,7 @@
+
 installation:
+  registry: quay.repo.gpkg.io
+  imagePath: calico
   enabled: true
   typhaMetricsPort: 9093
   cni:
@@ -8,6 +11,12 @@ installation:
     ipPools:
     - cidr: {{ calico_network_calico_cidr }} # this should be in podSubnet range
       encapsulation: VXLAN
+{% if calico_node_address_autodetection_v4 is defined and calico_node_address_autodetection_v4 | length > 0 %}
+    nodeAddressAutodetectionV4:
+        firstFound: false
+        cidrs:
+          - "{{ calico_node_address_autodetection_v4 }}"
+{% endif %}
 
   # Prefer the platform node for calico-kube-controllers, but stay schedulable anywhere.
   # Scoped to this deployment rather than controlPlaneTolerations, which would also cover
@@ -30,10 +39,6 @@ installation:
                     operator: In
                     values:
                     - glueops-platform
-          # Replaces the operator's defaults for this deployment, so the control-plane
-          # entries must be restated -- dropping them strands the pod at bootstrap, when
-          # masters[0] is the only node. The glueops entry is permission to land on the
-          # platform node; the affinity above is what biases it there.
           tolerations:
           - key: node-role.kubernetes.io/master
             effect: NoSchedule
@@ -62,16 +67,14 @@ affinity:
           values:
           - "glueops-platform"
 
-# Tolerations for the tigera/operator pod.
-# Calico is installed before nodes are tainted/labelled and before workers join, so at
-# install time the only node is masters[0] with node-role.kubernetes.io/control-plane:NoSchedule
-# (and not-ready:NoSchedule, since the CNI isn't up yet). These must stay permissive; the
-# nodeAffinity above expresses the glueops-platform preference.
 tolerations:
 - effect: NoExecute
   operator: Exists
 - effect: NoSchedule
   operator: Exists
+
+nodeSelector:
+  kubernetes.io/os: linux
 
 # Custom annotations for the tigera/operator pod.
 podAnnotations: {}
@@ -89,6 +92,5 @@ calicoctl:
   tag: "{{ calico_chart_version }}"
 
 defaultFelixConfiguration:
-  enabled: {{ calico_node_to_node_encryption | bool }}
-  wireguardEnabled: {{ calico_node_to_node_encryption | bool }}
+  enabled: false
   logSeverityScreen: Info

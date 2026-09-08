@@ -1,0 +1,82 @@
+---
+# The list of VMs a scenario owns, built once and imported by BOTH proxmox-provision.yml and
+# proxmox-teardown.yml.
+#
+# It used to be duplicated: the same two set_fact loops appeared verbatim at the top of each of
+# those files, and teardown derives its delete list AND its snippet cleanup from them. Adding a VM
+# to one copy and not the other leaks that VM, leaves its cloud-init snippet on the hypervisor, and
+# then fails the NEXT run's "vmid range holds nothing that is not ours" assert -- with a message
+# blaming a foreign workload. One file, imported twice, is the only way that stays true.
+#
+# Every entry carries what the create call needs, because the VMs are no longer homogeneous:
+#
+#   bridge0 / vlan0   which bridge net0 lands on. The bastion's is the public bridge -- the one
+#                     inbound address in the scenario; a cluster node's is the NAT bridge.
+#   bridge1 / vlan1   net1, and ONLY the bastion has one: the LAN bridge, routed to the NAT
+#                     segment, which is how it reaches the nodes. Absent on a master or worker,
+#                     and proxmox-provision.yml omits net1 entirely when it is not set -- a
+#                     cluster node has exactly one NIC and one address.
+#   cloudinit         the snippet template rendered for this VM. The bastion is not a Kubernetes
+#                     node and must not get the kubelet-shaped cloud-init.
+#   cores/memory/disk the bastion is a controller, not a worker, and rotate-master-nodes is
+#                     already at 10 VMs on one PVE host before it gets an eleventh.
+#
+# vmids: bastion at base+0, masters at base+1.., workers at base+11.. . Deterministic so teardown
+# needs no state file -- see the offset table in ansible/molecule/readme.md.
+
+# Written as one templated expression rather than a YAML mapping so the vmid stays an int, the
+# same as the two loops below produce -- the range checks in provision and teardown compare
+# against ints.
+- name: Start the node list with the bastion
+  ansible.builtin.set_fact:
+    cluster_nodes: >-
+      {{ [{'name': 'bastion-node',
+           'vmid': (pve_vmid_base | int) + 0,
+           'role': 'bastion',
+           'bridge0': pve_bridge_public,
+           'vlan0': pve_bridge_public_vlan,
+           'bridge1': pve_bridge_lan,
+           'vlan1': pve_bridge_lan_vlan,
+           'cloudinit': 'bastion-cloud-init.yaml.j2',
+           'cores': pve_bastion_cores,
+           'memory': pve_bastion_memory,
+           'disk_size': pve_bastion_disk_size}] }}
+
+- name: Add the master nodes to the list
+  ansible.builtin.set_fact:
+    cluster_nodes: >-
+      {{ cluster_nodes
+         + [{'name': 'master-node-' ~ (item + 1),
+             'vmid': (pve_vmid_base | int) + item + 1,
+             'role': 'master',
+             'bridge0': pve_bridge_nat,
+             'vlan0': pve_bridge_nat_vlan,
+             'cloudinit': 'cloud-init.yaml.j2',
+             'cores': pve_cores,
+             'memory': pve_memory,
+             'disk_size': pve_disk_size}] }}
+  loop: "{{ range(0, num_master_nodes) | list }}"
+
+- name: Add the worker nodes to the list
+  ansible.builtin.set_fact:
+    cluster_nodes: >-
+      {{ cluster_nodes
+         + [{'name': 'worker-node-' ~ (item + 1),
+             'vmid': (pve_vmid_base | int) + 10 + item + 1,
+             'role': 'worker',
+             'bridge0': pve_bridge_nat,
+             'vlan0': pve_bridge_nat_vlan,
+             'cloudinit': 'cloud-init.yaml.j2',
+             'cores': pve_cores,
+             'memory': pve_memory,
+             'disk_size': pve_disk_size}] }}
+  loop: "{{ range(0, num_worker_nodes) | list }}"
+
+# Split by role here rather than in each caller: create.yml's inventory renders and the AutoGlue
+# record values are all slices of these two, and the bastion must never appear in either -- it is
+# not a Kubernetes node and `hosts: all` in playbooks/preflight.yaml would pick it up.
+- name: Split the node list by role
+  ansible.builtin.set_fact:
+    master_nodes_list: "{{ cluster_nodes | selectattr('role', 'equalto', 'master') | list }}"
+    worker_nodes_list: "{{ cluster_nodes | selectattr('role', 'equalto', 'worker') | list }}"
+    bastion_node: "{{ (cluster_nodes | selectattr('role', 'equalto', 'bastion') | list) | first }}"

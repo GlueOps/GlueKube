@@ -1,18 +1,37 @@
 ---
-- hosts: masters
+# Validates the environment and the inventory before a single node is touched (#466). The
+# molecule scenarios reach this through converge.yml, so they get the same checks CI does.
+- name: Preflight
+  ansible.builtin.import_playbook: preflight.yaml
+
+# Publishes the `orchestrator` group the two single-node plays below target. On a fresh cluster
+# no apiserver answers the probe yet and the election falls back to groups['masters'][0], so
+# bootstrap behaviour is unchanged (#430).
+- name: Elect the orchestrator
+  ansible.builtin.import_playbook: elect-orchestrator.yaml
+
+- name: Build the control plane
+  hosts: masters
   become: true
   roles:
     - master
 
-- hosts: 
+# masters as well as workers: the worker role is what installs the kubelet-side pieces every
+# node needs, control plane included. Its own main.yaml gates the node preparation on
+# `inventory_hostname in groups['workers']`, so a master passing through here only picks up the
+# join tasks.
+- name: Join the worker nodes
+  hosts:
     - workers
     - masters
   become: true
   roles:
     - worker
 
+# hosts: orchestrator, not masters[0] -- this needs *a* healthy control-plane node to run kubectl
+# from, not specifically the first one (#430).
 - name: Taint Nodes
-  hosts: masters[0]
+  hosts: orchestrator
   become: true
   tasks:
     - name: Taint all nodes
@@ -25,7 +44,7 @@
       tags: label_nodes
 
 - name: Apply Calico Firewall rules for loadbalancer nodes
-  hosts: masters[0]
+  hosts: orchestrator
   become: true
   tasks:
     - name: Apply Calico Firewall rules

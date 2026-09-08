@@ -1,6 +1,4 @@
 ---
-platforms: 
-  - name: instance-1
 driver:
   name: default
 
@@ -8,7 +6,11 @@ provisioner:
   name: ansible
   inventory:
     links:
+      # The BASTION, not the cluster. create.yml writes this file with the one host molecule can
+      # reach; the cluster inventory is written onto the bastion and never exists locally.
       hosts: inventory/hosts.yaml
+      # Still the cluster's group_vars: the remote runs read them from the shipped tree, and
+      # against this bastion-only inventory they are inert.
       group_vars: inventory/group_vars
   playbooks:
     side_effect: side_effect/default.yaml
@@ -16,14 +18,19 @@ provisioner:
 
 scenario:
   name: rotate-master-nodes
+  # Every step past `create` runs on the bastion -- see the wrappers in remote/, and converge.yml
+  # and verify.yml. Molecule itself only ever talks to the bastion.
   test_sequence:
     - create
+    # Probes repo.gpkg.io:443 and pkgs.k8s.io:443 from every node: the direct test of the NAT
+    # bridge being the nodes' only way out, now that they have no public leg.
+    - side_effect remote/test_nodes_pingable.yml
     - converge
-    - side_effect tests/test_cluster_healthy.yaml
-    - side_effect side_effect/rotate_master_nodes.yaml
-    - side_effect tests/test_cluster_healthy.yaml
-    - side_effect side_effect/second_rotate_master_nodes.yaml
-    - side_effect tests/test_cluster_healthy.yaml
+    - side_effect remote/test_cluster_healthy.yml
+    - side_effect remote/rotate_master_nodes.yml
+    - side_effect remote/test_cluster_healthy.yml
+    - side_effect remote/second_rotate_master_nodes.yml
+    - verify
     - destroy
 
 verifier:

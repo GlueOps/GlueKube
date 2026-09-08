@@ -1,4 +1,14 @@
 ---
+# The inventory is the desired state here, so preflight is checking the shape the cluster is
+# about to be scaled *to* -- an even control-plane count is caught before any node joins (#466).
+- name: Preflight
+  ansible.builtin.import_playbook: preflight.yaml
+
+# sync.yaml already reads its state off hostvars[orchestrator_node]; this publishes the same node
+# as a group so the firewall play below can target it without naming an index (#430).
+- name: Elect the orchestrator
+  ansible.builtin.import_playbook: elect-orchestrator.yaml
+
 - name: Sync cluster node resources
   hosts:
     - masters
@@ -11,7 +21,7 @@
         tasks_from: sync.yaml
 
 - name: Apply Calico Firewall rules for loadbalancer nodes
-  hosts: masters[0]
+  hosts: orchestrator
   become: true
   tasks:
     - name: Apply Calico Firewall rules

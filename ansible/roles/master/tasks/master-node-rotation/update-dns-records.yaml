@@ -1,16 +1,30 @@
 ---
-- name: Get current cluster master node IPs from kubectl
+- name: Get current cluster master node names and IPs from kubectl
   ansible.builtin.shell:
     cmd: |
+      set -euo pipefail
       export KUBECONFIG=/etc/kubernetes/admin.conf
-      kubectl get nodes -l node-role.kubernetes.io/control-plane -o jsonpath='{.items[*].status.addresses[?(@.type=="InternalIP")].address}'
+      # Local apiserver, not the kubeconfig's ctrp name: this reads the node list that becomes the
+      # new DNS record, and it runs while that record is mid-update.
+      kubectl --server https://127.0.0.1:6443 --request-timeout=30s \
+        get nodes -l node-role.kubernetes.io/control-plane -o jsonpath='{range .items[*]}{.metadata.name}={.status.addresses[?(@.type=="InternalIP")].address}{"\n"}{end}'
+    executable: /bin/bash
   register: kubectl_node_ips
+  changed_when: false
   delegate_to: "{{ orchestrator_node }}"
 
-  
+
+# nodes_to_remove holds nodes that are in the cluster but no longer in the inventory, so
+# hostvars[node] does not exist for them. Their IPs are matched by node name against what
+# kubectl reports instead of being looked up in the inventory.
 - name: Build updated master IPs list (add new, exclude old)
   set_fact:
-    updated_master_ips: "{{ (kubectl_node_ips.stdout.split()) | difference(nodes_to_remove | map('extract', hostvars, 'ip') | list) | unique }}"
+    updated_master_ips: >-
+      {{ kubectl_node_ips.stdout_lines
+         | map('split', '=')
+         | rejectattr('0', 'in', nodes_to_remove)
+         | map(attribute='1')
+         | unique | list }}
 
 - name: Update DNS records with master node IPs via AutoGlue API
   ansible.builtin.uri:
@@ -21,7 +35,6 @@
       x-org-key: "{{ autoglue_org_key }}"
       x-org-secret: "{{ autoglue_org_secret }}"
       content-type: application/json
-      x-org-id: "{{ autoglue_org_id }}"
     body_format: json
     body:
       name: ctrp
@@ -32,17 +45,39 @@
   delegate_to: "{{ orchestrator_node }}"
   
 
+# Every dig result is filtered through only_hostnames() before it is believed.
+#
+# `dig` writes its diagnostics to STDOUT, not stderr: when the resolver is unreachable it prints
+#   ;; communications error to 127.0.0.53#53: timed out
+# and this used to be accepted as an NS list, because `grep -v '^$'` keeps a non-empty line and the
+# trailing `|| true` discarded the exit status. The list then had length 1, so the "no NS servers
+# found" branch below was skipped, and the verification step word-split it and ran `dig @;;` --
+# failing the whole rotation with "couldn't get address for ';;'". Retrying could not help either:
+# ns_servers was already registered, so all four attempts replayed the same garbage.
+#
+# +time/+tries bound each lookup, and the task retries so a transient resolver failure -- which is
+# exactly what happened, on the runner's 127.0.0.53 -- gets another chance instead of poisoning
+# everything downstream.
 - name: Get authoritative NS servers for domain
   ansible.builtin.shell:
+    # pipefail only: the search loop handles its own misses, so `set -e` would abort it on the
+    # first lookup that finds nothing.
     cmd: |
+      set -o pipefail
       DOMAIN="{{ loadbalancer_apiserver }}"
-      
+
+      # A nameserver name and nothing else: drops dig's ";; ..." diagnostics, blank lines, and
+      # anything containing whitespace.
+      only_hostnames() {
+        grep -E '^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+\.?$' || true
+      }
+
       # Try to find NS records by progressively removing subdomains
       CURRENT_DOMAIN="$DOMAIN"
       while [ -n "$CURRENT_DOMAIN" ]; do
-        NS_RESULT=$(dig +short NS "$CURRENT_DOMAIN" | grep -v '^$' || true)
+        NS_RESULT=$(dig +short +time=3 +tries=2 NS "$CURRENT_DOMAIN" | only_hostnames | sed 's/\.$//' | sort)
         if [ -n "$NS_RESULT" ]; then
-          echo "$NS_RESULT" | sed 's/\.$//' | sort
+          echo "$NS_RESULT"
           exit 0
         fi
         # Remove the leftmost subdomain
@@ -52,25 +87,46 @@
           break
         fi
       done
-      
+
       # Fallback: get NS from authority section without +short
-      dig NS "$DOMAIN" | awk '/^;; AUTHORITY SECTION:/,/^$/ {if ($4 == "NS") print $5}' | sed 's/\.$//' | sort
+      dig +time=3 +tries=2 NS "$DOMAIN" \
+        | awk '/^;; AUTHORITY SECTION:/,/^$/ {if ($4 == "NS") print $5}' \
+        | only_hostnames | sed 's/\.$//' | sort
+  args:
+    executable: /bin/bash
   register: ns_servers
   changed_when: false
+  # Never fatal: an unresolvable NS list means the check cannot run, which the branch below
+  # already treats as "pause and carry on" rather than as a reason to abandon a rotation midway.
+  failed_when: false
+  retries: 3
+  delay: 10
+  until: ns_servers.stdout_lines | length > 0
 
 - name: Display NS servers
   debug:
     msg: "Authoritative NS servers: {{ ns_servers.stdout_lines }}"
 
-- name: Wait for DNS propagation (no NS servers found)
-  ansible.builtin.pause:
-    seconds: 70
+# Fatal rather than a 70s pause (#486). This branch used to be the silent path: the lookup above
+# is failed_when: false, so a controller without `dig` -- which is what the GlueKube container was
+# until dnsutils was added to the Dockerfile -- landed here, slept, and let the rotation go on to
+# drain and delete the outgoing master having verified no propagation whatsoever. An empty NS list
+# means the check cannot run, and a rotation that cannot verify DNS must not proceed to the
+# destructive half.
+- name: Refuse to continue without the zone's authoritative nameservers
+  ansible.builtin.fail:
+    msg: >-
+      Could not resolve the authoritative nameservers for {{ loadbalancer_apiserver }}, so the
+      propagation of the updated ctrp record cannot be verified and this rotation would delete a
+      control-plane node on an unchecked DNS change. Confirm `dig` is installed on the Ansible
+      controller (the GlueKube container installs dnsutils; a bare checkout may not have it) and
+      that the controller can reach a resolver, then re-run.
   when: ns_servers.stdout_lines | length == 0
 
 - name: Verify DNS propagation on at least 2 NS servers
   ansible.builtin.shell:
     cmd: |
-      set -e
+      set -eo pipefail
       EXPECTED_IPS='{{ updated_master_ips | sort | join(" ") }}'
       NS_SERVERS='{{ ns_servers.stdout_lines | join(" ") }}'
       RECORD_NAME="{{ loadbalancer_apiserver }}"
@@ -80,8 +136,16 @@
       REQUIRED_SUCCESS=2
       
       for ns in $NS_SERVERS; do
-        # Query the NS server directly
-        ACTUAL_IPS=$(dig +short @${ns} ${RECORD_NAME} A | sort | tr '\n' ' ' | sed 's/ $//')
+        # Second line of defence behind only_hostnames() in the lookup task: never hand dig
+        # something that is not a nameserver name. `dig @';;'` exits non-zero and, under
+        # `set -e`, took the whole rotation with it.
+        case "$ns" in
+          *[!A-Za-z0-9.-]* | "" | .* ) echo "✗ skipping non-hostname NS entry [${ns}]"; continue ;;
+        esac
+
+        # Query the NS server directly. || true: a single unreachable nameserver is a failed
+        # confirmation, not a reason to abort -- the count below is what decides.
+        ACTUAL_IPS=$(dig +short +time=3 +tries=2 @${ns} ${RECORD_NAME} A | sort | tr '\n' ' ' | sed 's/ $//' || true)
         
         if [ "$ACTUAL_IPS" = "$EXPECTED_IPS" ]; then
           echo "✓ NS ${ns}: Match"
@@ -99,6 +163,8 @@
       
       echo "Only ${SUCCESS_COUNT}/${REQUIRED_SUCCESS} NS servers confirmed propagation"
       exit 1
+  args:
+    executable: /bin/bash
   register: dns_check
   retries: 4
   delay: 60

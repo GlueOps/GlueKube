@@ -7,19 +7,36 @@ provisioner:
   log: true
   inventory:
     links:
+      # The BASTION, not the cluster. create.yml writes this file with the one host molecule can
+      # reach; the cluster inventory is written onto the bastion and never exists locally.
       hosts: inventory/hosts.yaml
+      # Still linked, and still the cluster's group_vars: the remote runs read them from the
+      # shipped tree, and against this bastion-only inventory they are inert (masters.yaml applies
+      # to a group that is not in this file).
       group_vars: inventory/group_vars
   playbooks:
     side_effect: side_effect/default.yaml
-    
+
 
 scenario:
   name: test-cluster
+  # Every step past `create` runs on the bastion -- see the wrappers in remote/, and converge.yml
+  # and verify.yml. Molecule itself only ever talks to the bastion.
   test_sequence:
     - create
-    - side_effect tests/test_nodes_pingable.yaml
+    # Restored now that it means something: this probes repo.gpkg.io:443 and pkgs.k8s.io:443 from
+    # every node, which is the direct test of the NAT bridge being the nodes' only way out.
+    - side_effect remote/test_nodes_pingable.yml
     - converge
-    - side_effect tests/test_cluster_healthy.yaml
+    # molecule's own `idempotence` cannot work here: it counts changes in the LOCAL run, and the
+    # task that launches the remote playbook is always changed. The equivalent check lives in
+    # common/bastion-run.yml as bastion_run_assert_no_changes -- set it on a second converge to
+    # restore the regression guard for epic D (#439).
+    #
+    # No trailing `side_effect tests/test_cluster_healthy.yaml` here: `verify` runs that same
+    # playbook, so listing it too ran the identical assertions twice, seconds apart, and doubled
+    # the window in which a transient NotReady could fail the run.
+    - verify
     - destroy
 
 verifier:

@@ -1,4 +1,6 @@
-# reset the nodes before joining
-- name: Reset the worker node
+# reset the nodes before joining. Despite living in roles/master, this ran under the name
+# "Reset the worker node" while wiping control-plane nodes -- scale-up.yaml and
+# master-node-rotation/add-single-master.yaml are its only callers (#475).
+- name: Reset the node before (re)joining
   ansible.builtin.shell: |
     kubeadm reset -f --cleanup-tmp-dir -v=5

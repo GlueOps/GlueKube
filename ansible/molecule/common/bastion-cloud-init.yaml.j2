@@ -1,0 +1,45 @@
+#cloud-config
+# The bastion's snippet. Rendered by common/proxmox-provision.yml from the `cloudinit` key on the
+# bastion's entry in common/node-list.yml, the same way the cluster nodes get cloud-init.yaml.j2.
+#
+# Deliberately much smaller than the node template. The bastion is a CONTROLLER, not a Kubernetes
+# node: no k8s sysctls, no swap removal, and no /etc/glueops/public-interface (nothing reads it
+# for a host that never joins the cluster).
+#
+# It also installs no toolchain. ansible-core, the collections and the Kubernetes release key are
+# put on by common/bastion-prepare.yml, from a `hosts: bastion` play, so a failure there is a named
+# Ansible task with a message instead of a silent cloud-init error you have to `qm terminal` into
+# the console to read.
+#
+# IMPORTANT: cicustom user= REPLACES the user-data Proxmox generates -- it does not merge with it.
+# Everything qm would normally inject (hostname, ciuser, cipassword, sshkeys) is gone unless it is
+# in this file. ipconfig0/ipconfig1 are a separate cloud-init file (network-config), so DHCP is
+# still configured by Proxmox and must NOT be repeated here.
+hostname: {{ node_name }}
+manage_etc_hosts: true
+package_reboot_if_required: true
+package_update: true
+package_upgrade: true
+packages:
+  - curl
+  # proxmox-provision.yml reads the bastion's two addresses back out of the guest agent -- without
+  # this nothing knows where to ship the code to.
+  - qemu-guest-agent
+ssh_pwauth: false
+users:
+  - name: cluster
+    groups: sudo
+    ssh_authorized_keys:
+      - "{{ public_key }}"
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+runcmd:
+  - sudo passwd -d root
+  - sudo systemctl enable --now qemu-guest-agent
+  # Where the shipped GlueKube tree, the .env and the Kubernetes release key live. Same path the
+  # hosted flow uses (the Dockerfile's WORKDIR), which is what lets
+  # roles/common/tasks/prepare-node.yaml's copy of /opt/gluekube/kubernetes-release.key work here
+  # unchanged -- that src is an absolute CONTROLLER path, and the controller is now this host.
+  - mkdir -p /opt/gluekube
+  - chown cluster:cluster /opt/gluekube
+  - sudo systemctl disable --now unattended-upgrades.service apt-daily.timer apt-daily-upgrade.timer apt-daily.service apt-news.service

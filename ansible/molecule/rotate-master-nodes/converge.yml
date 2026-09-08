@@ -1,4 +1,22 @@
 ---
-
-- name: Include setup-cluster playbook
-  ansible.builtin.import_playbook: ../../playbooks/setup-cluster.yaml
+# Molecule runs this; the bastion runs ../../playbooks/setup-cluster.yaml.
+#
+# The cluster nodes have no address molecule can reach, so every step that touches them is a
+# thin play against the bastion that shells out to ansible-playbook there. The playbook it
+# runs is unchanged and unaware -- common/bastion-prepare.yml mirrors the repo at
+# /opt/gluekube/ansible and the remote run chdirs to the scenario directory, so its relative paths
+# resolve exactly as they do locally.
+- name: Converge the cluster from the bastion
+  hosts: bastion
+  gather_facts: false
+  vars_files:
+    - ../common/bastion-vars.yml
+  tasks:
+    - name: Run ../../playbooks/setup-cluster.yaml on the bastion
+      ansible.builtin.include_tasks: ../common/bastion-run.yml
+      vars:
+        bastion_run_name: converge
+        bastion_run_playbook: ../../playbooks/setup-cluster.yaml
+        # setup-cluster.yaml is the longest step in any scenario; the default 2h
+        # covers rotate-master-nodes' nine masters.
+        bastion_run_timeout: 7200

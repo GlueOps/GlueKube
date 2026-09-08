@@ -6,25 +6,24 @@ cni_type: calico
 service_subnet: "192.168.0.0/16" # if you change this, you need to change the calico.yaml file
 
 # calico
-calico_node_to_node_encryption: false
 calico_chart_version: "{{ lookup('env', 'calico_chart_version') }}" #"v3.29.3"
-calico_tigera_operator_version:  "{{ lookup('env', 'calico_tigera_operator_version') }}" #"v1.36.7"
+calico_tigera_operator_version: "{{ lookup('env', 'calico_tigera_operator_version') }}" #"v1.36.7"
 calico_network_calico_cidr: "172.16.0.0/16"
 
-nodes: |
-  {% for host in groups['masters'] %}
-  {{ hostvars[host]['ip'] }}:2379{% if not loop.last %},{% endif %}
-  {% endfor %}
+# The nodes have ONE NIC, on the NAT bridge -- that subnet is the cluster's.
+calico_node_address_autodetection_v4: "{{ lookup('env', 'PROXMOX_NAT_CIDR') }}"
 
-etcd_nodes_endpoints: "{{ nodes | trim}}"
 etcd_initial_cluster: "{{ groups['masters'] | map('extract', hostvars, 'ip') | list }}"
 etcd_secret_namespace: "glueops-core-kube-prometheus-stack"
-
-kubeconfig_export_path: "./.kube/config"
 
 autoglue_base_url: "{{ lookup('env', 'AUTOGLUE_BASE_URL') | default('https://autoglue.glueopshosted.rocks', true) }}"
 autoglue_org_key: "{{ lookup('env', 'AUTOGLUE_ORG_KEY') }}"
 autoglue_org_secret: "{{ lookup('env', 'AUTOGLUE_ORG_SECRET') }}"
-autoglue_org_id: "{{ lookup('env', 'AUTOGLUE_ORG_ID') }}"
-autoglue_record_id: "{{ lookup('env', 'AUTOGLUE_RECORD_ID') }}"
-autoglue_cluster_id: "{{ lookup('env', 'AUTOGLUE_CLUSTER_ID') }}"
+# The record create.yml made, read from the file it drops in the scenario directory. Molecule
+# exports MOLECULE_SCENARIO_DIRECTORY to every playbook it runs, so this resolves the same way
+# from converge, from a side_effect and from verify. Falls back to $AUTOGLUE_RECORD_ID for a run
+# whose create step did not make a record.
+autoglue_record_id: >-
+  {{ (lookup('file', lookup('env', 'MOLECULE_SCENARIO_DIRECTORY') ~ '/autoglue-record-id', errors='ignore')
+      | default('', true) | trim)
+     or lookup('env', 'AUTOGLUE_RECORD_ID') }}

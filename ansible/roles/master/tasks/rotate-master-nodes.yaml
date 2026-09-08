@@ -1,14 +1,21 @@
 ---
 # Entry point for master node rotation
 
+- name: Select the orchestrator node
+  ansible.builtin.import_tasks: select-orchestrator.yaml
+  vars:
+    orchestrator_in_play_required: true
+
 - name: Compare resources
   ansible.builtin.import_tasks: master-node-rotation/compare-node.yaml
   run_once: true
-  delegate_to: "{{ groups['masters'][0] }}"
+  delegate_to: "{{ orchestrator_node }}"
 
 - name: Determine if resources are in sync
   set_fact:
-    resources_in_sync: "{{ hostvars[groups['masters'][0]]['nodes_to_add'].stdout == '[]' and hostvars[groups['masters'][0]]['nodes_to_remove'].stdout == '[]' }}"
+    resources_in_sync: >-
+      {{ (hostvars[orchestrator_node]['nodes_to_add'].stdout | default('[]', true)) == '[]'
+         and (hostvars[orchestrator_node]['nodes_to_remove'].stdout | default('[]', true)) == '[]' }}
   run_once: true
 
 - name: Report that resources are in sync

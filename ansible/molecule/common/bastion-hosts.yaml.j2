@@ -1,0 +1,19 @@
+{#
+  The inventory MOLECULE itself uses -- one host, the bastion.
+
+  Every scenario's create.yml writes this to <scenario>/inventory/hosts.yaml, which is what
+  molecule.yml's inventory.links.hosts points at. It used to be the cluster inventory; the cluster
+  inventory now lives only on the bastion, written there by create.yml's second play, because that
+  is the only host that can reach the nodes.
+
+  ansible_host is the vmbr_public lease: the single address in the whole scenario that answers from
+  outside. ansible_ssh_private_key_file stays relative, as it was for the nodes -- molecule runs
+  ansible-playbook with the scenario directory as its cwd.
+#}
+bastion:
+  hosts:
+    {{ bastion_node.name }}:
+      ansible_host: {{ bastion_public_ip }}
+      lan_ip: {{ bastion_lan_ip }}
+      ansible_user: cluster
+      ansible_ssh_private_key_file: keys/vm_node

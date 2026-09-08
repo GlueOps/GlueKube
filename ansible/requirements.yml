@@ -1,0 +1,42 @@
+---
+# The collections GlueKube needs.
+#
+#   ansible-galaxy collection install -r ansible/requirements.yml
+#
+# CI installs from this file too, so the linter, the molecule job and a local workstation
+# cannot drift apart. If you bump a version here, bump readme.md's list in the same commit.
+#
+# These are pinned to what `ansible-galaxy collection install <name>` resolved to when the file
+# was written, which is what the molecule workflow was installing before it had a requirements
+# file. Do NOT copy old version numbers out of the readme: pinning hetzner.hcloud back to 4.2.2
+# broke `molecule create` outright, because that release's server module reads
+# `server.datacenter.name` and the field is no longer populated -- every node creation died with
+# "'NoneType' object has no attribute 'name'" after the VM had already been built. 6.x dropped
+# the `datacenter` key and reads `server.location.name` instead.
+#
+# Trimmed to what the repo actually uses (#471). ansible.netcommon, community.crypto and
+# community.docker were listed for years with zero references anywhere in ansible/ -- galaxy
+# still pulls them in if something here depends on them.
+collections:
+  - name: ansible.posix
+    version: "2.2.2"
+  # ipaddr/network_in_network, used by playbooks/preflight.yaml. Needs the netaddr python
+  # package on the controller as well (Dockerfile and readme install it).
+  - name: ansible.utils
+    version: "6.0.3"
+  - name: community.general
+    version: "13.2.0"
+  # The proxmox modules used by molecule/test-cluster. They are NOT in community.general any
+  # more: on the 13.2.0 pinned above, community.general.proxmox* are redirect-only stubs that
+  # emit a deprecation warning and are scheduled for removal in community.general 15.0.0. Always
+  # write the community.proxmox.* FQCN. proxmox_firewall needs >= 1.4.0.
+  #
+  # Needs the proxmoxer and requests python packages on the controller as well (Dockerfile and
+  # the molecule workflow install them), and ansible-core >= 2.17 -- which in practice means
+  # python >= 3.11, since ansible-core 2.18 dropped 3.10. Both CI jobs pin python 3.14.
+  - name: community.proxmox
+    version: "2.0.0"
+  # No longer used by anything: all three molecule scenarios build on Proxmox. Kept pinned so a
+  # scenario can be pointed back at Hetzner without re-resolving a version -- drop it, and the
+  - name: kubernetes.core
+    version: "5.4.4"

@@ -1,7 +1,112 @@
-- name: Summary of Network Connectivity Check
-  hosts: localhost
+---
+# Real connectivity checks (#472).
+#
+# This playbook used to be one debug task on localhost printing "Network connectivity check
+# completed successfully for all nodes!" unconditionally -- it contacted nothing. A check that
+# always passes is worse than no check: `make check-connectivity` manufactured confidence
+# immediately before a cluster build.
+#
+#   make ping-servers        # ansible ping, then this
+#   make check-connectivity  # just this
+#
+# The split below is deliberate. The hard checks are things that must be true *before* a build,
+# so they fail the run. The cluster ports are reported but never fatal: on a cluster that does
+# not exist yet they are supposed to be closed, and failing on them would recreate the same
+# problem in the opposite direction.
+- name: Check network connectivity between all nodes
+  hosts: all
   gather_facts: false
+  any_errors_fatal: true
   tasks:
-    - name: Display completion message
-      debug:
-        msg: "Network connectivity check completed successfully for all nodes!"
+    - name: Every host answers
+      ansible.builtin.ping:
+
+    - name: Every host defines an ip
+      ansible.builtin.assert:
+        that:
+          - hostvars[item].ip is defined
+          - hostvars[item].ip | default('', true) | length > 0
+        fail_msg: >-
+          Host {{ item }} has no 'ip' in the inventory, so there is no private address to test
+          against. `ip` is what the cluster itself uses; ansible_host is only how ansible
+          connects.
+        quiet: true
+      loop: "{{ groups['all'] }}"
+      run_once: true
+
+    # The path that matters is node -> node over the private addresses in `ip`: that is what
+    # etcd peering, the kubeadm join and kubelet all use, and it is not exercised by ansible
+    # connecting over ansible_host. Port 22 stands in for "is there a route and does the
+    # firewall allow it" -- sshd is the one service guaranteed to be listening before a build.
+    - name: Private network path to every other node is open
+      ansible.builtin.wait_for:
+        host: "{{ hostvars[item].ip }}"
+        port: 22
+        timeout: 5
+      loop: "{{ groups['all'] | difference([inventory_hostname]) }}"
+      loop_control:
+        label: "{{ item }} ({{ hostvars[item].ip }})"
+
+    # Every node install pulls the kube packages and the mirrored images from these two.
+    - name: Package and image mirrors are reachable
+      ansible.builtin.wait_for:
+        host: "{{ item }}"
+        port: 443
+        timeout: 10
+      loop:
+        - repo.gpkg.io
+        - pkgs.k8s.io
+
+    - name: Look up the control-plane endpoint
+      ansible.builtin.command: "getent hosts {{ loadbalancer_apiserver }}"
+      register: ctrp_lookup
+      changed_when: false
+      failed_when: false
+      run_once: true
+
+    # Not fatal: on a brand new cluster the ctrp record is created by the first DNS update, so
+    # "does not resolve yet" is a normal state here and only becomes a problem later.
+    - name: Report the control-plane endpoint lookup
+      ansible.builtin.debug:
+        msg: >-
+          {{ loadbalancer_apiserver }}
+          {{ 'resolves to ' ~ (ctrp_lookup.stdout_lines | map('trim') | list | join(', '))
+             if ctrp_lookup.rc == 0
+             else 'does not resolve. That is expected before the first DNS update, and a
+                   problem afterwards -- joining nodes reach the API server through this name.' }}
+      run_once: true
+
+    - name: Probe the control-plane ports between masters
+      ansible.builtin.wait_for:
+        host: "{{ item[0] }}"
+        port: "{{ item[1] }}"
+        timeout: 3
+      loop: "{{ master_ips | product([2379, 2380, 6443]) | list }}"
+      loop_control:
+        label: "{{ item[0] }}:{{ item[1] }}"
+      vars:
+        master_ips: "{{ groups['masters'] | default([]) | map('extract', hostvars, 'ip') | list }}"
+      register: cluster_ports
+      # ignore_errors rather than failed_when: false, because the report below needs to know
+      # which probes failed and failed_when would rewrite that away.
+      ignore_errors: true
+      when: inventory_hostname in groups['masters'] | default([])
+
+    # `when` on a looped task is evaluated PER ITEM, so on a worker cluster_ports.results is not
+    # absent -- it is a full-length list of skipped item results (#486). Those dicts carry `item`
+    # but no `failed`, so the bare `probe.failed` below raised an undefined-attribute error and
+    # `any_errors_fatal: true` on this play turned it into an abort of the whole connectivity
+    # check. Rejecting skipped items and defaulting `failed` fixes both halves: the loop body
+    # never sees a skipped result, and a result that legitimately lacks `failed` reads as open.
+    - name: Report which control-plane ports are open
+      ansible.builtin.debug:
+        msg: |-
+          etcd and apiserver ports seen from {{ inventory_hostname }}:
+          {% for probe in cluster_ports.results | rejectattr('skipped', 'defined') %}
+          {{ probe.item[0] }}:{{ probe.item[1] }} {{ 'closed' if probe.failed | default(false) else 'open' }}
+          {% endfor %}
+          All closed is the correct state before the first build. On a running cluster, a closed
+          2379/2380 between masters means etcd cannot form a quorum.
+      when:
+        - cluster_ports.results is defined
+        - cluster_ports.results | rejectattr('skipped', 'defined') | list | length > 0

@@ -22,22 +22,68 @@
   with_items: "{{ nodes_to_remove | default([]) }}"
   when: nodes_to_remove | length > 0
 
-- name: Remove etcd members only if it's control plane node
+# The etcd member list is the authority on which nodes are members, and this reads it once, with
+# its rc checked, before anything acts on the answer. Splitting the read from the removal is the
+# point: a failed or timed-out `member list` returns the same empty result as a node that has no
+# member, so a guard on emptiness alone cannot tell "this is not a member" from "could not ask" and
+# turns the second into a green no-op -- after cordon, drain and delete have already run, leaving a
+# phantom member counting toward quorum on a VM the operator is about to destroy. Failing here is
+# the whole behaviour: the removal below only ever runs on an answer etcd actually gave.
+#
+# Timeouts match remove-single-master.yaml and check-etcd-health.yaml; without them a single hung
+# probe eats the retry budget.
+- name: Read the etcd member list
   ansible.builtin.shell: |
     export ETCDCTL_API=3
-    ETCD_MEMBER_ID=$(etcdctl \
+    etcdctl \
+      --command-timeout=30s --dial-timeout=10s \
       --cacert=/etc/kubernetes/pki/etcd/ca.crt \
       --cert=/etc/kubernetes/pki/etcd/server.crt \
       --key=/etc/kubernetes/pki/etcd/server.key \
-      member list | grep {{ item }} | awk '{print $1}' | tr -d ',' )
-    
-    etcdctl  \
-      --cacert=/etc/kubernetes/pki/etcd/ca.crt \
-      --cert=/etc/kubernetes/pki/etcd/server.crt \
-      --key=/etc/kubernetes/pki/etcd/server.key \
-      member remove $ETCD_MEMBER_ID
+      member list
+  register: master_etcd_member_list
+  changed_when: false
+  retries: 3
+  delay: 10
+  until: master_etcd_member_list.rc == 0
+  when: inventory_hostname == orchestrator_node and nodes_to_remove | length > 0
 
+# Gated on nothing but etcd's own membership (#475).
+#
+# This used to carry `when: item is search("master-node-*")`, so a control-plane node named
+# anything else skipped removal and left a phantom member counting toward quorum -- a two-member
+# cluster that has lost quorum while reporting three.
+#
+# The obvious repair, `item in groups['masters']`, is WRONG here and would be a worse bug:
+# nodes_to_remove is by definition what the cluster has and the inventory does NOT name
+# (compare-node.yaml), so a node being scaled down is already absent from groups['masters'] and
+# the condition would be false for exactly the nodes this has to act on -- silently skipping
+# every removal.
+#
+# The lookahead/lookbehind anchors keep master-node-3 from matching master-node-30's row, and a
+# worker matches no row and no-ops on its own, which is what the hostname regex was reaching for.
+- name: Remove the node's etcd member if it has one
+  ansible.builtin.shell: |
+    export ETCDCTL_API=3
+    etcdctl \
+      --command-timeout=30s --dial-timeout=10s \
+      --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+      --cert=/etc/kubernetes/pki/etcd/server.crt \
+      --key=/etc/kubernetes/pki/etcd/server.key \
+      member remove {{ etcd_member_id }}
+  vars:
+    etcd_member_id: >-
+      {{ master_etcd_member_list.stdout_lines | default([])
+         | select('search', '(?<![\w-])' ~ item ~ '(?![\w-])')
+         | map('regex_replace', '^([^,]*),.*$', '\1')
+         | map('trim') | list | first | default('') }}
   with_items: "{{ nodes_to_remove | default([]) }}"
-  when: 
-    - inventory_hostname == groups['masters'][0] and nodes_to_remove | length > 0
-    - item is search("master-node-*")
+  when:
+    - inventory_hostname == orchestrator_node and nodes_to_remove | length > 0
+    - etcd_member_id | length > 0
+  register: master_etcd_member_removed
+  changed_when: master_etcd_member_removed.rc == 0
+  # tolerate the member disappearing between the read above and this removal, as the sibling does
+  failed_when: >-
+    master_etcd_member_removed.rc != 0 and
+    'member not found' not in master_etcd_member_removed.stderr | default('')

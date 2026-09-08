@@ -1,197 +1,82 @@
 ---
-- name: Create Hetzner VMs and Firewall
+# Builds the nodes rotate-master-nodes rotates through, plus the bastion that drives them.
+#
+# The provisioning is shared -- see ../common/proxmox-provision.yml. What is specific here is the
+# node count and the three inventories: the scenario replaces the control plane twice, so nine
+# masters are built up front and each rotation converges a different window of them.
+#
+#   inventory/hosts.yaml                      masters 1-3, the cluster converge starts from
+#   inventory/rotate-master-nodes.yaml        masters 1-6, the first rotation's before+after
+#   inventory/second-rotate-master-nodes.yaml masters 4-9, the second rotation's
+#
+# All three now live ON THE BASTION, under the mirrored scenario directory, because that is where
+# the side effects run and where they swap one over hosts.yaml -- keeping the hosts.old.yaml that
+# tests/test_cluster_healthy.yaml reads through first_found next to it. The only inventory written
+# locally is the bastion's own, which is what molecule.yml links.
+#
+# NOTE ON SIZE: nine masters plus a worker plus the bastion is eleven VMs -- 42 vCPU and 82G of
+# RAM at the defaults. That was cheap on Hetzner, where the nodes were rented per-hour; on a
+# single PVE host it is not. Set PROXMOX_CORES / PROXMOX_MEMORY down for this scenario if the host
+# cannot seat it. The bastion has its own, much smaller, PROXMOX_BASTION_* sizes.
+- name: Create Proxmox VMs
   hosts: localhost
   gather_facts: false
+  vars_files:
+    - ../common/proxmox-vars.yml
+    - ../common/bastion-vars.yml
   vars:
     num_master_nodes: 9
     num_worker_nodes: 1
     public_key: "{{ lookup('file', 'keys/vm_node.pub') }}"
+    # vmids 9200 (bastion), 9201-9209 (masters) and 9211 (worker) -- disjoint from test-cluster's
+    # 9000+ and scale-cluster's 9100+. destroy.yml must carry the same offset.
+    pve_vmid_offset: 200
+    snippet_prefix: molecule-rotate-master-nodes
 
   tasks:
-    - name: Create Hetzner Network
-      hetzner.hcloud.network:
-        name: test-molecule-network
-        ip_range: "10.1.0.0/16"
-        api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
-      register: network
+    - name: Build the nodes on Proxmox
+      ansible.builtin.import_tasks: ../common/proxmox-provision.yml
 
-    - name: Create Hetzner Network Subnet
-      hetzner.hcloud.subnetwork:
-        network: test-molecule-network
-        network_zone: "eu-central"
-        ip_range: "10.1.0.0/24"
-        api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
-        type: cloud
-      register: subnet
+    - name: Create the DNS domain and ctrp record
+      ansible.builtin.import_tasks: ../common/autoglue-create.yml
+      vars:
+        # The three masters the scenario starts with.
+        autoglue_record_values: >-
+          {{ master_nodes_list[:3] | map(attribute='name') | map('extract', node_addresses) | list }}
 
-    - name: Create Firewall
-      hetzner.hcloud.firewall:
-        name: my-firewall
-        rules:
-          - direction: in
-            protocol: tcp
-            port: "1-65535"
-            source_ips:
-              - "0.0.0.0/0"
-              - "::/0"
-          - direction: in
-            protocol: udp
-            port: "1-65535"
-            source_ips:
-              - "0.0.0.0/0"
-              - "::/0"
-        api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
-      register: firewall
-
-
-    - name: Create Master Nodes
-      hetzner.hcloud.server:
-        name: "master-node-{{ item + 1 }}"
-        server_type: ccx13
-        image: ubuntu-24.04
-        location: "{{ lookup('env', 'HCLOUD_LOCATION') | default('hel1') }}"
-        enable_ipv4: true
-        enable_ipv6: false
-        firewalls:
-          - my-firewall
-        user_data: "{{ lookup('template', 'cloudinit/cloud-init.yaml.j2')}}"
-        api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
-        private_networks:
-          - test-molecule-network
-      loop: "{{ range(0, num_master_nodes) | list }}"
-      register: master_nodes
-    
-    - name: Create Worker Nodes
-      hetzner.hcloud.server:
-        name: "worker-node-{{ item + 1 }}"
-        server_type: ccx13
-        image: ubuntu-24.04
-        location: "{{ lookup('env', 'HCLOUD_LOCATION') | default('hel1') }}"
-        enable_ipv4: true
-        enable_ipv6: false
-        firewalls:
-          - my-firewall
-        user_data: "{{ lookup('template', 'cloudinit/cloud-init.yaml.j2')}}"
-        api_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
-        private_networks:
-          - test-molecule-network
-      loop: "{{ range(0, num_worker_nodes) | list }}"
-      register: worker_nodes
-
-    - name: Store default inventory
-      ansible.builtin.copy:
-        content: |
-          all:
-            children:
-              masters:
-                hosts:
-                  {% for node in master_nodes.results[:3] -%}
-                    {{ node.hcloud_server.name }}:
-                      ansible_host: {{ node.hcloud_server.ipv4_address }}
-                      ip: {{ node.hcloud_server.private_networks_info[0].ip }}
-                      ansible_user: cluster
-                      ansible_ssh_private_key_file: keys/vm_node
-                      extra:
-                        taints:
-                          - node-role.kubernetes.io/control-plane:NoSchedule-
-                  {% endfor +%}
-              workers:
-                hosts:
-                  {% for node in worker_nodes.results -%}
-                    {{ node.hcloud_server.name }}:
-                      ansible_host: {{ node.hcloud_server.ipv4_address }}
-                      ip: {{ node.hcloud_server.private_networks_info[0].ip }}
-                      ansible_user: cluster
-                      ansible_ssh_private_key_file: keys/vm_node
-                      extra:
-                        taints:
-                          - node-role.kubernetes.io/control-plane:NoSchedule-
-                  {% endfor +%}
+    - name: Store the bastion inventory
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../common/bastion-hosts.yaml.j2"
         dest: "./inventory/hosts.yaml"
         mode: "0644"
 
-    - name: Store inventory(for scale rotate master nodes)
-      ansible.builtin.copy:
-        content: |
-          all:
-            children:
-              masters:
-                hosts:
-                  {% for node in master_nodes.results[:6] -%}
-                    {{ node.hcloud_server.name }}:
-                      ansible_host: {{ node.hcloud_server.ipv4_address }}
-                      ip: {{ node.hcloud_server.private_networks_info[0].ip }}
-                      ansible_user: cluster
-                      ansible_ssh_private_key_file: keys/vm_node
-                      extra:
-                        taints:
-                          - node-role.kubernetes.io/control-plane:NoSchedule-
-                  {% endfor +%}
-              workers:
-                hosts:
-                  {% for node in worker_nodes.results -%}
-                    {{ node.hcloud_server.name }}:
-                      ansible_host: {{ node.hcloud_server.ipv4_address }}
-                      ip: {{ node.hcloud_server.private_networks_info[0].ip }}
-                      ansible_user: cluster
-                      ansible_ssh_private_key_file: keys/vm_node
-                      extra:
-                        taints:
-                          - node-role.kubernetes.io/control-plane:NoSchedule-
-                  {% endfor +%}
-        dest: "./inventory/rotate-master-nodes.yaml"
-        mode: "0644"
-    
-    - name: Store inventory(for verifying the rotated nodes works)
-      ansible.builtin.copy:
-        content: |
-          all:
-            children:
-              masters:
-                hosts:
-                  {% for node in master_nodes.results[3:9] -%}
-                    {{ node.hcloud_server.name }}:
-                      ansible_host: {{ node.hcloud_server.ipv4_address }}
-                      ip: {{ node.hcloud_server.private_networks_info[0].ip }}
-                      ansible_user: cluster
-                      ansible_ssh_private_key_file: keys/vm_node
-                      extra:
-                        taints:
-                          - node-role.kubernetes.io/control-plane:NoSchedule-
-                  {% endfor +%}
-              workers:
-                hosts:
-                  {% for node in worker_nodes.results -%}
-                    {{ node.hcloud_server.name }}:
-                      ansible_host: {{ node.hcloud_server.ipv4_address }}
-                      ip: {{ node.hcloud_server.private_networks_info[0].ip }}
-                      ansible_user: cluster
-                      ansible_ssh_private_key_file: keys/vm_node
-                      extra:
-                        taints:
-                          - node-role.kubernetes.io/control-plane:NoSchedule-
-                  {% endfor +%}
-        dest: "./inventory/second-rotate-master-nodes.yaml"
-        mode: "0644"
-        
-    - name: Update DNS records with master node IPs via AutoGlue API
-      ansible.builtin.uri:
-        url: "{{ lookup('env', 'AUTOGLUE_BASE_URL') }}/api/v1/dns/records/{{ lookup('env', 'AUTOGLUE_RECORD_ID') }}"
-        method: PATCH
-        headers:
-          accept: application/json
-          x-org-key: "{{ lookup('env', 'AUTOGLUE_ORG_KEY') }}"
-          x-org-secret: "{{ lookup('env', 'AUTOGLUE_ORG_SECRET') }}"
-          content-type: application/json
-          x-org-id: "{{ lookup('env', 'AUTOGLUE_ORG_ID') }}"
-        body_format: json
-        body:
-          name: ctrp
-          ttl: 60
-          type: A
-          values: "{{ master_nodes.results[:3] | map(attribute='hcloud_server') | map(attribute='private_networks_info') | map('first') | map(attribute='ip') | list }}"
-        status_code: [200, 201, 204]
+    - name: Pick up the bastion
+      ansible.builtin.meta: refresh_inventory
 
-    - name: wait for 60 seconds to ensure that the nodes are up and running
-      ansible.builtin.pause:
-        seconds: 60
+- name: Make the bastion a GlueKube controller
+  hosts: bastion
+  gather_facts: true
+  vars_files:
+    - ../common/bastion-vars.yml
+  tasks:
+    - name: Install the toolchain and ship the code
+      ansible.builtin.import_tasks: ../common/bastion-prepare.yml
+
+    # After the ship, never before: bastion-prepare.yml unpacks the whole ansible/ tree over this
+    # directory, so anything templated first would be overwritten by the untar.
+    - name: Store the cluster inventories on the bastion
+      ansible.builtin.template:
+        src: "{{ bastion_local_ansible_root }}/molecule/common/hosts.yaml.j2"
+        dest: "{{ bastion_scenario_dir }}/inventory/{{ item.file }}"
+        owner: cluster
+        group: cluster
+        mode: "0644"
+      vars:
+        inv_masters: "{{ master_nodes_list[item.from:item.to] }}"
+        inv_workers: "{{ worker_nodes_list }}"
+      loop:
+        - {file: hosts.yaml, from: 0, to: 3}
+        - {file: rotate-master-nodes.yaml, from: 0, to: 6}
+        - {file: second-rotate-master-nodes.yaml, from: 3, to: 9}
+      loop_control:
+        label: "{{ item.file }} (masters {{ item.from + 1 }}-{{ item.to }})"

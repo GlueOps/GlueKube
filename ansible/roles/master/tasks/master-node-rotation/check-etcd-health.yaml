@@ -1,16 +1,23 @@
 ---
-# Reusable etcd health check with retry logic
+# Reusable etcd health check with retry logic.
+#
+# The command timeout matters as much as the retry: etcdctl's default is generous, so without it a
+# single hung probe can eat most of the 5 x 10s budget and the check reports failure having barely
+# retried.
 
 - name: "Checking etcd health: {{ health_check_stage | default('routine check') }}"
   ansible.builtin.shell: |
     export ETCDCTL_API=3
     etcdctl endpoint health \
+      --cluster \
+      --command-timeout=30s --dial-timeout=10s \
       --cacert=/etc/kubernetes/pki/etcd/ca.crt \
       --cert=/etc/kubernetes/pki/etcd/server.crt \
       --key=/etc/kubernetes/pki/etcd/server.key \
       --write-out=json
   delegate_to: "{{ execution_host }}"
   register: etcd_health
+  changed_when: false
   retries: 5
   delay: 10
   until: >

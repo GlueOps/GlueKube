@@ -1,6 +1,7 @@
 name: Molecule Tests
 
 on:
+  pull_request:
   workflow_dispatch:
     inputs:
       scenario:
@@ -17,11 +18,29 @@ on:
 env:
   ANSIBLE_ROLES_PATH: ${{ github.workspace }}/ansible/roles
 
+# Every scenario reuses fixed resource identities and PATCHes the same AUTOGLUE_RECORD_ID, and
+# create is idempotent on that identity -- so two concurrent runs adopt and then destroy each
+# other's VMs. That identity is the Proxmox vmid range each scenario owns: PROXMOX_VMID_BASE plus
+# the scenario's own offset (0 / 100 / 200), which keeps the three apart from each other but not
+# from a second run of themselves. Queue them instead (#461).
+#
+# cancel-in-progress must stay false: cancelling a molecule run mid-flight skips `destroy` and
+# leaks every VM it built.
+#
+# Keyed on the event, not just the workflow: pull_request runs skip the molecule job entirely
+# (see its `if:`), so they build nothing and do not need serialising against the dispatches that
+# do. Sharing one group also made them evict each other -- GitHub keeps a single pending run per
+# group, so a push that triggered the PR run cancelled the workflow_dispatch queued a moment
+# earlier, before a single step of it had run.
+concurrency:
+  group: molecule-${{ github.workflow }}-${{ github.event_name }}
+  cancel-in-progress: false
+
 jobs:
-  molecule:
-    name: Molecule Tests
+  lint:
+    name: Lint and syntax check
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -34,20 +53,79 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install molecule molecule-plugins[docker] ansible-core ansible-lint yamllint
-          pip install docker
-          pip install jmespath python-dateutil
+          pip install ansible-lint yamllint
+          # ansible-core is pinned here, not floating: the molecule job and the bastion install
+          # from this same file, and a lint job on a different core major would pass syntax that
+          # then fails on the machines that run it.
+          pip install -r ansible/requirements.txt
 
       - name: Install Ansible collections
+        run: ansible-galaxy collection install -r ansible/requirements.yml
+
+      - name: yamllint
+        run: yamllint ansible/
+
+      # Runs from the repo root on purpose: ansible-lint resolves .ansible-lint-ignore against
+      # the project root it detects (the git root), so running from ansible/ silently ignores
+      # the whole baseline file.
+      - name: ansible-lint
+        run: ansible-lint ansible/playbooks ansible/roles
+
+      # -i localhost, rather than the real inventory: ansible's YAML inventory plugin skips
+      # files not named *.yaml/*.yml, and a fresh checkout has no inventory/hosts.yaml anyway.
+      - name: Syntax check every playbook
         run: |
-          ansible-galaxy collection install community.docker hetzner.hcloud kubernetes.core
-          ansible-galaxy collection install ansible.posix community.general
+          for p in ansible/playbooks/*.yaml; do
+            echo "== $p"
+            ansible-playbook -i localhost, --syntax-check "$p"
+          done
+
+  molecule:
+    name: Molecule Tests
+    # Molecule builds every scenario's VMs on Proxmox -- six for test-cluster and scale-cluster,
+    # ten for rotate-master-nodes -- and needs the PROXMOX_* credentials plus the AutoGlue
+    # secrets, which GitHub does not expose to pull requests from forks. PRs get the lint job
+    # only.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.14'
+
+      - name: Setup Tailscale
+        uses: tailscale/github-action@780049a30b6ff5c378a9e7b389d15ece7a204888 # v4.1.3
+        with:
+          oauth-client-id: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
+          args: "--exit-node=${{ secrets.TAILSCALE_EXIT_NODE }}  --accept-dns=false"
+          tags: tag:github-actions
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install molecule molecule-plugins[docker] ansible-lint yamllint
+          pip install docker
+          # ansible-core and the library the modules need, pinned. There are two controllers in a
+          # molecule run now -- this runner, and the bastion it ships the repo to -- and
+          # common/bastion-prepare.yml installs from this same file, so the two cannot drift onto
+          # different ansible-core majors.
+          pip install -r ansible/requirements.txt
+
+      - name: Install Ansible collections
+        run: ansible-galaxy collection install -r ansible/requirements.yml
 
       - name: Set up environment variables
         env:
           KUBERNETES_VERSION: 'v1.34.5'
           KUBERNETES_PACKAGE_VERSION: '1.34.5-1.1'
           LOADBALANCER_APISERVER: 'ctrp.gluekube.qa-glueops.com'
+          DOMAIN_NAME: 'gluekube.qa-glueops.com'
           CALICO_CHART_VERSION: 'v3.31.4'
           CALICO_TIGERA_OPERATOR_VERSION: 'v1.40.7'
           CERTIFICATE_KEY: ${{ secrets.CERTIFICATE_KEY || '' }}
@@ -55,14 +133,61 @@ jobs:
           AUTOGLUE_BASE_URL: https://autoglue.glueopshosted.rocks
           AUTOGLUE_ORG_KEY: ${{ secrets.AUTOGLUE_ORG_KEY || '' }}
           AUTOGLUE_ORG_SECRET: ${{ secrets.AUTOGLUE_ORG_SECRET || '' }}
-          AUTOGLUE_ORG_ID: ${{ secrets.AUTOGLUE_ORG_ID || '' }}
-          AUTOGLUE_RECORD_ID: ${{ secrets.AUTOGLUE_RECORD_ID || '' }}
+          # create.yml creates the DNS domain and the ctrp record, destroy.yml deletes both.
+          # Those calls authenticate with the x-org-key/x-org-secret pair above.
+          AUTOGLUE_CREDENTIAL_ID: ${{ secrets.AUTOGLUE_CREDENTIAL_ID || '' }}
+          AUTOGLUE_ZONE_ID: ${{ secrets.AUTOGLUE_ZONE_ID || '' }}
           AUTOGLUE_CLUSTER_ID: 'empty'
-          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN || '' }}
+          PROXMOX_HOST: ${{ secrets.PROXMOX_HOST || '' }}
+          PROXMOX_USER: ${{ secrets.PROXMOX_USER || 'root@pam' }}
+          PROXMOX_TOKEN_ID: ${{ secrets.PROXMOX_TOKEN_ID || '' }}
+          PROXMOX_TOKEN_SECRET: ${{ secrets.PROXMOX_TOKEN_SECRET || '' }}
+          # Read by create.yml's two uri calls; defaults to true, so a PVE host with a
+          # self-signed certificate needs this set to false.
+          PROXMOX_VALIDATE_CERTS: ${{ vars.PROXMOX_VALIDATE_CERTS || secrets.PROXMOX_VALIDATE_CERTS || 'true' }}
+          PROXMOX_NODE: ${{ vars.PROXMOX_NODE || secrets.PROXMOX_NODE || '' }}
+          # The cloud image the nodes are built from -- there is no template on this cluster.
+          PROXMOX_IMPORT_FROM: ${{ vars.PROXMOX_IMPORT_FROM || secrets.PROXMOX_IMPORT_FROM || 'local:import/noble-server-cloudimg-amd64.qcow2' }}
+          PROXMOX_DISK_SIZE: ${{ vars.PROXMOX_DISK_SIZE || secrets.PROXMOX_DISK_SIZE || '40G' }}
+          PROXMOX_STORAGE: ${{ vars.PROXMOX_STORAGE || secrets.PROXMOX_STORAGE || 'local' }}
+          # Must advertise x86-64-v2 or better: Calico's binaries are built with GOAMD64=v2
+          # and abort on the `kvm64` model Proxmox otherwise defaults to.
+          PROXMOX_CPU: ${{ vars.PROXMOX_CPU || secrets.PROXMOX_CPU || 'x86-64-v2-AES' }}
+          # Three bridges, but no VM sits on all three. The bastion has two NICs -- public, the
+          # single address this runner can reach and the hop everything past `create` runs over,
+          # and LAN, which is routed to the NAT segment and is how it reaches the cluster. A
+          # master or worker has ONE, on the NAT bridge: its route out and the address it is
+          # reached on, both.
+          #
+          # PROXMOX_LAN_CIDR tells the BASTION's two DHCP leases apart. PROXMOX_NAT_CIDR is the
+          # cluster's own subnet -- create.yml asserts every node came up inside it, and
+          # inventory/group_vars/masters.yaml pins Calico's nodeAddressAutodetectionV4 to it.
+          # Both are required; an unset value fails the run up front rather than mis-assigning
+          # addresses.
+          PROXMOX_BRIDGE_PUBLIC: ${{ vars.PROXMOX_BRIDGE_PUBLIC || secrets.PROXMOX_BRIDGE_PUBLIC || 'vmbr_public' }}
+          PROXMOX_BRIDGE_NAT: ${{ vars.PROXMOX_BRIDGE_NAT || secrets.PROXMOX_BRIDGE_NAT || 'vmbr_nat' }}
+          PROXMOX_BRIDGE_LAN: ${{ vars.PROXMOX_BRIDGE_LAN || secrets.PROXMOX_BRIDGE_LAN || 'vmbr_lan' }}
+          # VLAN tags on those bridges. The LAN bridge is VLAN-aware and serves DHCP on 101; the
+          # public and NAT ones are untagged, and an empty value means no tag is set at all.
+          PROXMOX_BRIDGE_PUBLIC_VLAN: ${{ vars.PROXMOX_BRIDGE_PUBLIC_VLAN || secrets.PROXMOX_BRIDGE_PUBLIC_VLAN || '' }}
+          PROXMOX_BRIDGE_NAT_VLAN: ${{ vars.PROXMOX_BRIDGE_NAT_VLAN || secrets.PROXMOX_BRIDGE_NAT_VLAN || '' }}
+          PROXMOX_BRIDGE_LAN_VLAN: ${{ vars.PROXMOX_BRIDGE_LAN_VLAN || secrets.PROXMOX_BRIDGE_LAN_VLAN || '101' }}
+          PROXMOX_LAN_CIDR: ${{ vars.PROXMOX_LAN_CIDR || secrets.PROXMOX_LAN_CIDR || '' }}
+          # REQUIRED, alongside PROXMOX_LAN_CIDR -- see the note above.
+          PROXMOX_NAT_CIDR: ${{ vars.PROXMOX_NAT_CIDR || secrets.PROXMOX_NAT_CIDR || '' }}
+          PROXMOX_SNIPPET_STORAGE: ${{ vars.PROXMOX_SNIPPET_STORAGE || secrets.PROXMOX_SNIPPET_STORAGE || 'local' }}
+          PROXMOX_VMID_BASE: ${{ vars.PROXMOX_VMID_BASE || secrets.PROXMOX_VMID_BASE || '9000' }}
+          # Comma-separated; tags every VM the scenario builds so a leaked one is easy to find.
+          PROXMOX_TAGS: ${{ vars.PROXMOX_TAGS || secrets.PROXMOX_TAGS || 'qa-gluekube-molecule' }}
+          PROXMOX_SSH_USER: ${{ vars.PROXMOX_SSH_USER || secrets.PROXMOX_SSH_USER || 'root' }}
         run: |
           echo "kubernetes_version=${KUBERNETES_VERSION}" >> $GITHUB_ENV
           echo "kubernetes_package_version=${KUBERNETES_PACKAGE_VERSION}" >> $GITHUB_ENV
           echo "loadbalancer_apiserver=${LOADBALANCER_APISERVER}" >> $GITHUB_ENV
+          # consumed by kubeadm-stacked-config.yaml.j2 (certSANs) and
+          # authentication-configuration.yaml.j2 (dex issuer). Without it every scenario dies
+          # at "Init kubeadm" with AnsibleUndefinedVariable (#463).
+          echo "domain_name=${DOMAIN_NAME}" >> $GITHUB_ENV
           echo "calico_chart_version=${CALICO_CHART_VERSION}" >> $GITHUB_ENV
           echo "calico_tigera_operator_version=${CALICO_TIGERA_OPERATOR_VERSION}" >> $GITHUB_ENV
           echo "CERTIFICATE_KEY=${CERTIFICATE_KEY}" >> $GITHUB_ENV
@@ -70,18 +195,93 @@ jobs:
           echo "AUTOGLUE_BASE_URL=${AUTOGLUE_BASE_URL}" >> $GITHUB_ENV
           echo "AUTOGLUE_ORG_KEY=${AUTOGLUE_ORG_KEY}" >> $GITHUB_ENV
           echo "AUTOGLUE_ORG_SECRET=${AUTOGLUE_ORG_SECRET}" >> $GITHUB_ENV
-          echo "AUTOGLUE_ORG_ID=${AUTOGLUE_ORG_ID}" >> $GITHUB_ENV
-          echo "AUTOGLUE_RECORD_ID=${AUTOGLUE_RECORD_ID}" >> $GITHUB_ENV
+          echo "AUTOGLUE_CREDENTIAL_ID=${AUTOGLUE_CREDENTIAL_ID}" >> $GITHUB_ENV
+          echo "AUTOGLUE_ZONE_ID=${AUTOGLUE_ZONE_ID}" >> $GITHUB_ENV
           echo "AUTOGLUE_CLUSTER_ID=${AUTOGLUE_CLUSTER_ID}" >> $GITHUB_ENV
-          echo "HCLOUD_TOKEN=${HCLOUD_TOKEN}" >> $GITHUB_ENV
+          echo "PROXMOX_HOST=${PROXMOX_HOST}" >> $GITHUB_ENV
+          echo "PROXMOX_USER=${PROXMOX_USER}" >> $GITHUB_ENV
+          echo "PROXMOX_TOKEN_ID=${PROXMOX_TOKEN_ID}" >> $GITHUB_ENV
+          echo "PROXMOX_TOKEN_SECRET=${PROXMOX_TOKEN_SECRET}" >> $GITHUB_ENV
+          echo "PROXMOX_VALIDATE_CERTS=${PROXMOX_VALIDATE_CERTS}" >> $GITHUB_ENV
+          echo "PROXMOX_NODE=${PROXMOX_NODE}" >> $GITHUB_ENV
+          echo "PROXMOX_IMPORT_FROM=${PROXMOX_IMPORT_FROM}" >> $GITHUB_ENV
+          echo "PROXMOX_DISK_SIZE=${PROXMOX_DISK_SIZE}" >> $GITHUB_ENV
+          echo "PROXMOX_STORAGE=${PROXMOX_STORAGE}" >> $GITHUB_ENV
+          echo "PROXMOX_CPU=${PROXMOX_CPU}" >> $GITHUB_ENV
+          echo "PROXMOX_BRIDGE_PUBLIC=${PROXMOX_BRIDGE_PUBLIC}" >> $GITHUB_ENV
+          echo "PROXMOX_BRIDGE_NAT=${PROXMOX_BRIDGE_NAT}" >> $GITHUB_ENV
+          echo "PROXMOX_BRIDGE_LAN=${PROXMOX_BRIDGE_LAN}" >> $GITHUB_ENV
+          echo "PROXMOX_BRIDGE_PUBLIC_VLAN=${PROXMOX_BRIDGE_PUBLIC_VLAN}" >> $GITHUB_ENV
+          echo "PROXMOX_BRIDGE_NAT_VLAN=${PROXMOX_BRIDGE_NAT_VLAN}" >> $GITHUB_ENV
+          echo "PROXMOX_BRIDGE_LAN_VLAN=${PROXMOX_BRIDGE_LAN_VLAN}" >> $GITHUB_ENV
+          echo "PROXMOX_LAN_CIDR=${PROXMOX_LAN_CIDR}" >> $GITHUB_ENV
+          echo "PROXMOX_NAT_CIDR=${PROXMOX_NAT_CIDR}" >> $GITHUB_ENV
+          echo "PROXMOX_SNIPPET_STORAGE=${PROXMOX_SNIPPET_STORAGE}" >> $GITHUB_ENV
+          echo "PROXMOX_VMID_BASE=${PROXMOX_VMID_BASE}" >> $GITHUB_ENV
+          echo "PROXMOX_TAGS=${PROXMOX_TAGS}" >> $GITHUB_ENV
+          echo "PROXMOX_SSH_USER=${PROXMOX_SSH_USER}" >> $GITHUB_ENV
 
-      - name: Create /opt/gluekube directory and download Kubernetes release key
+      # The /opt/gluekube/kubernetes-release.key step that used to be here is gone.
+      # roles/common/tasks/prepare-node.yaml copies that file from an absolute CONTROLLER path,
+      # and the controller is no longer this runner -- it is the per-scenario bastion, which
+      # fetches its own copy in molecule/common/bastion-prepare.yml. One fewer place that has to
+      # track $kubernetes_version.
+
+
+      # All three scenarios build their VMs on Proxmox. Besides the throwaway key for the test
+      # VMs they each need a key for the PVE host itself: the Proxmox API's storage upload
+      # endpoint does not accept snippets, so create.yml writes the cloud-init files to the
+      # hypervisor over SSH. Installed once, before the first scenario runs -- it used to sit
+      # between rotate-master-nodes and test-cluster, which was fine only while test-cluster was
+      # the sole Proxmox scenario.
+      - name: Install the Proxmox host SSH key
+        env:
+          PROXMOX_SSH_KEY: ${{ secrets.PROXMOX_SSH_KEY || '' }}
         run: |
-          sudo mkdir -p /opt/gluekube
-          K8S_MINOR=$(echo $kubernetes_version | cut -d. -f1,2)
-          sudo curl -fsSL "https://pkgs.k8s.io/core:/stable:/${K8S_MINOR}/deb/Release.key" -o /opt/gluekube/kubernetes-release.key
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          KEY=~/.ssh/proxmox_host
 
-      
+          if [ -z "${PROXMOX_SSH_KEY}" ]; then
+            echo "::error::PROXMOX_SSH_KEY is empty. create.yml writes the cloud-init snippets to"
+            echo "::error::the PVE host over SSH -- the API's upload endpoint does not take snippets."
+            exit 1
+          fi
+
+          # The secret is accepted either as the PEM itself or base64-encoded. Base64 is the
+          # reliable form: a PEM pasted into a field that eats newlines, or saved from an editor
+          # with CRLF endings, produces a file ssh rejects with "error in libcrypto" and then
+          # silently falls back to password auth (#486).
+          if printf '%s' "${PROXMOX_SSH_KEY}" | tr -d '[:space:]' | base64 -d > "$KEY" 2>/dev/null \
+             && grep -q -- "-----BEGIN" "$KEY"; then
+            echo "PROXMOX_SSH_KEY decoded from base64."
+          else
+            printf '%s' "${PROXMOX_SSH_KEY}" | tr -d '\r' > "$KEY"
+            # OpenSSH requires the final newline; without it the last base64 line is truncated.
+            if [ -n "$(tail -c1 "$KEY")" ]; then printf '\n' >> "$KEY"; fi
+          fi
+          chmod 600 "$KEY"
+
+          # Fail here with the reason rather than 100 lines later as an UNREACHABLE host whose
+          # message blames publickey auth. -P '' distinguishes a malformed key from an encrypted
+          # one: CI cannot type a passphrase, so a passphrased key is just as unusable.
+          if ! ssh-keygen -y -P '' -f "$KEY" > "$KEY.pub" 2>/tmp/keyerr; then
+            echo "::error::PROXMOX_SSH_KEY is not a usable private key:"
+            sed 's/^/::error::  /' /tmp/keyerr
+            echo "::error::Store it base64-encoded -- \`base64 -w0 < id_ed25519\` -- and make sure it"
+            echo "::error::has no passphrase. A passphrased key cannot be used unattended."
+            exit 1
+          fi
+          # Public half only; safe to print, and it is what has to be in the PVE host's
+          # authorized_keys for the user in PROXMOX_SSH_USER.
+          echo "Proxmox host key loaded: $(cat "$KEY.pub")"
+
+          echo "PROXMOX_SSH_KEY_FILE=$KEY" >> $GITHUB_ENV
+          # create.yml delegates to the PVE host, and ansible.cfg's host-key setting is inert
+          # (it spells the env var name, not the ini key), so seed the known_hosts instead of
+          # relying on ANSIBLE_HOST_KEY_CHECKING.
+          ssh-keyscan -H "${PROXMOX_HOST:-}" >> ~/.ssh/known_hosts 2>/dev/null || true
+
 
       - name: Run Molecule Test - scale-cluster
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.scenario == 'all' || github.event.inputs.scenario == 'scale-cluster'
@@ -110,12 +310,24 @@ jobs:
           chmod 600 molecule/test-cluster/keys/vm_node
           molecule test -s test-cluster
 
+      # The old globs collected nothing: `.molecule` has not been molecule's state directory for
+      # years, and `tests` is unmodified source. ~/.cache/molecule is the real ephemeral
+      # directory and holds the resolved inventory and config for each scenario (#464).
+      #
+      # DO NOT add ansible/ansible.log here. ansible.cfg sends every task result to it, the repo
+      # has no no_log (issue #433 was closed as won't-do), and this repository is public --
+      # artifacts on public repos are world-downloadable. Uploading it publishes the join token,
+      # the certificate key and the AutoGlue org secret.
+      # ansible/molecule/*/logs is the stdout of each playbook the BASTION ran, fetched back by
+      # molecule/common/bastion-run.yml. Without it a failed converge leaves nothing behind: the
+      # bastion is deleted by destroy seconds later. It is the step log only -- never the
+      # bastion's own ansible.log, for the reason above.
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: molecule-test-results
           path: |
-            ansible/molecule/**/.molecule
-            ansible/molecule/**/tests
+            ~/.cache/molecule
+            ansible/molecule/*/logs
           retention-days: 7

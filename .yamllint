@@ -1,0 +1,31 @@
+---
+# yamllint config for the ansible tree.
+#
+# The rules that stay enabled are the ones that catch defects: a duplicated key silently
+# discards the first value, an unquoted 0644 is octal-in-disguise, and `yes`/`no` mean
+# different things to YAML 1.1 and 1.2 parsers.
+#
+# The disabled rules are pure formatting, and the repo breaks them in the hundreds
+# (248 line-length, 76 trailing-spaces, 41 document-start, 40 missing-final-newline).
+# Fixing that is whitespace churn across ~70 files, which would collide head-on with the
+# de-duplication work in epics H and I. Turn them back on once those land.
+
+extends: default
+
+rules:
+  line-length: disable
+  trailing-spaces: disable
+  new-line-at-end-of-file: disable
+  document-start: disable
+  comments: disable
+  comments-indentation: disable
+  empty-lines: disable
+  indentation: disable
+
+  # `when:`/`with_items:` keys are not booleans; only check values.
+  truthy:
+    check-keys: false
+  braces:
+    max-spaces-inside: 1
+  brackets:
+    max-spaces-inside: 1

@@ -2,10 +2,18 @@ name: Update "latest" release
 
 on:
   release:
-    types: [published, released]
+    # `published` only. A stable release fires both `published` and `released`, which used to
+    # start two runs that raced `gh release delete latest --cleanup-tag` against
+    # `gh release create latest` (#464).
+    types: [published]
 
 permissions:
   contents: write
+
+# Belt and braces for the same race: a rapid sequence of releases queues instead of colliding.
+concurrency:
+  group: latest-release
+  cancel-in-progress: false
 
 jobs:
   mirror_to_latest:

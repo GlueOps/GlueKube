@@ -7,7 +7,11 @@ provisioner:
   log: true
   inventory:
     links:
+      # The BASTION, not the cluster. create.yml writes this file with the one host molecule can
+      # reach; the cluster inventory is written onto the bastion and never exists locally.
       hosts: inventory/hosts.yaml
+      # Still the cluster's group_vars: the remote runs read them from the shipped tree, and
+      # against this bastion-only inventory they are inert.
       group_vars: inventory/group_vars
   playbooks:
     side_effect: side_effect/default.yaml
@@ -15,17 +19,24 @@ provisioner:
 
 scenario:
   name: scale-cluster
+  # Every step past `create` runs on the bastion -- see the wrappers in remote/, and converge.yml
+  # and verify.yml. Molecule itself only ever talks to the bastion.
   test_sequence:
     - create
-    - side_effect tests/test_nodes_pingable.yaml
+    # Probes repo.gpkg.io:443 and pkgs.k8s.io:443 from every node: the direct test of the NAT
+    # bridge being the nodes' only way out, now that they have no public leg.
+    - side_effect remote/test_nodes_pingable.yml
     - converge
-    - side_effect tests/test_cluster_healthy.yaml
-    - side_effect side_effect/add_control_plane.yaml
-    - side_effect tests/test_scale_up.yaml
-    - side_effect side_effect/remove_worker_node.yaml
-    - side_effect tests/test_scale_down_worker.yaml
-    - side_effect side_effect/add_worker_node.yaml
-    - side_effect tests/test_scale_up_worker.yaml
+    - side_effect remote/test_cluster_healthy.yml
+    - side_effect remote/add_control_plane.yml
+    - side_effect remote/test_scale_up.yml
+    - side_effect remote/remove_worker_node.yml
+    - side_effect remote/test_scale_down_worker.yml
+    - side_effect remote/add_worker_node.yml
+    - side_effect remote/test_scale_up_worker.yml
+    - side_effect remote/remove_control_plane.yml
+    - side_effect remote/test_scale_down.yml
+    - verify
     - destroy
 
 verifier:

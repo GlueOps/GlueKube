@@ -1,27 +1,32 @@
 # this should upgrade all the cluster component like: kubelet, kube-proxy, coredns, etcd(with cert rotation)
 ---
-- name: Upgrade cluster
-  hosts: masters[0]
+# The version floor and the kubernetes_version/kubernetes_package_version cross-check matter most
+# here: an upgrade is exactly where those two drift apart (#466).
+- name: Preflight
+  ansible.builtin.import_playbook: preflight.yaml
+
+- name: Elect the orchestrator
+  ansible.builtin.import_playbook: elect-orchestrator.yaml
+
+- name: Upgrade the orchestrator control-plane node first
+  hosts: orchestrator
   become: true
   tasks:
-    - name: Upgrade kubernetes package versions
+    - name: Upgrade kubeadm on the orchestrator
       ansible.builtin.include_role:
-        name: master
+        name: common
         tasks_from: upgrade-kubeadm.yaml
-      when: inventory_hostname == groups['masters'][0]
 
-    - name: Upgrade First Control plane
+    - name: Run kubeadm upgrade apply on the orchestrator
       ansible.builtin.include_role:
         name: master
         tasks_from: first-node-upgrade.yaml
       tags: upgrade
-      when: inventory_hostname == groups['masters'][0]
 
-    - name: Upgrade kubernetes package versions
+    - name: Upgrade kubelet and kubectl on the orchestrator
       ansible.builtin.include_role:
-        name: master
+        name: common
         tasks_from: upgrade-kubelet.yaml
-      when: inventory_hostname == groups['masters'][0]
 
 
 - name: Upgrade Master Nodes Sequentially
@@ -29,22 +34,27 @@
   become: true
   serial: 1
   tasks:
-    - name: Upgrade kubernetes package versions
+    - name: Select the orchestrator node
       ansible.builtin.include_role:
         name: master
+        tasks_from: select-orchestrator.yaml
+
+    - name: Upgrade kubeadm on this control-plane node
+      ansible.builtin.include_role:
+        name: common
         tasks_from: upgrade-kubeadm.yaml
-      when: inventory_hostname != groups['masters'][0]
+      when: inventory_hostname != orchestrator_node
 
     - name: Upgrade Master Nodes
       ansible.builtin.include_role:
         name: master
         tasks_from: upgrade.yaml
       tags: upgrade
-      when: inventory_hostname != groups['masters'][0]
+      when: inventory_hostname != orchestrator_node
       
     - name: "Drain '{{ inventory_hostname }}' from the master"
-      delegate_to: "{{ groups['masters'][0] }}"
-      become: yes 
+      delegate_to: "{{ orchestrator_node }}"
+      become: true
       ansible.builtin.shell: |
         export KUBECONFIG=/etc/kubernetes/admin.conf
         kubectl cordon {{ inventory_hostname }}
@@ -52,27 +62,27 @@
           
       register: drain_result
       changed_when: "'drained' in drain_result.stdout"
-      when: inventory_hostname != groups['masters'][0]
+      when: inventory_hostname != orchestrator_node
     
     - name: "Perform maintenance on '{{ inventory_hostname }}'"
       ansible.builtin.debug:
         msg: "Node {{ inventory_hostname }} is drained. Performing maintenance now."
 
-    - name: Upgrade kubernetes package versions
+    - name: Upgrade kubelet and kubectl on this control-plane node
       ansible.builtin.include_role:
-        name: master
+        name: common
         tasks_from: upgrade-kubelet.yaml
-      when: inventory_hostname != groups['masters'][0]
+      when: inventory_hostname != orchestrator_node
     
     - name: "Uncordon '{{ inventory_hostname }}' from the master"
-      delegate_to: "{{ groups['masters'][0] }}"
-      become: yes
+      delegate_to: "{{ orchestrator_node }}"
+      become: true
       ansible.builtin.shell: |
         export KUBECONFIG=/etc/kubernetes/admin.conf
         kubectl uncordon {{ inventory_hostname }}
       register: uncordon_result
       changed_when: "'uncordoned' in uncordon_result.stdout"
-      when: inventory_hostname != groups['masters'][0]
+      when: inventory_hostname != orchestrator_node
 
     - name: "Pause for 60 seconds to allow pods to reschedule"
       ansible.builtin.pause:
@@ -86,9 +96,14 @@
   become: true
   serial: 1
   tasks: 
-    - name: Upgrade kubernetes package versions
+    - name: Select the orchestrator node
       ansible.builtin.include_role:
         name: master
+        tasks_from: select-orchestrator.yaml
+
+    - name: Upgrade kubeadm on this worker
+      ansible.builtin.include_role:
+        name: common
         tasks_from: upgrade-kubeadm.yaml
       
     - name: Upgrade Worker Nodes
@@ -98,8 +113,8 @@
       tags: upgrade
 
     - name: "Drain '{{ inventory_hostname }}' from the master"
-      delegate_to: "{{ groups['masters'][0] }}"
-      become: yes 
+      delegate_to: "{{ orchestrator_node }}"
+      become: true
       ansible.builtin.shell: |
         export KUBECONFIG=/etc/kubernetes/admin.conf
         kubectl cordon {{ inventory_hostname }}
@@ -112,17 +127,17 @@
       ansible.builtin.debug:
         msg: "Node {{ inventory_hostname }} is drained. Performing maintenance now."
 
-    - name: Upgrade kubernetes package versions
+    - name: Upgrade kubelet and kubectl on this worker
       ansible.builtin.include_role:
-        name: worker
+        name: common
         tasks_from: upgrade-kubelet.yaml
         apply:
           tags:
           - kubernetes_component
 
     - name: "Uncordon '{{ inventory_hostname }}' from the master"
-      delegate_to: "{{ groups['masters'][0] }}"
-      become: yes
+      delegate_to: "{{ orchestrator_node }}"
+      become: true
       ansible.builtin.shell: |
         export KUBECONFIG=/etc/kubernetes/admin.conf
         kubectl uncordon {{ inventory_hostname }}

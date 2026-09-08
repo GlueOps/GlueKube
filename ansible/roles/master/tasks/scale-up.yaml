@@ -7,12 +7,12 @@
 - name: Copy join command
   ansible.builtin.import_tasks: copy-join-command.yaml
   when:
-    - inventory_hostname == groups['masters'][0] or (inventory_hostname.startswith('master') and inventory_hostname in nodes_to_add)
+    - inventory_hostname == orchestrator_node or (inventory_hostname.startswith('master') and inventory_hostname in nodes_to_add)
 
 - name: Reupload certs
   ansible.builtin.import_tasks: reupload-certs.yaml
   when:
-    - inventory_hostname == groups['masters'][0]
+    - inventory_hostname == orchestrator_node
 
 - name: Reset Nodes
   ansible.builtin.import_tasks: reset-nodes.yaml
@@ -22,10 +22,10 @@
   ansible.builtin.import_tasks: join-nodes.yaml
   tags: join_nodes
   when:
-    - inventory_hostname == groups['masters'][0] or (inventory_hostname.startswith('master') and inventory_hostname in nodes_to_add)
+    - inventory_hostname == orchestrator_node or (inventory_hostname.startswith('master') and inventory_hostname in nodes_to_add)
 
 - name: Scale up worker nodes
   ansible.builtin.include_role:
     name: worker
   when:
-    - inventory_hostname == groups['masters'][0] or (inventory_hostname in nodes_to_add and inventory_hostname.startswith('worker'))
+    - inventory_hostname == orchestrator_node or (inventory_hostname in nodes_to_add and inventory_hostname.startswith('worker'))

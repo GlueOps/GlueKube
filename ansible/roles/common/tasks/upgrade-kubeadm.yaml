@@ -1,0 +1,51 @@
+---
+# Point the node at the apt repo for the target Kubernetes minor and move kubeadm onto the pinned
+# version. Shared by every play in upgrade-cluster.yaml -- the orchestrator, the remaining
+# masters and the workers all run the identical steps (#474).
+#
+# This used to be two files. roles/worker/tasks/upgrade-kubeadm.yaml was never actually reachable:
+# the worker play included `name: master, tasks_from: upgrade-kubeadm.yaml`, so the only copy
+# carrying the `Hold kubeadm` task below never ran on any node. That hold is kept here.
+
+- name: Download Kubernetes GPG key
+  ansible.builtin.get_url:
+    url: https://pkgs.k8s.io/core:/stable:/{{ kubernetes_version.split('.')[0] }}.{{ kubernetes_version.split('.')[1] }}/deb/Release.key
+    dest: /tmp/kubernetes-release.key
+    mode: '0644'
+
+- name: Convert Kubernetes GPG key to keyring format
+  ansible.builtin.shell: |
+    set -euo pipefail
+    gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg < /tmp/kubernetes-release.key
+    chmod a+r /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+  args:
+    executable: /bin/bash
+    creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+- name: Add Kubernetes repository via Nexus
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg]
+      https://repo.gpkg.io/repository/kubernetes-{{ kubernetes_version.split('.')[0] }}-{{ kubernetes_version.split('.')[1] }} /
+    filename: nexus-kubernetes
+    state: present
+  tags:
+    - kubernetes_component_kubeadm
+    - kubernetes_component_kubelet
+
+- name: Upgrade kubeadm to {{ kubernetes_package_version }}
+  ansible.builtin.apt:
+    name:
+      - kubeadm={{ kubernetes_package_version }}
+    state: present
+    allow_unauthenticated: true
+    allow_change_held_packages: true
+    allow_downgrade: true
+
+# prepare-nodes.yaml already holds kubeadm on a freshly built node; re-asserting it here keeps a
+# node that was upgraded but never prepared by this repo in the same state. The install above sets
+# allow_change_held_packages, so the next deliberate version change still applies.
+- name: Hold kubeadm at the pinned version
+  ansible.builtin.dpkg_selections:
+    name: kubeadm
+    selection: hold

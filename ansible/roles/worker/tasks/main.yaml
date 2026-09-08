@@ -1,3 +1,10 @@
+- name: Select the orchestrator node
+  ansible.builtin.include_role:
+    name: master
+    tasks_from: select-orchestrator.yaml
+  vars:
+    orchestrator_in_play_required: true
+
 - name: Prepare node
   ansible.builtin.import_tasks: prepare-nodes.yaml
   when: inventory_hostname in groups['workers']
