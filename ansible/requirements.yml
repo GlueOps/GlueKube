@@ -25,7 +25,7 @@ collections:
   - name: ansible.utils
     version: "6.0.3"
   - name: community.general
-    version: "13.2.0"
+    version: "13.3.0"
   # The proxmox modules used by molecule/test-cluster. They are NOT in community.general any
   # more: on the 13.2.0 pinned above, community.general.proxmox* are redirect-only stubs that
   # emit a deprecation warning and are scheduled for removal in community.general 15.0.0. Always
