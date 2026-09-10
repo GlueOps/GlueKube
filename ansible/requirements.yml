@@ -23,7 +23,7 @@ collections:
   # ipaddr/network_in_network, used by playbooks/preflight.yaml. Needs the netaddr python
   # package on the controller as well (Dockerfile and readme install it).
   - name: ansible.utils
-    version: "6.0.3"
+    version: "6.1.0"
   - name: community.general
     version: "13.3.0"
   # The proxmox modules used by molecule/test-cluster. They are NOT in community.general any
