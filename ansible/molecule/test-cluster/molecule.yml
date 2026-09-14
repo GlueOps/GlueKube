@@ -24,7 +24,7 @@ scenario:
   # and verify.yml. Molecule itself only ever talks to the bastion.
   test_sequence:
     - create
-    # Restored now that it means something: this probes repo.gpkg.io:443 and pkgs.k8s.io:443 from
+    # Restored now that it means something: this probes repo.gpkg.io:443 from
     # every node, which is the direct test of the NAT bridge being the nodes' only way out.
     - side_effect remote/test_nodes_pingable.yml
     - converge

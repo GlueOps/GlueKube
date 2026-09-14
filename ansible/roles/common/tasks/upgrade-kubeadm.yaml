@@ -9,7 +9,7 @@
 
 - name: Download Kubernetes GPG key
   ansible.builtin.get_url:
-    url: https://pkgs.k8s.io/core:/stable:/{{ kubernetes_version.split('.')[0] }}.{{ kubernetes_version.split('.')[1] }}/deb/Release.key
+    url: https://repo.gpkg.io/repository/raw-pkgs-k8s/core:/stable:/{{ kubernetes_version.split('.')[0] }}.{{ kubernetes_version.split('.')[1] }}/deb/Release.key
     dest: /tmp/kubernetes-release.key
     mode: '0644'
 

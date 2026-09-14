@@ -66,7 +66,7 @@
     name: local-path-provisioner
     chart_ref: local-path-provisioner
     chart_version: 0.0.30
-    chart_repo_url: https://charts.containeroo.ch
+    chart_repo_url: https://repo.gpkg.io/repository/helm-containeroo
     release_namespace: local-path-storage
     create_namespace: true
     values_files:

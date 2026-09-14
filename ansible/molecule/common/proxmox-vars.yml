@@ -37,8 +37,8 @@ pve_storage: "{{ lookup('env', 'PROXMOX_STORAGE') | default('local', true) }}"
 #   public  the bastion's net0, and nothing else's. The one address reachable from the machine
 #           running molecule, and the only inbound path into the scenario.
 #   lan     the bastion's net1. Routed to the NAT segment, which is how it reaches the nodes.
-#   nat     a cluster node's ONLY NIC. Outbound internet -- apt, registry.k8s.io, the Helm repos,
-#           GitHub releases -- and the segment the cluster itself runs on: etcd peers, the
+#   nat     a cluster node's ONLY NIC. Outbound internet -- apt, repo.gpkg.io, registry.k8s.io --
+#           and the segment the cluster itself runs on: etcd peers, the
 #           kubelet, Calico, and what the ctrp record resolves to.
 #
 # Masters and workers have one NIC and one address. There is no separate "private" leg any more:

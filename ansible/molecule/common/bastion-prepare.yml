@@ -149,7 +149,7 @@
 # now, so it needs its own copy or every node fails at "Copy Kubernetes GPG key".
 - name: Fetch the Kubernetes apt release key
   ansible.builtin.get_url:
-    url: "https://pkgs.k8s.io/core:/stable:/v{{ k8s_minor }}/deb/Release.key"
+    url: "https://repo.gpkg.io/repository/raw-pkgs-k8s/core:/stable:/v{{ k8s_minor }}/deb/Release.key"
     dest: "{{ bastion_gluekube_root }}/kubernetes-release.key"
     mode: "0644"
   become: true

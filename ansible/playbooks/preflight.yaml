@@ -26,23 +26,28 @@
     k8s_major_minor: "{{ kubernetes_version | regex_replace('^v', '') | regex_replace('^([0-9]+)\\.([0-9]+).*$', '\\1.\\2') }}"
   tasks:
     # The repo is Ubuntu-only and several places assume it: roles/common/tasks/prepare-node.yaml
-    # pins the Docker apt line to .../linux/ubuntu and builds it from the distribution codename,
-    # and the Kubernetes repository is a deb. Asserting it here turns "apt could not find
-    # docker-ce" or a 404 on an Ubuntu codename that Debian does not have into one clear message
-    # before any node is touched (#478).
+    # builds the Docker apt line from the distribution codename, and the Kubernetes repository is
+    # a deb. Asserting it here turns "apt could not find docker-ce" or a 404 on a codename into
+    # one clear message before any node is touched (#478).
+    #
+    # The codename list is not a Docker or Ubuntu limit but the mirror's (#235): Docker now comes
+    # through repo.gpkg.io, which proxies one Docker suite per codename. download.docker.com
+    # carried every Ubuntu release; the mirror carries these three. Supporting another means
+    # adding its docker-ubuntu-<codename> repository to GlueOps/sonartype-installer first.
     - name: The node runs a supported distribution
       ansible.builtin.assert:
         that:
           - ansible_distribution == 'Ubuntu'
-          - ansible_distribution_release | default('', true) | length > 0
+          - ansible_distribution_release | default('', true) in ['jammy', 'noble', 'resolute']
         fail_msg: >-
           {{ inventory_hostname }} runs
           {{ ansible_distribution | default('an unknown distribution') }}
-          {{ ansible_distribution_version | default('') }}, and GlueKube supports Ubuntu only --
-          roles/common/tasks/prepare-node.yaml adds the Docker repository for
-          https://download.docker.com/linux/ubuntu and needs a codename that exists there.
-          An empty release means /etc/os-release carries no VERSION_CODENAME, which no supported
-          Ubuntu image does.
+          {{ ansible_distribution_version | default('') }}
+          ({{ ansible_distribution_release | default('no codename', true) }}), and GlueKube
+          supports Ubuntu jammy, noble and resolute only -- roles/common/tasks/prepare-node.yaml
+          installs Docker from https://repo.gpkg.io/repository/docker-ubuntu-<codename>, and the
+          mirror carries a repository for those three codenames. An empty release means
+          /etc/os-release carries no VERSION_CODENAME, which no supported Ubuntu image does.
         quiet: true
 
     # default('', true) rather than plain default(): these variables are lookup('env', ...), so
