@@ -42,7 +42,7 @@ molecule (laptop / CI runner)
 ```
 
 A cluster node has **exactly one NIC**, on `vmbr_nat`. That single address is everything: its
-route out to apt and `registry.k8s.io`, the address the bastion SSHes to, and what etcd, the
+route out to apt, `repo.gpkg.io` and `registry.k8s.io`, the address the bastion SSHes to, and what etcd, the
 kubelet, Calico and the `ctrp` record all bind to — `ansible_host` and `ip` in the inventory are
 the same value. Nothing outside the scenario can reach it. The bastion can, because its LAN leg is
 routed to the NAT segment.
@@ -207,7 +207,7 @@ export PROXMOX_CPU="x86-64-v2-AES"
 #   bastion, net1 on the LAN bridge:    how it reaches the cluster. the LAN has to be routed to
 #                        the NAT segment; nothing here sets that up.
 #   node,    net0 on the NAT bridge:    a master or worker's ONLY NIC. outbound internet -- apt,
-#                        registry.k8s.io, the helm repos, github releases -- and the address the
+#                        repo.gpkg.io, registry.k8s.io -- and the address the
 #                        cluster runs on: kubelet, etcd, Calico VXLAN, and what ctrp resolves to.
 #                        it is both `ansible_host` and `ip` in the inventory.
 export PROXMOX_BRIDGE_PUBLIC="vmbr_public"
@@ -305,12 +305,15 @@ can:
 - a storage with the `snippets` content type enabled
 - SSH access to the PVE host
 - all three bridges, with DHCP on each
-- **`$PROXMOX_BRIDGE_NAT` must actually route out.** It is the cluster nodes' only path to apt,
-  `repo.gpkg.io`, `registry.k8s.io`, the Helm repos and GitHub releases, so its DHCP scope has to
-  hand out a router option *and* nameservers. If it does not, cloud-init never finishes on any
-  node and the run dies at *Wait for the guest agent to report an address*. `create.yml` checks the
-  bridge exists; it cannot check that it NATs. The `test_nodes_pingable` step right after `create`
-  is the thing that does — it probes `repo.gpkg.io:443` and `pkgs.k8s.io:443` from every node.
+- **`$PROXMOX_BRIDGE_NAT` must actually route out.** It is the cluster nodes' only path to the
+  distro's apt suites, `repo.gpkg.io` and `registry.k8s.io`, so its DHCP scope has to hand out a
+  router option *and* nameservers. `repo.gpkg.io` fronts everything else a node fetches — the
+  Docker, Kubernetes and Helm apt repos and their keys, the images, the Helm charts and the GitHub
+  release binaries; `registry.k8s.io` is still needed for containerd's default pause image. If the
+  bridge does not route out, cloud-init never finishes on any node and the run dies at *Wait for
+  the guest agent to report an address*. `create.yml` checks the bridge exists; it cannot check
+  that it NATs. The `test_nodes_pingable` step right after `create` is the thing that does — it
+  probes `repo.gpkg.io:443` from every node.
 - **`$PROXMOX_BRIDGE_LAN` must be routed to `$PROXMOX_BRIDGE_NAT`.** The bastion sits on the LAN
   and every node sits on the NAT segment, so that route is the only way it reaches them. Nothing
   here builds it. If it is missing, `create` gets as far as *Wait for SSH on every cluster node*

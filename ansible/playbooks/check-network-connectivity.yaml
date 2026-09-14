@@ -47,7 +47,13 @@
       loop_control:
         label: "{{ item }} ({{ hostvars[item].ip }})"
 
-    # Every node install pulls the kube packages and the mirrored images from these two.
+    # The Docker, Kubernetes and Helm packages, their signing keys, the cluster images, the Helm
+    # charts and the release binaries all come through the mirror (#235). pkgs.k8s.io used to be
+    # probed here too; nothing on a node reaches it any more.
+    #
+    # Not the whole egress list: the distro's own apt suites are still upstream, and so is the
+    # containerd sandbox image -- prepare-node.yaml writes `containerd config default` with only
+    # SystemdCgroup changed, which leaves the pause image on registry.k8s.io.
     - name: Package and image mirrors are reachable
       ansible.builtin.wait_for:
         host: "{{ item }}"
@@ -55,7 +61,6 @@
         timeout: 10
       loop:
         - repo.gpkg.io
-        - pkgs.k8s.io
 
     - name: Look up the control-plane endpoint
       ansible.builtin.command: "getent hosts {{ loadbalancer_apiserver }}"

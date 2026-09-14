@@ -28,7 +28,7 @@
 
 - name: Download Helm binary tarball
   ansible.builtin.get_url:
-    url: https://get.helm.sh/helm-v3.18.6-linux-amd64.tar.gz
+    url: https://repo.gpkg.io/repository/raw-helm/helm-v3.18.6-linux-amd64.tar.gz
     dest: /tmp/helm-v3.18.6-linux-amd64.tar.gz
     mode: '0644'
 
@@ -60,9 +60,11 @@
 
 
 # install k9s
+# raw-github proxies github.com. A release download answers 302 to objects.githubusercontent.com
+# and Nexus follows it, so that CDN name is egress the mirror host needs -- not this node.
 - name: Download k9s
   ansible.builtin.get_url:
-    url: https://github.com/derailed/k9s/releases/download/v0.32.7/k9s_linux_amd64.deb
+    url: https://repo.gpkg.io/repository/raw-github/derailed/k9s/releases/download/v0.32.7/k9s_linux_amd64.deb
     dest: /tmp/k9s.deb
     mode: "0644"
   tags: install_k9s

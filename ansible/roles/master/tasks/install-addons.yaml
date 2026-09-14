@@ -19,7 +19,7 @@
     name: metrics-server
     chart_ref: metrics-server
     chart_version: 3.13.1
-    chart_repo_url: https://kubernetes-sigs.github.io/metrics-server
+    chart_repo_url: https://repo.gpkg.io/repository/helm-metrics-server
     release_namespace: kube-system
     create_namespace: false
     values_files:

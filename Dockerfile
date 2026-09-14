@@ -48,7 +48,7 @@ COPY . /opt/gluekube
 
 # Download Kubernetes GPG key at build time
 RUN K8S_MINOR=$(echo $kubernetes_version | cut -d. -f1,2) && \
-    curl -fsSL "https://pkgs.k8s.io/core:/stable:/${K8S_MINOR}/deb/Release.key" -o /opt/gluekube/kubernetes-release.key
+    curl -fsSL "https://repo.gpkg.io/repository/raw-pkgs-k8s/core:/stable:/${K8S_MINOR}/deb/Release.key" -o /opt/gluekube/kubernetes-release.key
 
 # Define default command
 CMD ["bash"]

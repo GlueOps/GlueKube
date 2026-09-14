@@ -20,7 +20,7 @@
     name: calico
     chart_ref: tigera-operator
     chart_version: "{{ calico_chart_version }}"
-    chart_repo_url: https://docs.tigera.io/calico/charts
+    chart_repo_url: https://repo.gpkg.io/repository/helm-tigera
     release_namespace: tigera-operator
     create_namespace: true
     values_files:
