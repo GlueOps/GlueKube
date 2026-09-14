@@ -39,4 +39,4 @@ collections:
   # No longer used by anything: all three molecule scenarios build on Proxmox. Kept pinned so a
   # scenario can be pointed back at Hetzner without re-resolving a version -- drop it, and the
   - name: kubernetes.core
-    version: "5.4.4"
+    version: "6.5.0"
