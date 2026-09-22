@@ -12,6 +12,7 @@
     allow_unauthenticated: true
     allow_change_held_packages: true
     allow_downgrade: true
+    update_cache: true
   tags: kubernetes_component_kubelet
 
 - name: Hold kubelet at the pinned version
