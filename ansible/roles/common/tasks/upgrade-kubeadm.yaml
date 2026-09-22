@@ -41,6 +41,8 @@
     allow_unauthenticated: true
     allow_change_held_packages: true
     allow_downgrade: true
+    update_cache: true
+    cache_valid_time: 0   # or drop cache_valid_time entirely
 
 # prepare-nodes.yaml already holds kubeadm on a freshly built node; re-asserting it here keeps a
 # node that was upgraded but never prepared by this repo in the same state. The install above sets
