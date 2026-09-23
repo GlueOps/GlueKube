@@ -62,7 +62,9 @@
 - name: Install the controller's system packages
   ansible.builtin.apt:
     name:
+      - curl
       - dnsutils
+      - gnupg
       - jq
       - python3-pip
       - rsync
@@ -122,6 +124,34 @@
     owner: cluster
     group: cluster
 
+# Same keys and pins as the Dockerfile, for roles/apt_keys to copy from.
+- name: Make the apt keys directory
+  ansible.builtin.file:
+    path: "{{ bastion_gluekube_root }}/apt-keys"
+    state: directory
+    mode: "0755"
+
+- name: Fetch the apt signing keys
+  ansible.builtin.shell: |
+    set -euo pipefail
+    cd {{ bastion_gluekube_root }}/apt-keys
+    curl -fsSL --proto '=https' --retry 5 -o {{ item.name }}.asc "{{ item.url }}"
+    fpr="$(gpg --show-keys --with-colons {{ item.name }}.asc | awk -F: '/^pub/{p=1;next} /^fpr/&&p{print $10;p=0}' || true)"
+    [ "$fpr" = "{{ item.fpr }}" ] || { echo "apt key {{ item.name }}: got '$fpr', pinned {{ item.fpr }}" >&2; exit 1; }
+    gpg --dearmor --yes -o {{ item.name }}.gpg {{ item.name }}.asc
+    rm {{ item.name }}.asc
+  args:
+    executable: /bin/bash
+  loop:
+    - { name: kubernetes, url: "https://pkgs.k8s.io/core:/stable:/v{{ k8s_minor }}/deb/Release.key", fpr: DE15B14486CD377B9E876E1A234654DA9A296436 }
+    - { name: docker, url: "https://download.docker.com/linux/ubuntu/gpg", fpr: 9DC858229FC7DD38854AE2D88D81803C0EBFCD88 }
+    - { name: helm, url: "https://packages.buildkite.com/helm-linux/helm-debian/gpgkey", fpr: DDF78C3E6EBB2D2CC223C95C62BA89D07698DBC6 }
+  loop_control:
+    label: "{{ item.name }}"
+  vars:
+    k8s_minor: "{{ (lookup('env', 'kubernetes_version') | regex_replace('^v', '') | split('.'))[0:2] | join('.') }}"
+  changed_when: true
+
 - name: Drop the local tarball
   ansible.builtin.file:
     path: "{{ bastion_local_tmp.path }}"
@@ -143,18 +173,6 @@
   ansible.builtin.command:
     cmd: ansible-galaxy collection install -r {{ bastion_gluekube_root }}/ansible/requirements.yml
   changed_when: true
-
-# roles/common/tasks/prepare-node.yaml copies this onto every node from an absolute CONTROLLER
-# path. Until now only the CI runner and the container image had it; the controller is this host
-# now, so it needs its own copy or every node fails at "Copy Kubernetes GPG key".
-- name: Fetch the Kubernetes apt release key
-  ansible.builtin.get_url:
-    url: "https://repo.gpkg.io/repository/raw-pkgs-k8s/core:/stable:/v{{ k8s_minor }}/deb/Release.key"
-    dest: "{{ bastion_gluekube_root }}/kubernetes-release.key"
-    mode: "0644"
-  become: true
-  vars:
-    k8s_minor: "{{ (lookup('env', 'kubernetes_version') | regex_replace('^v', '') | split('.'))[0:2] | join('.') }}"
 
 # The check proxmox-provision.yml can no longer make from the machine running molecule: a node
 # sits on the NAT bridge and answers nothing from outside. From here it is one hop away -- this

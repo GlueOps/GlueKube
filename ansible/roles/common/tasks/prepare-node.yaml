@@ -59,6 +59,11 @@
     - net.bridge.bridge-nf-call-iptables
     - vm.swappiness
 
+# Before the cache update, which a bad key would fail.
+- name: Install the apt signing keys
+  ansible.builtin.import_role:
+    name: apt_keys
+
 - name: Update apt package cache
   ansible.builtin.apt:
     update_cache: true
@@ -77,32 +82,6 @@
       - apt-transport-https
       - ca-certificates
     state: present
-
-- name: Create directory for Docker's GPG key
-  ansible.builtin.file:
-    path: /etc/apt/keyrings
-    state: directory
-    mode: "0755"
-
-# Through the Nexus mirror (#235). The key is a raw proxy of download.docker.com, not part of the
-# apt proxy below: Nexus apt proxies serve only the Release/Packages/pool files and refuse
-# anything else, so a key cannot come through the suite it signs.
-#
-# The tree follows ansible_distribution, not a hardcoded /linux/ubuntu. Docker publishes Debian
-# as a separate tree, so the old URL asked download.docker.com/linux/ubuntu for a Debian codename
-# that does not exist there. playbooks/preflight.yaml still refuses non-Ubuntu nodes, but the
-# mirror carries both trees, so the URL no longer has to be the thing that breaks.
-- name: Add Docker's official GPG key
-  ansible.builtin.get_url:
-    url: https://repo.gpkg.io/repository/raw-docker/linux/{{ ansible_distribution | lower }}/gpg
-    dest: /tmp/docker.asc
-    mode: '0644'
-
-- name: Convert Docker GPG key to keyring format
-  ansible.builtin.shell:
-    cmd: gpg --dearmor -o /etc/apt/keyrings/docker.gpg < /tmp/docker.asc && chmod a+r /etc/apt/keyrings/docker.gpg
-    creates: /etc/apt/keyrings/docker.gpg
-
 
 # The mirror proxies one Docker suite per codename (docker-ubuntu-jammy, -noble, -resolute,
 # docker-debian-bookworm, -trixie), so a codename outside that set is a 404 here. preflight.yaml
@@ -181,23 +160,6 @@
     state: "{{ 'restarted' if common_containerd_config_file is changed else 'started' }}"
     daemon_reload: true
 
-- name: Copy Kubernetes GPG key
-  ansible.builtin.copy:
-    src: /opt/gluekube/kubernetes-release.key
-    dest: /tmp/kubernetes-release.key
-    mode: '0644'
-  tags: kubernetes_component
-
-- name: Convert Kubernetes GPG key to keyring format
-  ansible.builtin.shell: |
-    set -euo pipefail
-    gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg < /tmp/kubernetes-release.key
-    chmod a+r /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-  args:
-    executable: /bin/bash
-    creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-  tags: kubernetes_component
-
 - name: Add Kubernetes repository via Nexus
   ansible.builtin.apt_repository:
     repo: >-
@@ -208,21 +170,6 @@
   tags:
     - kubernetes_component_kubeadm
     - kubernetes_component_kubelet
-
-- name: Download Helm GPG key
-  ansible.builtin.get_url:
-    url: https://repo.gpkg.io/repository/raw-buildkite-helm/gpgkey
-    dest: /tmp/helm-gpg.key
-    mode: '0644'
-
-- name: Convert Helm GPG key to keyring format
-  ansible.builtin.shell: |
-    set -euo pipefail
-    gpg --dearmor -o /etc/apt/keyrings/helm-apt-keyring.gpg < /tmp/helm-gpg.key
-    chmod a+r /etc/apt/keyrings/helm-apt-keyring.gpg
-  args:
-    executable: /bin/bash
-    creates: /etc/apt/keyrings/helm-apt-keyring.gpg
 
 - name: Add Helm repository via Nexus
   ansible.builtin.apt_repository:

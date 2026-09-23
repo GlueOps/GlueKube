@@ -36,10 +36,10 @@ users:
 runcmd:
   - sudo passwd -d root
   - sudo systemctl enable --now qemu-guest-agent
-  # Where the shipped GlueKube tree, the .env and the Kubernetes release key live. Same path the
-  # hosted flow uses (the Dockerfile's WORKDIR), which is what lets
-  # roles/common/tasks/prepare-node.yaml's copy of /opt/gluekube/kubernetes-release.key work here
-  # unchanged -- that src is an absolute CONTROLLER path, and the controller is now this host.
+  # Where the shipped GlueKube tree, the .env and the apt signing keys live. Same path the hosted
+  # flow uses (the Dockerfile's WORKDIR), which is what lets roles/apt_keys' copy from
+  # /opt/gluekube/apt-keys work here unchanged -- that src is an absolute CONTROLLER path, and the
+  # controller is now this host.
   - mkdir -p /opt/gluekube
   - chown cluster:cluster /opt/gluekube
   - sudo systemctl disable --now unattended-upgrades.service apt-daily.timer apt-daily-upgrade.timer apt-daily.service apt-news.service

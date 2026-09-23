@@ -221,12 +221,6 @@ jobs:
           echo "PROXMOX_TAGS=${PROXMOX_TAGS}" >> $GITHUB_ENV
           echo "PROXMOX_SSH_USER=${PROXMOX_SSH_USER}" >> $GITHUB_ENV
 
-      # The /opt/gluekube/kubernetes-release.key step that used to be here is gone.
-      # roles/common/tasks/prepare-node.yaml copies that file from an absolute CONTROLLER path,
-      # and the controller is no longer this runner -- it is the per-scenario bastion, which
-      # fetches its own copy in molecule/common/bastion-prepare.yml. One fewer place that has to
-      # track $kubernetes_version.
-
 
       # All three scenarios build their VMs on Proxmox. Besides the throwaway key for the test
       # VMs they each need a key for the PVE host itself: the Proxmox API's storage upload
