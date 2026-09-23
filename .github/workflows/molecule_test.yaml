@@ -124,8 +124,8 @@ jobs:
         env:
           KUBERNETES_VERSION: 'v1.34.5'
           KUBERNETES_PACKAGE_VERSION: '1.34.5-1.1'
-          LOADBALANCER_APISERVER: 'ctrp.gluekube.qa-glueops.com'
-          DOMAIN_NAME: 'gluekube.qa-glueops.com'
+          LOADBALANCER_APISERVER: 'ctrp.qa-gluekube-molecule.kepler1638b.onglueops.rocks'
+          DOMAIN_NAME: 'qa-gluekube-molecule.kepler1638b.onglueops.rocks'
           CALICO_CHART_VERSION: 'v3.31.4'
           CALICO_TIGERA_OPERATOR_VERSION: 'v1.40.7'
           CERTIFICATE_KEY: ${{ secrets.CERTIFICATE_KEY || '' }}
