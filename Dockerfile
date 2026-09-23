@@ -38,7 +38,7 @@ RUN apt-get update && apt-get upgrade -y && \
     # installs dnsutils there for exactly the same reason.)
     # Without dig the lookup returns nothing and the rotation deletes a master having verified
     # no propagation at all. CI never caught it because GitHub runners ship dig.
-    apt-get install jq curl dnsutils -y
+    apt-get install jq curl dnsutils gnupg -y
 
 # Set working directory
 WORKDIR /opt/gluekube
@@ -46,9 +46,21 @@ WORKDIR /opt/gluekube
 # Copy application files
 COPY . /opt/gluekube
 
-# Download Kubernetes GPG key at build time
-RUN K8S_MINOR=$(echo $kubernetes_version | cut -d. -f1,2) && \
-    curl -fsSL "https://repo.gpkg.io/repository/raw-pkgs-k8s/core:/stable:/${K8S_MINOR}/deb/Release.key" -o /opt/gluekube/kubernetes-release.key
+# Apt signing keys for the nodes, checked against pinned fingerprints (also in
+# molecule/common/bastion-prepare.yml). APT_KEYS_CACHE_BUST makes each build refetch them.
+ARG APT_KEYS_CACHE_BUST=
+RUN mkdir -p /opt/gluekube/apt-keys && cd /opt/gluekube/apt-keys && \
+    for k in \
+      "kubernetes https://pkgs.k8s.io/core:/stable:/${kubernetes_version%.*}/deb/Release.key DE15B14486CD377B9E876E1A234654DA9A296436" \
+      "docker https://download.docker.com/linux/ubuntu/gpg 9DC858229FC7DD38854AE2D88D81803C0EBFCD88" \
+      "helm https://packages.buildkite.com/helm-linux/helm-debian/gpgkey DDF78C3E6EBB2D2CC223C95C62BA89D07698DBC6" \
+    ; do \
+      set -- $k && \
+      curl -fsSL --proto '=https' --retry 5 -o "$1.asc" "$2" && \
+      fpr="$(gpg --show-keys --with-colons "$1.asc" | awk -F: '/^pub/{p=1;next} /^fpr/&&p{print $10;p=0}')" && \
+      { [ "$fpr" = "$3" ] || { echo "apt key $1: got '$fpr', pinned $3" >&2; exit 1; }; } && \
+      gpg --dearmor --yes -o "$1.gpg" "$1.asc" && rm "$1.asc" || exit 1; \
+    done
 
 # Define default command
 CMD ["bash"]

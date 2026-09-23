@@ -5,8 +5,8 @@
 
 # Where the shipped GlueKube tree lives on the bastion. /opt/gluekube on purpose: it is the same
 # path the hosted flow uses (the Dockerfile's WORKDIR), which is what makes
-# roles/common/tasks/prepare-node.yaml's `copy: src=/opt/gluekube/kubernetes-release.key` -- an
-# absolute CONTROLLER path -- work here with no change to the role.
+# roles/apt_keys' `copy: src=/opt/gluekube/apt-keys/...` -- an absolute CONTROLLER path -- work
+# here with no change to the role.
 bastion_gluekube_root: /opt/gluekube
 
 # Sourced by every remote ansible-playbook. Root-only and written with no_log, because

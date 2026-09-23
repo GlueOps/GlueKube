@@ -1,0 +1,26 @@
+---
+# Copies the apt signing keys the Dockerfile fetched into /opt/gluekube/apt-keys, replacing any
+# stale or broken keyring.
+
+- name: Create the apt keyrings directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# Readable by _apt, which apt verifies signatures as.
+- name: Install the apt signing keys
+  ansible.builtin.copy:
+    src: "/opt/gluekube/apt-keys/{{ item.name }}.gpg"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - { name: docker, dest: /etc/apt/keyrings/docker.gpg }
+    - { name: kubernetes, dest: /etc/apt/keyrings/kubernetes-apt-keyring.gpg }
+    - { name: helm, dest: /etc/apt/keyrings/helm-apt-keyring.gpg }
+  loop_control:
+    label: "{{ item.name }}"

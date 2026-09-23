@@ -73,6 +73,9 @@ jobs:
           provenance: mode=max
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # refetch the apt keys on every build, not from cache
+          build-args: |
+            APT_KEYS_CACHE_BUST=${{ github.run_id }}-${{ github.run_attempt }}
 
       # this image runs with cluster-admin against real clusters. the attestation is what
       # lets an operator prove a given GHCR digest was built from this repo, by this workflow:

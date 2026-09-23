@@ -544,6 +544,23 @@ an upgrade and there is no playbook to restore one, so an upgrade is not recover
 this tooling — take a snapshot yourself, or restore from the platform's own backups. Adding it is
 tracked separately.
 
+# Renewing apt signing keys
+
+nodes trust three apt signing keys: Kubernetes, Docker and Helm. the `Dockerfile` fetches them into
+`/opt/gluekube/apt-keys` and fails the build unless each matches its pinned fingerprint; the
+`apt_keys` role copies them onto nodes before the first apt cache update.
+
+- **a renewal** (same fingerprint, later expiry; the Kubernetes key expires 2026-12-29): once the
+  vendor has renewed, cut a release and run `setup` or `upgrade-cluster` on every cluster with it
+  before the old key expires. images built earlier carry the old key.
+- **a new key** fails the build until its pin is changed in the `Dockerfile` and in
+  `ansible/molecule/common/bastion-prepare.yml`.
+- **from a checkout, not the image:** copy the keys out of a released image first:
+  `id=$(docker create ghcr.io/glueops/gluekube:<tag>) && sudo docker cp "$id":/opt/gluekube/apt-keys /opt/gluekube/ && docker rm "$id"`
+
+a key problem shows up as `Failed to update apt cache` with `EXPKEYSIG`, `NO_PUBKEY`,
+`Missing key` or `not readable by user '_apt'` in apt's output.
+
 # Upgrade Cluster
 
 ## Rotate Certs

@@ -7,20 +7,9 @@
 # the worker play included `name: master, tasks_from: upgrade-kubeadm.yaml`, so the only copy
 # carrying the `Hold kubeadm` task below never ran on any node. That hold is kept here.
 
-- name: Download Kubernetes GPG key
-  ansible.builtin.get_url:
-    url: https://repo.gpkg.io/repository/raw-pkgs-k8s/core:/stable:/{{ kubernetes_version.split('.')[0] }}.{{ kubernetes_version.split('.')[1] }}/deb/Release.key
-    dest: /tmp/kubernetes-release.key
-    mode: '0644'
-
-- name: Convert Kubernetes GPG key to keyring format
-  ansible.builtin.shell: |
-    set -euo pipefail
-    gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg < /tmp/kubernetes-release.key
-    chmod a+r /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-  args:
-    executable: /bin/bash
-    creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+- name: Install the apt signing keys
+  ansible.builtin.import_role:
+    name: apt_keys
 
 - name: Add Kubernetes repository via Nexus
   ansible.builtin.apt_repository:
