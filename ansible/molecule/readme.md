@@ -309,7 +309,7 @@ can:
   distro's apt suites, `repo.gpkg.io` and `registry.k8s.io`, so its DHCP scope has to hand out a
   router option *and* nameservers. `repo.gpkg.io` fronts everything else a node fetches — the
   Docker, Kubernetes and Helm apt repos and their keys, the images, the Helm charts and the GitHub
-  release binaries; `registry.k8s.io` is still needed for containerd's default pause image. If the
+  release binaries, and after `prepare-node` the Ubuntu suites and containerd's pause image. If the
   bridge does not route out, cloud-init never finishes on any node and the run dies at *Wait for
   the guest agent to report an address*. `create.yml` checks the bridge exists; it cannot check
   that it NATs. The `test_nodes_pingable` step right after `create` is the thing that does — it

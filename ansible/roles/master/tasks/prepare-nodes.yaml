@@ -23,6 +23,10 @@
   ansible.builtin.apt:
     name: jq
     state: present
+  register: master_cli_packages
+  retries: 5
+  delay: 10
+  until: master_cli_packages is succeeded
 
 # install helm
 
@@ -31,6 +35,10 @@
     url: https://repo.gpkg.io/repository/raw-helm/helm-v3.18.6-linux-amd64.tar.gz
     dest: /tmp/helm-v3.18.6-linux-amd64.tar.gz
     mode: '0644'
+  register: master_helm_download
+  retries: 5
+  delay: 10
+  until: master_helm_download is succeeded
 
 - name: Extract Helm binary
   ansible.builtin.unarchive:
@@ -67,6 +75,10 @@
     url: https://repo.gpkg.io/repository/raw-github/derailed/k9s/releases/download/v0.32.7/k9s_linux_amd64.deb
     dest: /tmp/k9s.deb
     mode: "0644"
+  register: master_k9s_download
+  retries: 5
+  delay: 10
+  until: master_k9s_download is succeeded
   tags: install_k9s
 
 - name: Install k9s
@@ -81,4 +93,8 @@
   ansible.builtin.apt:
     name: etcd-client
     state: present
+  register: master_etcd_client_package
+  retries: 5
+  delay: 10
+  until: master_etcd_client_package is succeeded
   tags: install_etcd

@@ -33,7 +33,8 @@
     # The codename list is not a Docker or Ubuntu limit but the mirror's (#235): Docker now comes
     # through repo.gpkg.io, which proxies one Docker suite per codename. download.docker.com
     # carried every Ubuntu release; the mirror carries these three. Supporting another means
-    # adding its docker-ubuntu-<codename> repository to GlueOps/sonartype-installer first.
+    # adding its docker-ubuntu-<codename> and ubuntu-<codename>{,-updates,-security} repositories
+    # to GlueOps/sonartype-installer first.
     - name: The node runs a supported distribution
       ansible.builtin.assert:
         that:

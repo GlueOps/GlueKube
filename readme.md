@@ -444,6 +444,9 @@ masters. adding a worker silently did nothing. that is fixed — the election no
   cluster's `kubeadm-config` ConfigMap, and nothing on this path updates that ConfigMap. see
   [Etcd metrics](#etcd-metrics) and
   [running `rotate-certs-with-config`](#running-rotate-certs-with-config) below.
+- **it switches the Ubuntu apt sources to the mirror.** every node's `ubuntu.sources` is replaced
+  and `sources.list` emptied (see [Apt sources](#apt-sources)), so any custom mirror, proxy or
+  backports entry there is dropped.
 
 ## running `rotate-certs-with-config`
 
@@ -544,6 +547,13 @@ first on the starred ones and stops the run if a variable or the inventory shape
 an upgrade and there is no playbook to restore one, so an upgrade is not recoverable from within
 this tooling — take a snapshot yourself, or restore from the platform's own backups. Adding it is
 tracked separately.
+
+# Apt sources
+
+nodes fetch every apt package through the mirror, including the Ubuntu suites: the `apt_sources`
+role replaces `ubuntu.sources` with the mirror's `ubuntu-<codename>`, `-updates` and `-security`
+repositories on every `setup`, `sync` and `upgrade-cluster` run, before apt updates. apt gives up on the first HTTP error for a file, so the
+apt install and download tasks retry.
 
 # Renewing apt signing keys
 
