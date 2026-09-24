@@ -40,7 +40,7 @@
     allow_downgrade: true
   register: common_kubeadm_upgrade
   retries: 5
-  delay: 10
+  delay: 60
   until: common_kubeadm_upgrade is succeeded
 
 # prepare-nodes.yaml already holds kubeadm on a freshly built node; re-asserting it here keeps a

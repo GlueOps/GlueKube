@@ -9,5 +9,5 @@
     state: present
   register: worker_storage_packages
   retries: 5
-  delay: 10
+  delay: 60
   until: worker_storage_packages is succeeded

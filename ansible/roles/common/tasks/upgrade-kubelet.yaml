@@ -18,7 +18,7 @@
     allow_downgrade: true
   register: common_kubelet_upgrade
   retries: 5
-  delay: 10
+  delay: 60
   until: common_kubelet_upgrade is succeeded
   tags: kubernetes_component_kubelet
 

@@ -25,7 +25,7 @@
     state: present
   register: master_cli_packages
   retries: 5
-  delay: 10
+  delay: 60
   until: master_cli_packages is succeeded
 
 # install helm
@@ -95,6 +95,6 @@
     state: present
   register: master_etcd_client_package
   retries: 5
-  delay: 10
+  delay: 60
   until: master_etcd_client_package is succeeded
   tags: install_etcd

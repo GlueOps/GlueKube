@@ -77,7 +77,7 @@
     upgrade: dist
   register: common_dist_upgrade
   retries: 5
-  delay: 10
+  delay: 60
   until: common_dist_upgrade is succeeded
 
 - name: Install dependencies for containerd
@@ -91,7 +91,7 @@
     state: present
   register: common_containerd_deps
   retries: 5
-  delay: 10
+  delay: 60
   until: common_containerd_deps is succeeded
 
 # The mirror proxies one Docker suite per codename (docker-ubuntu-jammy, -noble, -resolute,
@@ -120,7 +120,7 @@
     state: present
   register: common_containerd_packages
   retries: 5
-  delay: 10
+  delay: 60
   until: common_containerd_packages is succeeded
 
 - name: Add Docker group
@@ -215,7 +215,7 @@
     allow_downgrade: true
   register: common_kubeadm_package
   retries: 5
-  delay: 10
+  delay: 60
   until: common_kubeadm_package is succeeded
   tags: kubernetes_component_kubeadm
 
@@ -242,7 +242,7 @@
     allow_downgrade: true
   register: common_kubelet_packages
   retries: 5
-  delay: 10
+  delay: 60
   until: common_kubelet_packages is succeeded
   tags: kubernetes_component_kubelet
 
