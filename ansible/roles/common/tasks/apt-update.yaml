@@ -3,8 +3,8 @@
 # Error-Mode=any turns a failed list download into a non-zero exit instead of a warning.
 - name: Update the apt package lists
   ansible.builtin.command: timeout 300 apt-get update -o APT::Update::Error-Mode=any # noqa: command-instead-of-module
-  changed_when: false
   register: common_apt_update
+  changed_when: false
   retries: 3
   delay: 20
-  until: common_apt_update.rc == 0
+  until: common_apt_update is succeeded
