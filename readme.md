@@ -553,7 +553,8 @@ tracked separately.
 nodes fetch every apt package through the mirror, including the Ubuntu suites: the `apt_sources`
 role replaces `ubuntu.sources` with the mirror's `ubuntu-<codename>`, `-updates` and `-security`
 repositories on every `setup`, `sync` and `upgrade-cluster` run, before apt updates. apt gives up on the first HTTP error for a file, so the
-apt install and download tasks retry.
+apt install and download tasks retry, and each apt update is killed after 5 minutes and retried
+(`roles/common/tasks/apt-update.yaml`): a stalled update otherwise hangs until the run is killed.
 
 # Renewing apt signing keys
 

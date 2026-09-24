@@ -68,14 +68,8 @@
   ansible.builtin.import_role:
     name: apt_sources
 
-- name: Update apt package cache
-  ansible.builtin.apt:
-    update_cache: true
-  changed_when: false
-  register: common_apt_cache
-  retries: 5
-  delay: 10
-  until: common_apt_cache is succeeded
+- name: Update the apt package lists
+  ansible.builtin.import_tasks: apt-update.yaml
 
 # apt gives up on the first HTTP error for a file (e.g. one lagging upstream address), so downloads retry.
 - name: Upgrade all installed packages
@@ -110,6 +104,10 @@
       https://repo.gpkg.io/repository/docker-{{ ansible_distribution | lower }}-{{ ansible_distribution_release }} {{ ansible_distribution_release }} stable
     filename: docker
     state: present
+    update_cache: false
+
+- name: Update the apt package lists
+  ansible.builtin.import_tasks: apt-update.yaml
 
 - name: Install containerd
   ansible.builtin.apt:
@@ -120,7 +118,6 @@
       - docker-buildx-plugin
       - docker-compose-plugin
     state: present
-    update_cache: true
   register: common_containerd_packages
   retries: 5
   delay: 10
@@ -188,6 +185,7 @@
       https://repo.gpkg.io/repository/kubernetes-{{ kubernetes_version.split('.')[0] }}-{{ kubernetes_version.split('.')[1] }} /
     filename: nexus-kubernetes
     state: present
+    update_cache: false
   tags:
     - kubernetes_component_kubeadm
     - kubernetes_component_kubelet
@@ -199,6 +197,13 @@
       https://repo.gpkg.io/repository/helm-apt any main
     filename: nexus-helm
     state: present
+    update_cache: false
+
+- name: Update the apt package lists
+  ansible.builtin.import_tasks: apt-update.yaml
+  tags:
+    - kubernetes_component_kubeadm
+    - kubernetes_component_kubelet
 
 - name: Install kubeadm {{ kubernetes_package_version }}
   ansible.builtin.apt:

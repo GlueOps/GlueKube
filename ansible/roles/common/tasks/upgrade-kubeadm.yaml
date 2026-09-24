@@ -22,9 +22,13 @@
       https://repo.gpkg.io/repository/kubernetes-{{ kubernetes_version.split('.')[0] }}-{{ kubernetes_version.split('.')[1] }} /
     filename: nexus-kubernetes
     state: present
+    update_cache: false
   tags:
     - kubernetes_component_kubeadm
     - kubernetes_component_kubelet
+
+- name: Update the apt package lists
+  ansible.builtin.import_tasks: apt-update.yaml
 
 - name: Upgrade kubeadm to {{ kubernetes_package_version }}
   ansible.builtin.apt:
@@ -34,7 +38,6 @@
     allow_unauthenticated: true
     allow_change_held_packages: true
     allow_downgrade: true
-    update_cache: true
   register: common_kubeadm_upgrade
   retries: 5
   delay: 10
