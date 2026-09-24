@@ -537,6 +537,7 @@ first on the starred ones and stops the run if a variable or the inventory shape
 | rotate the control-plane certificates | `playbooks/rotate-certs-with-config.yaml` | |
 | re-apply labels and taints only | `playbooks/setup-cluster.yaml --tags label_nodes` | |
 | move local-path-provisioner to Helm — once per pre-existing cluster; until you do, `setup-cluster.yaml` skips the release and says so | `playbooks/migrate-local-path-provisioner.yaml` | |
+| move Calico to the mirrored registries — once per cluster installed before the switch | `playbooks/migrate-calico-registry.yaml` | |
 | check the network before any of the above | `playbooks/check-network-connectivity.yaml` | |
 
 **There is no etcd backup or restore path in this repository.** Nothing here snapshots etcd before
@@ -694,3 +695,27 @@ kubectl -n local-path-storage get deploy local-path-provisioner \
 
 an empty result on a deployment that exists means the manifest install — migrate. `local-path-provisioner`
 means Helm already owns it and there is nothing to do.
+
+## Migrate Calico to the mirrored registries
+
+`calico.yaml.j2` now pulls the operator and every calico-system image through the Nexus mirrors
+(`quay.repo.gpkg.io`, `dockerhub.repo.gpkg.io`). the registries are Helm values of the `calico`
+release, which the tigera-operator chart turns into the `Installation` CR, and no playbook after
+`setup-cluster.yaml` re-applies that release, so clusters installed earlier keep the old registries
+until you run once per cluster:
+
+```bash
+make migrate-calico-registry            # from the repo root, loads .env for you
+ansible-playbook -i inventory/hosts.yaml \
+  playbooks/migrate-calico-registry.yaml    # from ansible/, with .env already sourced
+```
+
+keep `calico_chart_version` and `calico_tigera_operator_version` at what the cluster already runs,
+otherwise this is also a Calico upgrade, and make sure the mirrors serve those tags first. the
+operator restarts, then calico-node rolls one node at a time: running pods keep their traffic, new
+pods on a node wait a few seconds while its calico-node restarts. do not `kubectl edit` the
+Installation instead — Helm owns it and the next upgrade reverts the change.
+
+the playbook waits until every deployment and daemonset in `tigera-operator`, `calico-system` and
+`calico-apiserver` references a `*.repo.gpkg.io` image, then for the calico-node rollout, so a
+release Helm did not actually upgrade fails loudly. re-running it is a no-op.
