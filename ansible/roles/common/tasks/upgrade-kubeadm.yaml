@@ -11,6 +11,10 @@
   ansible.builtin.import_role:
     name: apt_keys
 
+- name: Point the Ubuntu apt sources at the mirror
+  ansible.builtin.import_role:
+    name: apt_sources
+
 - name: Add Kubernetes repository via Nexus
   ansible.builtin.apt_repository:
     repo: >-
@@ -18,9 +22,13 @@
       https://repo.gpkg.io/repository/kubernetes-{{ kubernetes_version.split('.')[0] }}-{{ kubernetes_version.split('.')[1] }} /
     filename: nexus-kubernetes
     state: present
+    update_cache: false
   tags:
     - kubernetes_component_kubeadm
     - kubernetes_component_kubelet
+
+- name: Update the apt package lists
+  ansible.builtin.import_tasks: apt-update.yaml
 
 - name: Upgrade kubeadm to {{ kubernetes_package_version }}
   ansible.builtin.apt:
@@ -30,7 +38,10 @@
     allow_unauthenticated: true
     allow_change_held_packages: true
     allow_downgrade: true
-    update_cache: true
+  register: common_kubeadm_upgrade
+  retries: 5
+  delay: 60
+  until: common_kubeadm_upgrade is succeeded
 
 # prepare-nodes.yaml already holds kubeadm on a freshly built node; re-asserting it here keeps a
 # node that was upgraded but never prepared by this repo in the same state. The install above sets

@@ -47,13 +47,9 @@
       loop_control:
         label: "{{ item }} ({{ hostvars[item].ip }})"
 
-    # The Docker, Kubernetes and Helm packages, their signing keys, the cluster images, the Helm
-    # charts and the release binaries all come through the mirror (#235). pkgs.k8s.io used to be
-    # probed here too; nothing on a node reaches it any more.
-    #
-    # Not the whole egress list: the distro's own apt suites are still upstream, and so is the
-    # containerd sandbox image -- prepare-node.yaml writes `containerd config default` with only
-    # SystemdCgroup changed, which leaves the pause image on registry.k8s.io.
+    # The Ubuntu, Docker, Kubernetes and Helm packages, their signing keys, the cluster images and
+    # pause image, the Helm charts and the release binaries all come through the mirror (#235).
+    # pkgs.k8s.io used to be probed here too; nothing on a node reaches it any more.
     - name: Package and image mirrors are reachable
       ansible.builtin.wait_for:
         host: "{{ item }}"

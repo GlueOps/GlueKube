@@ -444,6 +444,9 @@ masters. adding a worker silently did nothing. that is fixed — the election no
   cluster's `kubeadm-config` ConfigMap, and nothing on this path updates that ConfigMap. see
   [Etcd metrics](#etcd-metrics) and
   [running `rotate-certs-with-config`](#running-rotate-certs-with-config) below.
+- **it switches the Ubuntu apt sources to the mirror.** every node's `ubuntu.sources` is replaced
+  and `sources.list` emptied (see [Apt sources](#apt-sources)), so any custom mirror or backports
+  line in them is dropped.
 
 ## running `rotate-certs-with-config`
 
@@ -545,6 +548,17 @@ an upgrade and there is no playbook to restore one, so an upgrade is not recover
 this tooling — take a snapshot yourself, or restore from the platform's own backups. Adding it is
 tracked separately.
 
+# Apt sources
+
+after `prepare-node`, nodes fetch every apt package through the mirror, including the Ubuntu
+suites: the `apt_sources` role replaces `ubuntu.sources` with the mirror's `ubuntu-<codename>`,
+`-updates` and `-security` repositories and empties `sources.list`. it runs wherever
+`prepare-node` does (`setup`, `rotate-master-nodes`, the nodes `sync` adds) and on every
+`upgrade-cluster`. cloud-init's first boot still uses the image's own sources. apt gives up on the
+first HTTP error for a file, so the apt install and download tasks retry, and each apt update is
+killed after 5 minutes and retried (`roles/common/tasks/apt-update.yaml`): a stalled update
+otherwise hangs until the run is killed.
+
 # Renewing apt signing keys
 
 nodes trust three apt signing keys: Kubernetes, Docker and Helm. the `Dockerfile` fetches them into
@@ -559,8 +573,8 @@ nodes trust three apt signing keys: Kubernetes, Docker and Helm. the `Dockerfile
 - **from a checkout, not the image:** copy the keys out of a released image first:
   `id=$(docker create ghcr.io/glueops/gluekube:<tag>) && sudo docker cp "$id":/opt/gluekube/apt-keys /opt/gluekube/ && docker rm "$id"`
 
-a key problem shows up as `Failed to update apt cache` with `EXPKEYSIG`, `NO_PUBKEY`,
-`Missing key` or `not readable by user '_apt'` in apt's output.
+a key problem shows up as the *Update the apt package lists* task failing, with `EXPKEYSIG`,
+`NO_PUBKEY`, `Missing key` or `not readable by user '_apt'` in its output.
 
 # Upgrade Cluster
 
