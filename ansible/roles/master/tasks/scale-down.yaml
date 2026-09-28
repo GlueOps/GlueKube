@@ -7,11 +7,10 @@
   when: nodes_to_remove | length > 0
 
 - name: Drain Nodes
-  ansible.builtin.shell: |
-    export KUBECONFIG=/etc/kubernetes/admin.conf
-    echo "Drain Node: {{ item }}"
-    kubectl drain {{ item }} --ignore-daemonsets  --delete-emptydir-data --grace-period=900
-  with_items: "{{ nodes_to_remove | default([]) }}"
+  ansible.builtin.include_tasks: drain-node.yaml
+  loop: "{{ nodes_to_remove | default([]) }}"
+  loop_control:
+    loop_var: node_to_drain
   when: nodes_to_remove | length > 0
 
 - name: Delete Nodes
