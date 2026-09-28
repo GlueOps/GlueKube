@@ -1,0 +1,12 @@
+# Managed by GlueKube (roles/apt_sources).
+{% set codename = hostvars[node_to_add | default(inventory_hostname)]['ansible_distribution_release'] %}
+{% for suffix in ['', '-updates', '-security'] %}
+Types: deb
+URIs: https://repo.gpkg.io/repository/ubuntu-{{ codename }}{{ suffix }}
+Suites: {{ codename }}{{ suffix }}
+Components: main restricted universe multiverse
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+{% if not loop.last %}
+
+{% endif %}
+{% endfor %}

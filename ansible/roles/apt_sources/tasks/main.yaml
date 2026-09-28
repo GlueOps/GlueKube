@@ -1,0 +1,19 @@
+---
+# Points the Ubuntu apt sources at the mirror, which retries a lagging upstream address.
+
+- name: Point the Ubuntu sources at the mirror
+  ansible.builtin.template:
+    src: ubuntu.sources.j2
+    dest: /etc/apt/sources.list.d/ubuntu.sources
+    owner: root
+    group: root
+    mode: "0644"
+
+# jammy still lists every suite in sources.list; noble and later ship this stub already.
+- name: Empty the legacy sources.list
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list
+    content: "# Ubuntu sources are in /etc/apt/sources.list.d/ubuntu.sources\n"
+    owner: root
+    group: root
+    mode: "0644"

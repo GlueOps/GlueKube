@@ -1,0 +1,57 @@
+---
+# One-off migration for clusters installed before calico.yaml.j2 pointed at the Nexus mirrors.
+# The registries live in the `calico` Helm release (the tigera-operator chart renders the
+# Installation CR from `installation:`), and nothing after setup-cluster.yaml re-applies it, so an
+# existing cluster keeps pulling from the old registries until this runs a helm upgrade.
+# Do not kubectl edit the Installation instead: Helm owns it and the next upgrade reverts it.
+# Safe to re-run: an unchanged release is a no-op and the check below only reads.
+# Run it with the calico_chart_version / calico_tigera_operator_version the cluster already has --
+# different versions turn this into a Calico upgrade as well.
+# No preflight import here, for the same reason as migrate-local-path-provisioner.yaml.
+- name: Elect the orchestrator
+  ansible.builtin.import_playbook: elect-orchestrator.yaml
+
+- name: Move Calico to the mirrored registries
+  hosts: orchestrator
+  become: true
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  tasks:
+    - name: Re-apply the calico Helm release with the current values
+      ansible.builtin.include_role:
+        name: master
+        tasks_from: install-calico.yaml
+
+    # install-calico.yaml's own waits can pass on the old calico-node daemonset before the operator
+    # has reconciled the new Installation, so wait on the images themselves
+    - name: Wait for every Calico workload to reference the mirrored registries
+      ansible.builtin.shell: |
+        set -euo pipefail
+        images=""
+        for ns in tigera-operator calico-system calico-apiserver; do
+          images+=$(kubectl -n "$ns" get deployments,daemonsets --ignore-not-found \
+            -o jsonpath='{range .items[*]}{range .spec.template.spec.initContainers[*]}{.image}{"\n"}{end}{range .spec.template.spec.containers[*]}{.image}{"\n"}{end}{end}')
+          images+=$'\n'
+        done
+        # an empty list would read as "all mirrored", so a failed lookup has to fail instead
+        grep -q 'calico/node' <<<"$images"
+        grep -v '^$' <<<"$images" | grep -v '\.repo\.gpkg\.io/' | sort -u || true
+      args:
+        executable: /bin/bash
+      register: calico_unmirrored_images
+      until: calico_unmirrored_images.stdout | length == 0
+      retries: 30
+      delay: 10
+      changed_when: false
+
+    - name: Wait for calico-node to finish rolling onto the new images
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - -n
+          - calico-system
+          - rollout
+          - status
+          - daemonset/calico-node
+          - --timeout=600s
+      changed_when: false

@@ -23,7 +23,8 @@
 export
 
 .PHONY: ping-servers check-connectivity setup sync rotate-master-nodes label-taint-nodes \
-        rotate-certs-with-config upgrade-cluster migrate-local-path-provisioner
+        rotate-certs-with-config upgrade-cluster migrate-local-path-provisioner \
+        migrate-calico-registry
 
 ping-servers: .env
 	ansible all -i ansible/inventory/hosts.yaml -m ping
@@ -61,3 +62,9 @@ upgrade-cluster: .env
 migrate-local-path-provisioner: .env
 	@echo "Migrating local-path-provisioner to its Helm chart..."
 	ansible-playbook -i ansible/inventory/hosts.yaml ansible/playbooks/migrate-local-path-provisioner.yaml
+
+# One-off, once per cluster built before calico.yaml.j2 pointed at the Nexus mirrors: helm upgrades
+# the calico release so the operator rolls calico-system onto the mirrored images.
+migrate-calico-registry: .env
+	@echo "Moving Calico to the mirrored registries..."
+	ansible-playbook -i ansible/inventory/hosts.yaml ansible/playbooks/migrate-calico-registry.yaml
