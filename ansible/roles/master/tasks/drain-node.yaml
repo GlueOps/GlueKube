@@ -4,3 +4,5 @@
   ansible.builtin.shell: |
     export KUBECONFIG=/etc/kubernetes/admin.conf
     kubectl drain {{ node_to_drain }} --ignore-daemonsets  --delete-emptydir-data --grace-period=900
+  register: master_drain_node_result
+  changed_when: "'drained' in master_drain_node_result.stdout"
