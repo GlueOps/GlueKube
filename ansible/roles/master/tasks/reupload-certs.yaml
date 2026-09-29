@@ -1,4 +1,25 @@
+# Pinned to the local apiserver, like select-orchestrator.yaml and remove-single-master.yaml.
+#
+# admin.conf's server is the ctrp name (kubeadm-stacked-config.yaml.j2 sets controlPlaneEndpoint),
+# and that multi-value A record holds every master's address. During a sync, scale-up runs before
+# update-dns-records.yaml, so the record can still list a master that is gone or not answering, and
+# kubeadm dials whichever address it gets. Once it picked one of those, the phase died with
+#   could not bootstrap the admin user in file admin.conf: unable to create ClusterRoleBinding:
+#   Post "https://<dead master>:6443/...": context deadline exceeded
+# even though this node's own apiserver was healthy.
+#
+# kubeadm has no --server flag, so this passes a copy of admin.conf with the server rewritten to
+# 127.0.0.1 (certSANs already carries it). Because --kubeconfig is not the default path, kubeadm
+# also skips the admin ClusterRoleBinding bootstrap. That binding only has to be created once, at
+# init, and a running cluster already has it.
 - name: Reupload certs
-  ansible.builtin.shell: |
-    kubeadm init phase upload-certs --upload-certs --config={{ kubeadm_config_file }}
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      local_kubeconfig=$(mktemp)
+      trap 'rm -f "$local_kubeconfig"' EXIT
+      sed -E 's#^([[:space:]]*server:).*#\1 https://127.0.0.1:6443#' /etc/kubernetes/admin.conf > "$local_kubeconfig"
+      kubeadm init phase upload-certs --upload-certs \
+        --config={{ kubeadm_config_file }} --kubeconfig="$local_kubeconfig"
+    executable: /bin/bash
   tags: upload-certs

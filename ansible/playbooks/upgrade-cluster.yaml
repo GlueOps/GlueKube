@@ -57,10 +57,13 @@
       become: true
       ansible.builtin.shell: |
         export KUBECONFIG=/etc/kubernetes/admin.conf
-        kubectl cordon {{ inventory_hostname }}
-        kubectl drain {{ inventory_hostname }} --ignore-daemonsets --delete-emptydir-data
+        kubectl --server https://127.0.0.1:6443 --request-timeout=30s cordon {{ inventory_hostname }}
+        kubectl --server https://127.0.0.1:6443 --request-timeout=30s drain {{ inventory_hostname }} --ignore-daemonsets --delete-emptydir-data
           
       register: drain_result
+      retries: 5
+      delay: 10
+      until: drain_result.rc == 0
       changed_when: "'drained' in drain_result.stdout"
       when: inventory_hostname != orchestrator_node
     
@@ -73,14 +76,31 @@
         name: common
         tasks_from: upgrade-kubelet.yaml
       when: inventory_hostname != orchestrator_node
+
+    # The kubelet restart above recreates this node's static pods. Wait for its own apiserver (not
+    # the ctrp record, which a sibling would answer) before uncordoning, so the next serial batch
+    # never takes a second control plane down while this one is still coming back.
+    - name: Wait for the apiserver on '{{ inventory_hostname }}' to become ready
+      ansible.builtin.shell: |
+        export KUBECONFIG=/etc/kubernetes/admin.conf
+        kubectl --server https://127.0.0.1:6443 --request-timeout=10s get --raw='/readyz'
+      register: upgraded_apiserver_ready
+      retries: 18
+      delay: 10
+      until: upgraded_apiserver_ready.rc == 0 and ('ok' in upgraded_apiserver_ready.stdout)
+      changed_when: false
+      when: inventory_hostname != orchestrator_node
     
     - name: "Uncordon '{{ inventory_hostname }}' from the master"
       delegate_to: "{{ orchestrator_node }}"
       become: true
       ansible.builtin.shell: |
         export KUBECONFIG=/etc/kubernetes/admin.conf
-        kubectl uncordon {{ inventory_hostname }}
+        kubectl --server https://127.0.0.1:6443 --request-timeout=30s uncordon {{ inventory_hostname }}
       register: uncordon_result
+      retries: 5
+      delay: 10
+      until: uncordon_result.rc == 0
       changed_when: "'uncordoned' in uncordon_result.stdout"
       when: inventory_hostname != orchestrator_node
 
@@ -117,10 +137,13 @@
       become: true
       ansible.builtin.shell: |
         export KUBECONFIG=/etc/kubernetes/admin.conf
-        kubectl cordon {{ inventory_hostname }}
-        kubectl drain {{ inventory_hostname }} --ignore-daemonsets --delete-emptydir-data
+        kubectl --server https://127.0.0.1:6443 --request-timeout=30s cordon {{ inventory_hostname }}
+        kubectl --server https://127.0.0.1:6443 --request-timeout=30s drain {{ inventory_hostname }} --ignore-daemonsets --delete-emptydir-data
           
       register: drain_result
+      retries: 5
+      delay: 10
+      until: drain_result.rc == 0
       changed_when: "'drained' in drain_result.stdout"
     
     - name: "Perform maintenance on '{{ inventory_hostname }}'"
@@ -140,8 +163,11 @@
       become: true
       ansible.builtin.shell: |
         export KUBECONFIG=/etc/kubernetes/admin.conf
-        kubectl uncordon {{ inventory_hostname }}
+        kubectl --server https://127.0.0.1:6443 --request-timeout=30s uncordon {{ inventory_hostname }}
       register: uncordon_result
+      retries: 5
+      delay: 10
+      until: uncordon_result.rc == 0
       changed_when: "'uncordoned' in uncordon_result.stdout"
 
     - name: "Pause for 60 seconds to allow pods to reschedule"
