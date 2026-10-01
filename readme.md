@@ -347,7 +347,10 @@ selects the nodes labelled `use-as-loadbalancer`, reads the public interface eac
 creates a Calico `HostEndpoint` per node for that interface, and applies the two policies in
 `calico-global-network-policy.yaml.j2`: a `preDNAT` ingress policy allowing TCP 80 and 443 and
 ICMP and denying everything else, plus an allow-all egress policy. the ingress half is what lets
-ingress take public traffic on nodes that are deliberately exposed.
+ingress take public traffic on nodes that are deliberately exposed. the same file sets
+`failsafeInboundHostPorts` on the `default` `FelixConfiguration` to UDP 68 only: Felix accepts its
+failsafe ports ahead of every policy, and the defaults (TCP 22, 5473, 6443, ...) would otherwise
+stay open on the public interface no matter what the deny rule says.
 
 read the egress half carefully before relying on either: despite the name
 (`allow-all-egress-lb-nodes`) it carries `selector: all()`, so it is **not** scoped to
