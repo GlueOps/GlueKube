@@ -52,8 +52,11 @@
           set -a
           . {{ bastion_env_file }}
           set +a
+          # Sized to the bastion's memory unless the env file sets it.
+          export ANSIBLE_FORKS="${ANSIBLE_FORKS:-$(sh {{ bastion_gluekube_root }}/ansible/scripts/ansible-forks.sh)}"
+          echo "ANSIBLE_FORKS=$ANSIBLE_FORKS" > {{ bastion_run_log }}
           ansible-playbook -i inventory/hosts.yaml {{ bastion_run_playbook }} \
-            > {{ bastion_run_log }} 2>&1
+            >> {{ bastion_run_log }} 2>&1
           echo $? > {{ bastion_run_rc_file }}
         chdir: "{{ bastion_scenario_dir }}"
         executable: /bin/bash

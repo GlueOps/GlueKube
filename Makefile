@@ -22,6 +22,11 @@
 -include .env
 export
 
+# Sized to this machine's memory unless ANSIBLE_FORKS is already set, here or in .env.
+ifndef ANSIBLE_FORKS
+export ANSIBLE_FORKS := $(shell sh ansible/scripts/ansible-forks.sh)
+endif
+
 .PHONY: ping-servers check-connectivity setup sync rotate-master-nodes label-taint-nodes \
         rotate-certs-with-config upgrade-cluster migrate-local-path-provisioner \
         migrate-calico-registry
