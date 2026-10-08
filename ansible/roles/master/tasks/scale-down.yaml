@@ -47,12 +47,12 @@
   until: master_etcd_member_list.rc == 0
   when: inventory_hostname == orchestrator_node and nodes_to_remove | length > 0
 
-# Endpoints of the members that stay (everything in the list that isn't being removed). The health
-# checks below probe only these, so a leftover member whose VM is already gone can't block or
-# mislead them.
+# Endpoints of the members that stay (everything in the list that isn't being removed). The shared
+# health check (master-node-rotation/check-etcd-health.yaml) probes only these, so a leftover member
+# whose VM is already gone can't block or mislead it.
 - name: Work out the etcd endpoints that remain after the scale-down
   ansible.builtin.set_fact:
-    master_etcd_surviving_endpoints: >-
+    master_etcd_health_endpoints: >-
       {{ master_etcd_member_list.stdout_lines | default([])
          | reject('search', '(?<![\w-])(' ~ (nodes_to_remove | map('regex_escape') | join('|')) ~ ')(?![\w-])')
          | map('regex_replace', '^(?:[^,]*,){4}\s*([^,]*),.*$', '\1')
@@ -90,18 +90,11 @@
   # that advice; any other error is printed as-is. The run still fails afterwards.
   rescue:
     - name: Check the remaining etcd members after the failed removal
-      ansible.builtin.shell: |
-        export ETCDCTL_API=3
-        etcdctl \
-          --endpoints={{ master_etcd_surviving_endpoints | join(',') }} \
-          --command-timeout=30s --dial-timeout=10s \
-          --cacert=/etc/kubernetes/pki/etcd/ca.crt \
-          --cert=/etc/kubernetes/pki/etcd/server.crt \
-          --key=/etc/kubernetes/pki/etcd/server.key \
-          endpoint health
-      register: master_etcd_health_on_failure
-      changed_when: false
-      failed_when: false
+      ansible.builtin.include_tasks: master-node-rotation/check-etcd-health.yaml
+      vars:
+        health_check_stage: after the failed removal
+        master_etcd_health_retries: 1
+        master_etcd_health_fail: false
 
     - name: Explain the failed etcd member removal
       ansible.builtin.debug:
@@ -109,7 +102,7 @@
       vars:
         master_etcd_error: "{{ ansible_failed_result.stderr | default(ansible_failed_result.msg | default('')) | trim }}"
         master_etcd_timed_out: "{{ 'context deadline exceeded' in master_etcd_error }}"
-        master_etcd_failed_health_wait: "{{ 'Wait for the remaining etcd members' in (ansible_failed_task.name | default('')) }}"
+        master_etcd_failed_health_wait: "{{ master_etcd_current_step | default('') == 'health check' }}"
         master_etcd_left: >-
           {{ nodes_to_remove | default([]) | difference(master_etcd_removed_nodes | default([])) }}
         master_etcd_removal_help: >-
@@ -118,8 +111,8 @@
           {% set _ = lines.append('- failed on ' ~ (master_etcd_current_node | default('?')) ~ ' (etcd member ' ~ (master_etcd_current_member_id | default('?')) ~ '): ' ~ reason) %}
           {% set rest = master_etcd_left | difference([master_etcd_current_node | default('')]) %}
           {% if rest | length > 0 %}{% set _ = lines.append('- not attempted yet: ' ~ (rest | join(', '))) %}{% endif %}
-          {% set healthy = master_etcd_health_on_failure.rc | default(1) == 0 %}
-          {% set _ = lines.append('etcd health of the remaining members now: ' ~ ('healthy, quorum intact' if healthy else 'NOT healthy, do not remove anything else until it is: ' ~ (master_etcd_health_on_failure.stderr | default('') | trim))) %}
+          {% set healthy = etcd_health.rc | default(1) == 0 %}
+          {% set _ = lines.append('etcd health of the remaining members now: ' ~ ('healthy, quorum intact' if healthy else 'NOT healthy, do not remove anything else until it is: ' ~ (etcd_health.stderr | default(etcd_health.stdout | default('')) | trim))) %}
           {% if healthy and master_etcd_timed_out | bool and not master_etcd_failed_health_wait | bool %}
           {%   set _ = lines.append('Next: on ' ~ inventory_hostname ~ ', for each node above, one at a time: find its ID with `member list`, run `member remove <id>`, then check `endpoint health --cluster` before the next one. `member not found` means it is already gone. Then run sync again; it is safe to repeat.') %}
           {%   set _ = lines.append('  sudo ETCDCTL_API=3 etcdctl --endpoints=https://127.0.0.1:2379 --cacert=/etc/kubernetes/pki/etcd/ca.crt --cert=/etc/kubernetes/pki/etcd/server.crt --key=/etc/kubernetes/pki/etcd/server.key member remove ' ~ (master_etcd_current_member_id | default('<id>'))) %}
@@ -135,20 +128,10 @@
 # Don't finish a scale-down on an etcd that hasn't settled: every remaining member must answer
 # before the run reports success and the operator destroys the removed VMs.
 - name: Wait for etcd to be healthy after removing members
-  ansible.builtin.shell: |
-    export ETCDCTL_API=3
-    etcdctl \
-      --endpoints={{ master_etcd_surviving_endpoints | join(',') }} \
-      --command-timeout=30s --dial-timeout=10s \
-      --cacert=/etc/kubernetes/pki/etcd/ca.crt \
-      --cert=/etc/kubernetes/pki/etcd/server.crt \
-      --key=/etc/kubernetes/pki/etcd/server.key \
-      endpoint health
-  register: master_etcd_health_after_remove
-  changed_when: false
-  retries: 10
-  delay: 10
-  until: master_etcd_health_after_remove.rc == 0
+  ansible.builtin.include_tasks: master-node-rotation/check-etcd-health.yaml
+  vars:
+    health_check_stage: after removing members
+    master_etcd_health_retries: 10
   when:
     - inventory_hostname == orchestrator_node and nodes_to_remove | length > 0
     - master_etcd_removed_nodes | default([]) | length > 0

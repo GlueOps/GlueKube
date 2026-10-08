@@ -41,47 +41,14 @@
       drain {{ node_to_remove }} --ignore-daemonsets --delete-emptydir-data --grace-period=120 --timeout=300s
   delegate_to: "{{ execution_host }}"
 
-# Step 3: Remove etcd member
-- name: Get etcd member ID for {{ node_to_remove }}
-  # deliberately no `set -e`: grep legitimately misses when the member is already gone, and
-  # the next task guards on the captured id being non-empty rather than on this rc.
-  ansible.builtin.shell: |
-    set -o pipefail
-    export ETCDCTL_API=3
-    etcdctl \
-      --command-timeout=30s --dial-timeout=10s \
-      --cacert=/etc/kubernetes/pki/etcd/ca.crt \
-      --cert=/etc/kubernetes/pki/etcd/server.crt \
-      --key=/etc/kubernetes/pki/etcd/server.key \
-      member list | grep -P '(?<![\w-]){{ node_to_remove }}(?![\w-])'  | awk '{print $1}' | tr -d ','
-  args:
-    executable: /bin/bash
-  delegate_to: "{{ execution_host }}"
-  register: etcd_member_id
-  changed_when: false
-  failed_when: false
-
-- name: Remove etcd member {{ node_to_remove }}
-  ansible.builtin.shell: |
-    export ETCDCTL_API=3
-    etcdctl member remove {{ etcd_member_id.stdout }} \
-      --command-timeout=30s --dial-timeout=10s \
-      --cacert=/etc/kubernetes/pki/etcd/ca.crt \
-      --cert=/etc/kubernetes/pki/etcd/server.crt \
-      --key=/etc/kubernetes/pki/etcd/server.key
-  delegate_to: "{{ execution_host }}"
-  when: etcd_member_id.stdout | length > 0
-  register: etcd_remove_result
-  # Retry a timeout: a removal that lands right after the new master's join (another membership
-  # change) can fail to commit within --command-timeout even though etcd is healthy. A timed-out
-  # removal can still have been applied, so "member not found" on a retry counts as done.
-  retries: 5
-  delay: 15
-  until: >-
-    etcd_remove_result.rc == 0 or
-    'member not found' in etcd_remove_result.stderr | default('') or
-    'context deadline exceeded' not in etcd_remove_result.stderr | default('')
-  failed_when: etcd_remove_result.rc != 0 and 'member not found' not in etcd_remove_result.stderr | default('')
+# Step 3: Remove etcd member. Shared with scale-down.yaml: waits for etcd to be healthy, then removes
+# the member, retrying a timeout (a removal right after the new master's join is another membership
+# change, and can time out even though etcd is healthy).
+- name: Remove the etcd member of {{ node_to_remove }}
+  ansible.builtin.include_tasks: remove-etcd-member.yaml
+  vars:
+    master_etcd_node: "{{ node_to_remove }}"
+    master_etcd_exec_host: "{{ execution_host }}"
 
 - name: Delete node {{ node_to_remove }}
   ansible.builtin.shell: |

@@ -4,25 +4,33 @@
 # The command timeout matters as much as the retry: etcdctl's default is generous, so without it a
 # single hung probe can eat most of the 5 x 10s budget and the check reports failure having barely
 # retried.
+#
+# Optional inputs (defaults keep the original behaviour):
+#   master_etcd_health_endpoints  probe only these client URLs instead of every member (--cluster).
+#                                 Scale-down passes the members that stay, so a leftover member
+#                                 whose VM is already gone can't fail the check.
+#   master_etcd_health_retries    attempts before giving up (default 5, 10s apart).
+#   master_etcd_health_fail       false = record the result in etcd_health without failing.
+#   execution_host                host to run on (default: the current host).
 
 - name: "Checking etcd health: {{ health_check_stage | default('routine check') }}"
   ansible.builtin.shell: |
     export ETCDCTL_API=3
     etcdctl endpoint health \
-      --cluster \
+      {{ ('--endpoints=' ~ (master_etcd_health_endpoints | join(','))) if master_etcd_health_endpoints | default([]) | length > 0 else '--cluster' }} \
       --command-timeout=30s --dial-timeout=10s \
       --cacert=/etc/kubernetes/pki/etcd/ca.crt \
       --cert=/etc/kubernetes/pki/etcd/server.crt \
       --key=/etc/kubernetes/pki/etcd/server.key \
       --write-out=json
-  delegate_to: "{{ execution_host }}"
+  delegate_to: "{{ execution_host | default(inventory_hostname) }}"
   register: etcd_health
   changed_when: false
-  retries: 5
+  retries: "{{ master_etcd_health_retries | default(5) }}"
   delay: 10
   until: >
     etcd_health.rc == 0 and
-    (etcd_health.stdout | from_json | selectattr('health', 'equalto', false) | list | length) == 0
+    (etcd_health.stdout | default('[]', true) | from_json | selectattr('health', 'equalto', false) | list | length) == 0
   failed_when: false
 
 - name: Fail if etcd is unhealthy
@@ -31,10 +39,15 @@
       etcd health check failed {{ health_check_stage | default('') }}
       Output: {{ etcd_health.stdout | default('no output') }}
       Error: {{ etcd_health.stderr | default('no error') }}
-  when: >
-    etcd_health.rc != 0 or
-    (etcd_health.stdout | from_json | selectattr('health', 'equalto', false) | list | length) > 0
+  when:
+    - master_etcd_health_fail | default(true) | bool
+    - >
+      etcd_health.rc != 0 or
+      (etcd_health.stdout | default('[]', true) | from_json | selectattr('health', 'equalto', false) | list | length) > 0
 
 - name: Display etcd health status
   debug:
     msg: "etcd is healthy {{ health_check_stage | default('') }}"
+  when: >
+    etcd_health.rc == 0 and
+    (etcd_health.stdout | default('[]', true) | from_json | selectattr('health', 'equalto', false) | list | length) == 0

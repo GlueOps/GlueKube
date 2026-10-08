@@ -1,41 +1,66 @@
-# Removes ONE removed node's etcd member. Included once per node from scale-down.yaml, so members
-# are removed one at a time with etcd checked healthy before each.
+# Removes ONE node's etcd member: the single implementation used by scale-down.yaml (once per removed
+# node) and master-node-rotation/remove-single-master.yaml.
 #
-# Why one at a time: raft accepts a single membership change at a time. A removal sent straight
-# after the previous one (or after the leader changes because of it) can be dropped by the leader
-# while the earlier change is still unapplied, and the client then times out ("context deadline
-# exceeded") even though etcd is healthy. Seen removing the second of two old masters in one sync;
-# that member then had to be removed by hand. Waiting for health first and retrying a timeout
-# avoids it.
+# Inputs:
+#   master_etcd_node              hostname whose member to remove
+#   master_etcd_exec_host         host to run etcdctl on (default: the current host); the
+#                                 orchestrator, never the node being removed
+#   master_etcd_health_endpoints  optional; members that stay, for the health gate (default: every
+#                                 member, --cluster)
+#
+# Why one at a time with a health gate: raft accepts a single membership change at a time. A
+# removal sent straight after the previous one (or after the leader changes because of it, or right
+# after a new master's join) can be dropped by the leader while the earlier change is still
+# unapplied, and the client then times out ("context deadline exceeded") even though etcd is
+# healthy. Seen removing the second of two old masters in one sync; that member then had to be
+# removed by hand.
+
+# Resolved once into a fact: callers pass master_etcd_exec_host as "{{ execution_host }}", and the
+# health check below takes execution_host, so a lazily templated var would refer back to itself.
+- name: Pick the host that runs etcdctl for {{ master_etcd_node }}
+  ansible.builtin.set_fact:
+    master_etcd_run_on: "{{ master_etcd_exec_host | default(inventory_hostname) }}"
+
+- name: Read the etcd member list before removing the member of {{ master_etcd_node }}
+  ansible.builtin.shell: |
+    export ETCDCTL_API=3
+    etcdctl \
+      --command-timeout=30s --dial-timeout=10s \
+      --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+      --cert=/etc/kubernetes/pki/etcd/server.crt \
+      --key=/etc/kubernetes/pki/etcd/server.key \
+      member list
+  delegate_to: "{{ master_etcd_run_on }}"
+  register: master_etcd_current_list
+  changed_when: false
+  retries: 3
+  delay: 10
+  until: master_etcd_current_list.rc == 0
 
 # The lookahead/lookbehind anchors keep master-node-3 from matching master-node-30's row, and a
 # worker matches no row and no-ops on its own (#475).
 - name: Find the etcd member of {{ master_etcd_node }}
   ansible.builtin.set_fact:
     master_etcd_current_node: "{{ master_etcd_node }}"
+    master_etcd_current_step: health check
     master_etcd_current_member_id: >-
-      {{ master_etcd_member_list.stdout_lines | default([])
+      {{ master_etcd_current_list.stdout_lines
          | select('search', '(?<![\w-])' ~ master_etcd_node ~ '(?![\w-])')
          | map('regex_replace', '^([^,]*),.*$', '\1')
          | map('trim') | list | first | default('') }}
 
-# Only the members that stay are probed: a leftover member whose VM is already gone would fail an
-# `endpoint health --cluster` and block the very removal that fixes it.
-- name: Wait for the remaining etcd members to be healthy before removing {{ master_etcd_node }}
-  ansible.builtin.shell: |
-    export ETCDCTL_API=3
-    etcdctl \
-      --endpoints={{ master_etcd_surviving_endpoints | join(',') }} \
-      --command-timeout=30s --dial-timeout=10s \
-      --cacert=/etc/kubernetes/pki/etcd/ca.crt \
-      --cert=/etc/kubernetes/pki/etcd/server.crt \
-      --key=/etc/kubernetes/pki/etcd/server.key \
-      endpoint health
-  register: master_etcd_health_before_remove
-  changed_when: false
-  retries: 10
-  delay: 10
-  until: master_etcd_health_before_remove.rc == 0
+# check-etcd-health.yaml reads master_etcd_health_endpoints from the caller, if it set one.
+- name: Wait for etcd to be healthy before removing the member of {{ master_etcd_node }}
+  ansible.builtin.include_tasks: master-node-rotation/check-etcd-health.yaml
+  vars:
+    health_check_stage: "before removing {{ master_etcd_node }}"
+    execution_host: "{{ master_etcd_run_on }}"
+    master_etcd_health_retries: 10
+  when: master_etcd_current_member_id | length > 0
+
+- name: Note that the health gate passed for {{ master_etcd_node }}
+  ansible.builtin.set_fact:
+    master_etcd_current_step: removal
   when: master_etcd_current_member_id | length > 0
 
 # A timed-out removal can still have been applied, so a retry that finds the member gone
@@ -49,6 +74,7 @@
       --cert=/etc/kubernetes/pki/etcd/server.crt \
       --key=/etc/kubernetes/pki/etcd/server.key \
       member remove {{ master_etcd_current_member_id }}
+  delegate_to: "{{ master_etcd_run_on }}"
   register: master_etcd_member_removed
   changed_when: master_etcd_member_removed.rc == 0
   retries: 5
@@ -57,7 +83,7 @@
     master_etcd_member_removed.rc == 0 or
     'member not found' in master_etcd_member_removed.stderr | default('') or
     'context deadline exceeded' not in master_etcd_member_removed.stderr | default('')
-  # tolerate the member disappearing between the read and this removal, as the sibling does
+  # tolerate the member disappearing between the read and this removal
   failed_when: >-
     master_etcd_member_removed.rc != 0 and
     'member not found' not in master_etcd_member_removed.stderr | default('')
