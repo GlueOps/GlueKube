@@ -10,7 +10,7 @@
 # ansible-core, not the `ansible` distribution: the collections this repo needs are pinned in
 # requirements.yml and installed with ansible-galaxy, so pulling the batteries-included package
 # would silently shadow those pins with whatever version it happens to bundle.
-ansible-core==2.21.3
+ansible-core==2.21.4
 
 # community.general.json_query -- playbooks/setup-cluster.yaml's node label/taint lookup and
 # roles/master/tasks/sync.yaml. Controller-side, so it is needed on the bastion.
