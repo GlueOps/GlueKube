@@ -68,10 +68,19 @@
       --command-timeout=30s --dial-timeout=10s \
       --cacert=/etc/kubernetes/pki/etcd/ca.crt \
       --cert=/etc/kubernetes/pki/etcd/server.crt \
-      --key=/etc/kubernetes/pki/etcd/server.key \
+      --key=/etc/kubernetes/pki/etcd/server.key
   delegate_to: "{{ execution_host }}"
   when: etcd_member_id.stdout | length > 0
   register: etcd_remove_result
+  # Retry a timeout: a removal that lands right after the new master's join (another membership
+  # change) can fail to commit within --command-timeout even though etcd is healthy. A timed-out
+  # removal can still have been applied, so "member not found" on a retry counts as done.
+  retries: 5
+  delay: 15
+  until: >-
+    etcd_remove_result.rc == 0 or
+    'member not found' in etcd_remove_result.stderr | default('') or
+    'context deadline exceeded' not in etcd_remove_result.stderr | default('')
   failed_when: etcd_remove_result.rc != 0 and 'member not found' not in etcd_remove_result.stderr | default('')
 
 - name: Delete node {{ node_to_remove }}
