@@ -82,7 +82,39 @@
     - etcd_member_id | length > 0
   register: master_etcd_member_removed
   changed_when: master_etcd_member_removed.rc == 0
+  # Retry each removal. Scaling down several masters removes their members back to back, and a
+  # removal issued right after the previous membership change can fail to commit within
+  # --command-timeout ("context deadline exceeded") even though etcd is healthy and has quorum --
+  # seen removing the second of two old masters, which then had to be removed by hand. A timed-out
+  # removal can still have been applied, so a retry that finds the member gone ("member not found")
+  # counts as done, the same as the failed_when below.
+  retries: 5
+  delay: 15
+  until: >-
+    master_etcd_member_removed.rc == 0 or
+    'member not found' in master_etcd_member_removed.stderr | default('')
   # tolerate the member disappearing between the read above and this removal, as the sibling does
   failed_when: >-
     master_etcd_member_removed.rc != 0 and
     'member not found' not in master_etcd_member_removed.stderr | default('')
+
+# Don't finish a scale-down on a cluster etcd hasn't settled: every remaining member must answer
+# before the run reports success and the operator destroys the removed VMs. Runs whenever the
+# removal above ran for at least one member (a worker-only scale-down skips it).
+- name: Wait for etcd to be healthy after removing members
+  ansible.builtin.shell: |
+    export ETCDCTL_API=3
+    etcdctl \
+      --command-timeout=30s --dial-timeout=10s \
+      --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+      --cert=/etc/kubernetes/pki/etcd/server.crt \
+      --key=/etc/kubernetes/pki/etcd/server.key \
+      endpoint health --cluster
+  register: master_etcd_health_after_remove
+  changed_when: false
+  retries: 10
+  delay: 10
+  until: master_etcd_health_after_remove.rc == 0
+  when:
+    - inventory_hostname == orchestrator_node and nodes_to_remove | length > 0
+    - master_etcd_member_removed.results | default([]) | selectattr('rc', 'defined') | list | length > 0
