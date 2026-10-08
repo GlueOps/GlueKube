@@ -225,7 +225,7 @@ What that means operationally:
 
 we treat the `hosts.yaml` as the source of truth to our resources, so to **scale up or down** the nodes, it will be enough to modify the hosts.yaml file
 
-When a scale-down removes control-plane nodes, their etcd members are removed one at a time, waiting for the remaining members to be healthy before each. If a removal still fails, the sync's output says which member is left and, if it's safe, the exact `etcdctl member remove` command to run by hand before running sync again.
+Control-plane nodes are removed from etcd one at a time, after a health check. If a removal still fails, the sync output gives the manual `etcdctl member remove` command when it's safe; run it, then sync again.
 
 example, the current `hosts.yaml` is:
 

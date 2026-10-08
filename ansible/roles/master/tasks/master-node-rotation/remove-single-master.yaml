@@ -41,9 +41,7 @@
       drain {{ node_to_remove }} --ignore-daemonsets --delete-emptydir-data --grace-period=120 --timeout=300s
   delegate_to: "{{ execution_host }}"
 
-# Step 3: Remove etcd member. Shared with scale-down.yaml: waits for etcd to be healthy, then removes
-# the member, retrying a timeout (a removal right after the new master's join is another membership
-# change, and can time out even though etcd is healthy).
+# Step 3: Remove etcd member (shared with scale-down.yaml)
 - name: Remove the etcd member of {{ node_to_remove }}
   ansible.builtin.include_tasks: remove-etcd-member.yaml
   vars:

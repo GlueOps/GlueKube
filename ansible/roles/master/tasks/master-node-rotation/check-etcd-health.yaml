@@ -5,13 +5,9 @@
 # single hung probe can eat most of the 5 x 10s budget and the check reports failure having barely
 # retried.
 #
-# Optional inputs (defaults keep the original behaviour):
-#   master_etcd_health_endpoints  probe only these client URLs instead of every member (--cluster).
-#                                 Scale-down passes the members that stay, so a leftover member
-#                                 whose VM is already gone can't fail the check.
-#   master_etcd_health_retries    attempts before giving up (default 5, 10s apart).
-#   master_etcd_health_fail       false = record the result in etcd_health without failing.
-#   execution_host                host to run on (default: the current host).
+# Optional: master_etcd_health_endpoints (probe these instead of --cluster),
+# master_etcd_health_retries (default 5), master_etcd_health_fail (false = don't fail),
+# execution_host (default: current host).
 
 - name: "Checking etcd health: {{ health_check_stage | default('routine check') }}"
   ansible.builtin.shell: |
