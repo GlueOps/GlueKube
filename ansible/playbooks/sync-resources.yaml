@@ -30,3 +30,20 @@
         tasks_from: apply-calico-firewall.yaml
       when: not (resources_in_sync | default(false) | bool)
       tags: install_calico
+
+# Its own play, not part of sync.yaml, so it also runs when the cluster is already in sync (that
+# play ends early): HostEndpoints left by an earlier sync are swept on the very next run. It costs
+# two read-only calls to the local apiserver and never fails the sync. nodes_to_remove_list is set
+# by sync.yaml on every host of that play, the orchestrator included, and is undefined when the
+# play ended early -- nothing is being removed then.
+- name: Delete HostEndpoints of removed loadbalancer nodes
+  hosts: orchestrator
+  become: true
+  tasks:
+    - name: Delete HostEndpoints of removed loadbalancer nodes
+      ansible.builtin.include_role:
+        name: master
+        tasks_from: delete-hostendpoints.yaml
+      vars:
+        master_hostendpoint_nodes_to_remove: "{{ nodes_to_remove_list | default([]) }}"
+      tags: install_calico

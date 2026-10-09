@@ -16,7 +16,8 @@
 #
 # The cleanup is cosmetic and must never fail the sync: a failed sync reruns as in-sync and skips
 # the firewall play that gives new loadbalancer nodes their HostEndpoints. So a Calico API that
-# stays down only warns, and whatever is left over goes on the next sync that changes something.
+# stays down only warns, and whatever is left over goes on the next sync, which runs this again
+# (sync-resources.yaml runs it on every sync, in-sync ones included).
 - name: Read the Calico HostEndpoints
   ansible.builtin.shell:
     cmd: |
@@ -75,7 +76,7 @@
       vars:
         master_hostendpoint_nodes_to_keep: >-
           {{ master_hostendpoint_cluster_nodes.stdout_lines | map('trim') | select
-             | difference(nodes_to_remove | default([])) }}
+             | difference(master_hostendpoint_nodes_to_remove | default([])) }}
 
     - name: Report the HostEndpoints of nodes that are gone
       ansible.builtin.debug:
