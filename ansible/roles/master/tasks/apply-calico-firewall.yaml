@@ -29,15 +29,10 @@
     mode: "0644"
   tags: install_calico
 
-# The projectcalico.org/v3 applies below are pinned to the local apiserver, like
-# select-orchestrator.yaml and remove-single-master.yaml. v3 is an aggregated API: the apiserver
-# that takes the request proxies it to the calico-apiserver pods over the pod network. Through the
-# kubeconfig's ctrp name that can be a master that has just joined and has no pod network yet
-# (calico-node still initialising), which answers ServiceUnavailable. This play runs on the
-# orchestrator, whose apiserver is networked. The waits above do not cover that path.
-#
-# Still retried: right after a master joins or leaves, the aggregated path can blip with
-# ServiceUnavailable or Timeout for a minute or two, and apply is safe to repeat.
+# Pinned to the local (orchestrator) apiserver: projectcalico.org/v3 is an aggregated API, and via
+# the ctrp name the request can land on a just-joined master with no pod network yet, which answers
+# ServiceUnavailable; the waits above don't cover that. Retried because the aggregated path still
+# blips for a minute or two after a master joins or leaves, and apply is idempotent.
 - name: Apply Calico Configs(Felix and Global Network Policy)
   ansible.builtin.shell:
     cmd: |
@@ -88,7 +83,7 @@
   loop: "{{ loadbalancer_interface_map | default({}) | dict2items }}"
   tags: install_calico
 
-# Pinned and retried for the same reason as the Felix and Global Network Policy apply above.
+# Pinned and retried for the same reason as the apply above.
 - name: Apply Calico HostEndpoint manifest for each loadbalancer node
   ansible.builtin.shell:
     cmd: |
