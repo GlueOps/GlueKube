@@ -13,16 +13,8 @@
     loop_var: node_to_drain
   when: nodes_to_remove | length > 0
 
-- name: Delete Nodes
-  ansible.builtin.shell: |
-    export KUBECONFIG=/etc/kubernetes/admin.conf
-    echo "Deleting Node: {{ item }}"
-    kubectl delete node {{ item }} 
-  with_items: "{{ nodes_to_remove | default([]) }}"
-  when: nodes_to_remove | length > 0
-
-# Read once, rc checked, for the health endpoints and the failure message below; each removal
-# re-reads it. A failed read must fail here, not look like "no members".
+# Read once, rc checked, for the endpoints below; each removal re-reads it. A failed read
+# must fail here, not look like "no members".
 - name: Read the etcd member list
   ansible.builtin.shell: |
     export ETCDCTL_API=3
@@ -49,56 +41,39 @@
          | map('trim') | select | list }}
   when: inventory_hostname == orchestrator_node and nodes_to_remove | length > 0
 
+# Unreachable members go first: while a dead member is still counted, etcd refuses to remove a
+# live one ("unhealthy cluster"), and nodes_to_remove has no fixed order.
+- name: Probe the etcd endpoint of each removed node
+  ansible.builtin.shell: |
+    export ETCDCTL_API=3
+    etcdctl endpoint health --endpoints={{ master_etcd_probe_url }} \
+      --dial-timeout=3s --command-timeout=5s \
+      --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+      --cert=/etc/kubernetes/pki/etcd/server.crt \
+      --key=/etc/kubernetes/pki/etcd/server.key
+  vars:
+    master_etcd_probe_url: >-
+      {{ master_etcd_member_list.stdout_lines | select('search', '(?<![\w-])' ~ (item | regex_escape) ~ '(?![\w-])')
+         | map('regex_replace', '^(?:[^,]*,){4}\s*([^,]*),.*$', '\1') | map('trim') | first | default('') }}
+  loop: "{{ nodes_to_remove | default([]) }}"
+  register: master_etcd_probe
+  changed_when: false
+  failed_when: false
+  when: inventory_hostname == orchestrator_node and master_etcd_probe_url | length > 0
+
 # Gated only on etcd membership, not on node names or groups['masters'] (#475): a node being
-# scaled down is by definition no longer in the inventory.
-- name: Remove the etcd members of removed control-plane nodes
+# scaled down is by definition no longer in the inventory. A failure stops here with that node
+# still in Kubernetes, so the next sync finds it again and retries.
+- name: Remove each node from etcd and Kubernetes, one at a time
+  ansible.builtin.include_tasks: remove-node.yaml
+  loop: "{{ (master_etcd_unreachable | sort) + (nodes_to_remove | default([]) | difference(master_etcd_unreachable) | sort) }}"
+  loop_control:
+    loop_var: master_etcd_node
+  vars:
+    master_etcd_unreachable: >-
+      {{ master_etcd_probe.results | default([]) | selectattr('rc', 'defined')
+         | rejectattr('rc', 'equalto', 0) | map(attribute='item') | list }}
   when: inventory_hostname == orchestrator_node and nodes_to_remove | length > 0
-  block:
-    - name: Remove each removed node's etcd member, one at a time
-      ansible.builtin.include_tasks: remove-etcd-member.yaml
-      loop: "{{ nodes_to_remove | default([]) }}"
-      loop_control:
-        loop_var: master_etcd_node
-
-  # Sync won't retry these: their Kubernetes nodes are gone, so a rerun finds nothing to remove.
-  # Explain what is left and how to remove it by hand, then fail.
-  rescue:
-    - name: Check the remaining etcd members after the failed removal
-      ansible.builtin.include_tasks: master-node-rotation/check-etcd-health.yaml
-      vars:
-        health_check_stage: after the failed removal
-        master_etcd_health_retries: 1
-        master_etcd_health_fail: false
-
-    - name: Explain the failed etcd member removal
-      ansible.builtin.debug:
-        msg: "{{ master_etcd_removal_help | trim | from_json }}"
-      vars:
-        master_etcd_error: "{{ ansible_failed_result.stderr | default(ansible_failed_result.msg | default('')) | trim }}"
-        master_etcd_removal_help: >-
-          {% set step = master_etcd_current_step | default('') %}
-          {% set cur_id = master_etcd_current_member_id | default('') %}
-          {% set err = master_etcd_error.splitlines() | last | default('') %}
-          {% set healthy = etcd_health.rc | default(1) == 0 %}
-          {% set left = nodes_to_remove | difference(master_etcd_removed_nodes | default([])) %}
-          {% set pairs = [] %}
-          {% for n in left %}{% for l in master_etcd_member_list.stdout_lines | select('search', '(?<![\w-])' ~ (n | regex_escape) ~ '(?![\w-])') %}{% set _ = pairs.append([n, l.split(',')[0] | trim]) %}{% endfor %}{% endfor %}
-          {% if step == 'health check' %}{% set reason = 'etcd was not healthy, so the removal was not attempted' %}
-          {% elif master_etcd_error is search(master_etcd_transient_errors) %}{% set reason = 'still failing after retries: ' ~ err %}
-          {% else %}{% set reason = 'unexpected error: ' ~ err %}{% endif %}
-          {% set lines = ['etcd member removal failed on ' ~ (master_etcd_current_node | default('?')) ~ ' (member ' ~ (cur_id or '?') ~ '): ' ~ reason] %}
-          {% set _ = lines.append('Sync will NOT retry this: the nodes are already deleted from Kubernetes. Still in etcd: ' ~ ((pairs | map('join', ' ') | join(', ')) or 'none')) %}
-          {% set _ = lines.append('etcd health now: ' ~ ('healthy' if healthy else 'NOT healthy: ' ~ (etcd_health.stderr | default(etcd_health.stdout | default('')) | trim))) %}
-          {% if pairs | length > 0 %}
-          {%   set first = 'get etcd healthy first, then ' if not healthy else ('fix the error above first, then ' if reason.startswith('unexpected') else '') %}
-          {%   set _ = lines.append('Next: ' ~ first ~ 'on ' ~ inventory_hostname ~ ' run these one at a time; after each, check `member list` and `endpoint health --cluster` (members not yet removed may show unhealthy; `member not found` = already gone):') %}
-          {%   for p in pairs %}{% set _ = lines.append('  sudo ETCDCTL_API=3 etcdctl --endpoints=https://127.0.0.1:2379 --cacert=/etc/kubernetes/pki/etcd/ca.crt --cert=/etc/kubernetes/pki/etcd/server.crt --key=/etc/kubernetes/pki/etcd/server.key member remove ' ~ p[1]) %}{% endfor %}
-          {% endif %}
-          {{ lines | to_json }}
-
-    - name: Fail the run after the etcd member removal error
-      ansible.builtin.fail:
-        msg: "etcd member removal failed; see the explanation in the previous task's output."
 
 # Don't report success until the remaining members are healthy.
 - name: Wait for etcd to be healthy after removing members

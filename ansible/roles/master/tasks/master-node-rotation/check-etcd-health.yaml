@@ -6,8 +6,7 @@
 # retried.
 #
 # Optional: master_etcd_health_endpoints (probe these instead of --cluster),
-# master_etcd_health_retries (default 5), master_etcd_health_fail (false = don't fail),
-# execution_host (default: current host).
+# master_etcd_health_retries (default 5), execution_host (default: current host).
 
 - name: "Checking etcd health: {{ health_check_stage | default('routine check') }}"
   ansible.builtin.shell: |
@@ -35,15 +34,10 @@
       etcd health check failed {{ health_check_stage | default('') }}
       Output: {{ etcd_health.stdout | default('no output') }}
       Error: {{ etcd_health.stderr | default('no error') }}
-  when:
-    - master_etcd_health_fail | default(true) | bool
-    - >
-      etcd_health.rc != 0 or
-      (etcd_health.stdout | default('[]', true) | from_json | selectattr('health', 'equalto', false) | list | length) > 0
+  when: >
+    etcd_health.rc != 0 or
+    (etcd_health.stdout | default('[]', true) | from_json | selectattr('health', 'equalto', false) | list | length) > 0
 
 - name: Display etcd health status
   debug:
     msg: "etcd is healthy {{ health_check_stage | default('') }}"
-  when: >
-    etcd_health.rc == 0 and
-    (etcd_health.stdout | default('[]', true) | from_json | selectattr('health', 'equalto', false) | list | length) == 0

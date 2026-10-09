@@ -41,23 +41,12 @@
       drain {{ node_to_remove }} --ignore-daemonsets --delete-emptydir-data --grace-period=120 --timeout=300s
   delegate_to: "{{ execution_host }}"
 
-# Step 3: Remove etcd member (shared with scale-down.yaml)
-- name: Remove the etcd member of {{ node_to_remove }}
-  ansible.builtin.include_tasks: remove-etcd-member.yaml
+# Step 3: Remove the etcd member, then the Node (shared with scale-down.yaml)
+- name: Remove the etcd member, then the Node, of {{ node_to_remove }}
+  ansible.builtin.include_tasks: remove-node.yaml
   vars:
     master_etcd_node: "{{ node_to_remove }}"
     master_etcd_exec_host: "{{ execution_host }}"
-
-- name: Delete node {{ node_to_remove }}
-  ansible.builtin.shell: |
-    export KUBECONFIG=/etc/kubernetes/admin.conf
-    kubectl --server https://127.0.0.1:6443 --request-timeout=30s \
-      delete node {{ node_to_remove }} --ignore-not-found
-  delegate_to: "{{ execution_host }}"
-  register: delete_result
-  retries: 5
-  delay: 10
-  until: delete_result.rc == 0
 
 - name: "Successfully removed master node: {{ node_to_remove }}"
   debug:

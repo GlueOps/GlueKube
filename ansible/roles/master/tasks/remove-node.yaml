@@ -1,4 +1,6 @@
-# Removes one node's etcd member: wait for etcd to be healthy, then remove it, retrying a timeout.
+# Removes one node from the cluster: its etcd member if it has one (wait for etcd to be healthy,
+# then remove it, retrying transient errors), THEN its Kubernetes Node. If the etcd step fails the Node
+# stays, so the next sync still sees the node and retries.
 # Used by scale-down.yaml (once per node) and master-node-rotation/remove-single-master.yaml.
 # Inputs: master_etcd_node; master_etcd_exec_host (default: current host);
 # master_etcd_health_endpoints (optional, default --cluster).
@@ -30,8 +32,6 @@
 # Anchored so master-node-3 doesn't match master-node-30; a worker matches nothing (#475).
 - name: Find the etcd member of {{ master_etcd_node }}
   ansible.builtin.set_fact:
-    master_etcd_current_node: "{{ master_etcd_node }}"
-    master_etcd_current_step: health check
     master_etcd_current_member_id: >-
       {{ master_etcd_current_list.stdout_lines
          | select('search', '(?<![\w-])' ~ master_etcd_node ~ '(?![\w-])')
@@ -44,11 +44,6 @@
     health_check_stage: "before removing {{ master_etcd_node }}"
     execution_host: "{{ master_etcd_run_on }}"
     master_etcd_health_retries: 10
-  when: master_etcd_current_member_id | length > 0
-
-- name: Note that the health gate passed for {{ master_etcd_node }}
-  ansible.builtin.set_fact:
-    master_etcd_current_step: removal
   when: master_etcd_current_member_id | length > 0
 
 # Only transient errors are retried; "member not found" means an earlier attempt went through.
@@ -79,3 +74,18 @@
   ansible.builtin.set_fact:
     master_etcd_removed_nodes: "{{ master_etcd_removed_nodes | default([]) + [master_etcd_node] }}"
   when: master_etcd_current_member_id | length > 0
+
+# Pinned to the local apiserver: once its member is gone, the removed node's own apiserver accepts
+# the delete but can never commit it (see remove-single-master.yaml). master_etcd_run_on is never
+# the node being removed.
+- name: Delete node {{ master_etcd_node }}
+  ansible.builtin.shell: |
+    export KUBECONFIG=/etc/kubernetes/admin.conf
+    kubectl --server https://127.0.0.1:6443 --request-timeout=30s \
+      delete node {{ master_etcd_node }} --ignore-not-found
+  delegate_to: "{{ master_etcd_run_on }}"
+  register: master_node_deleted
+  changed_when: "'deleted' in master_node_deleted.stdout"
+  retries: 5
+  delay: 10
+  until: master_node_deleted.rc == 0
