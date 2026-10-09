@@ -29,10 +29,27 @@
     mode: "0644"
   tags: install_calico
 
+# The projectcalico.org/v3 applies below are pinned to the local apiserver, like
+# select-orchestrator.yaml and remove-single-master.yaml. v3 is an aggregated API: the apiserver
+# that takes the request proxies it to the calico-apiserver pods over the pod network. Through the
+# kubeconfig's ctrp name that can be a master that has just joined and has no pod network yet
+# (calico-node still initialising), which answers ServiceUnavailable. This play runs on the
+# orchestrator, whose apiserver is networked. The waits above do not cover that path.
+#
+# Still retried: right after a master joins or leaves, the aggregated path can blip with
+# ServiceUnavailable or Timeout for a minute or two, and apply is safe to repeat.
 - name: Apply Calico Configs(Felix and Global Network Policy)
-  ansible.builtin.shell: |
-    export KUBECONFIG=/etc/kubernetes/admin.conf 
-    kubectl apply -f /opt/kubernetes/calico-global-network-policy.yaml
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      export KUBECONFIG=/etc/kubernetes/admin.conf
+      kubectl --server https://127.0.0.1:6443 --request-timeout=60s \
+        apply -f /opt/kubernetes/calico-global-network-policy.yaml
+    executable: /bin/bash
+  register: master_calico_config_apply
+  retries: 10
+  delay: 15
+  until: master_calico_config_apply.rc == 0
   tags: install_calico
 
 
@@ -71,9 +88,18 @@
   loop: "{{ loadbalancer_interface_map | default({}) | dict2items }}"
   tags: install_calico
 
+# Pinned and retried for the same reason as the Felix and Global Network Policy apply above.
 - name: Apply Calico HostEndpoint manifest for each loadbalancer node
-  ansible.builtin.shell: |
-    export KUBECONFIG=/etc/kubernetes/admin.conf
-    kubectl apply -f /opt/kubernetes/calico-hostendpoint-{{ item.key }}.yaml
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      export KUBECONFIG=/etc/kubernetes/admin.conf
+      kubectl --server https://127.0.0.1:6443 --request-timeout=60s \
+        apply -f /opt/kubernetes/calico-hostendpoint-{{ item.key }}.yaml
+    executable: /bin/bash
   loop: "{{ loadbalancer_interface_map | default({}) | dict2items }}"
+  register: master_calico_hostendpoint_apply
+  retries: 10
+  delay: 15
+  until: master_calico_hostendpoint_apply.rc == 0
   tags: install_calico
