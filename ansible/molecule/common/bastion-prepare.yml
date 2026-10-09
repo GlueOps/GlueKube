@@ -146,6 +146,7 @@
     - { name: kubernetes, url: "https://pkgs.k8s.io/core:/stable:/v{{ k8s_minor }}/deb/Release.key", fpr: DE15B14486CD377B9E876E1A234654DA9A296436 }
     - { name: docker, url: "https://download.docker.com/linux/ubuntu/gpg", fpr: 9DC858229FC7DD38854AE2D88D81803C0EBFCD88 }
     - { name: helm, url: "https://packages.buildkite.com/helm-linux/helm-debian/gpgkey", fpr: DDF78C3E6EBB2D2CC223C95C62BA89D07698DBC6 }
+    - { name: criu, url: "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x4E2A48715C45AEEC077B48169B29EEC9246B6CE2", fpr: 4E2A48715C45AEEC077B48169B29EEC9246B6CE2 }
   loop_control:
     label: "{{ item.name }}"
   vars:

@@ -3,3 +3,13 @@ kubernetes_version: "{{ lookup('env', 'kubernetes_version') }}"
 kubernetes_package_version: "{{ lookup('env', 'kubernetes_package_version') }}" #"1.34.5-1.1" -- matches the Dockerfile and CI pin; the floor is 1.31 (see playbooks/preflight.yaml)
 loadbalancer_apiserver: "{{ lookup('env', 'loadbalancer_apiserver') }}"
 domain_name: "{{ lookup('env', 'domain_name') }}"
+
+# Pod live migration (roles/common/tasks/live-migration.yaml). Off unless the env says so; see the
+# readme's "Live migration (pod-migration)".
+live_migration_enabled: "{{ lookup('env', 'live_migration_enabled') | default(false, true) | bool }}"
+criu_apt_repo: "{{ lookup('env', 'criu_apt_repo') | default('https://ppa.launchpadcontent.net/criu/ppa/ubuntu', true) }}"
+# Full containerd.io version to pin and hold, e.g. 2.3.6-1~ubuntu.24.04~noble. Empty leaves
+# containerd.io unpinned.
+containerd_package_version: "{{ lookup('env', 'containerd_package_version') }}"
+# Comma-separated host:port list, e.g. 10.0.0.5:5000,registry.internal:5000.
+live_migration_insecure_registries: "{{ lookup('env', 'live_migration_insecure_registries') | split(',') | map('trim') | select | list }}"

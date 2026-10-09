@@ -566,7 +566,8 @@ otherwise hangs until the run is killed.
 
 # Renewing apt signing keys
 
-nodes trust three apt signing keys: Kubernetes, Docker and Helm. the `Dockerfile` fetches them into
+nodes trust three apt signing keys: Kubernetes, Docker and Helm, plus the CRIU PPA's key on clusters
+with [live migration](#live-migration-pod-migration) on. the `Dockerfile` fetches them into
 `/opt/gluekube/apt-keys` and fails the build unless each matches its pinned fingerprint; the
 `apt_keys` role copies them onto nodes before the first apt cache update.
 
@@ -580,6 +581,63 @@ nodes trust three apt signing keys: Kubernetes, Docker and Helm. the `Dockerfile
 
 a key problem shows up as the *Update the apt package lists* task failing, with `EXPKEYSIG`,
 `NO_PUBKEY`, `Missing key` or `not readable by user '_apt'` in its output.
+
+# Live migration (pod-migration)
+
+opt-in node preparation for the pod live-migration controller, which checkpoints a pod with CRIU
+through containerd and restores it on another node. with `live_migration_enabled` set,
+`roles/common/tasks/live-migration.yaml` runs inside `prepare-node` on every node it prepares and:
+
+- installs `criu` from Launchpad's `criu/ppa`, directly (not through the `repo.gpkg.io` mirror), signed by
+  `/etc/apt/keyrings/criu.gpg` (key `4E2A48715C45AEEC077B48169B29EEC9246B6CE2`, pinned in the
+  `Dockerfile` and `ansible/molecule/common/bastion-prepare.yml` like the other keys). it goes in
+  before containerd is restarted: containerd caches a missing `criu`.
+- writes `/etc/criu/runc.conf` with `tcp-established`, `skip-in-flight` and `file-locks`, the CRIU
+  options runc applies to every dump and restore.
+- turns on `enable_experimental_restore_via_create` in `/etc/containerd/config.toml`, and points
+  the CRI registry `config_path` at `/etc/containerd/certs.d`.
+- writes `/etc/containerd/certs.d/<host:port>/hosts.toml` for each plain-HTTP registry listed.
+- pins and holds `containerd.io` when `containerd_package_version` is set, and fails the run if the
+  installed containerd is 2.4 or newer.
+
+containerd is restarted when its config, `criu` or `runc.conf` changed. without the flag none of
+this runs, and `config.toml` comes out exactly as before.
+
+| variable (env / `.env`) | default | |
+|---|---|---|
+| `live_migration_enabled` | `false` | `true` to turn it on |
+| `containerd_package_version` | empty: not pinned | full `containerd.io` version, e.g. `2.3.6-1~ubuntu.24.04~noble` (`apt-cache madison containerd.io`) |
+| `live_migration_insecure_registries` | empty | comma-separated `host:port` list, e.g. `10.0.0.5:5000` |
+| `criu_apt_repo` | `https://ppa.launchpadcontent.net/criu/ppa/ubuntu` | where CRIU comes from; point it at a mirror if you add one |
+
+in the container, `parser.py` writes these to `.env` from `platform.json`'s `metadata`
+(`live_migration_enabled: true`, and the other three, a list for the registries) — only when
+`live_migration_enabled` is true.
+
+**containerd must stay below 2.4**: 2.4 removed restore via CreateContainer. it has been tested with
+`containerd.io` 2.3.6 from Docker's repository. Docker's repository already ships 2.4, so a
+node built without a pin gets 2.4 and the run stops at *Refuse containerd 2.4 or newer* — set
+`containerd_package_version`. the pin is held with dpkg so neither the dist-upgrade in
+`prepare-node` nor unattended-upgrades moves it; clearing the variable later does **not** release
+the hold (`apt-mark unhold containerd.io` on each node). removing a registry from
+`live_migration_insecure_registries` does not delete its `hosts.toml` either.
+
+**nodes need egress to `ppa.launchpadcontent.net`.** unlike every other package source, CRIU is
+not mirrored through `repo.gpkg.io` yet, so a node that can only reach the mirror fails at the
+*Update the apt package lists* task after *Add the CRIU repository*. the PPA publishes jammy, noble
+and resolute, and each node uses its own codename. to move it behind a mirror later, create an apt
+proxy of `https://ppa.launchpadcontent.net/criu/ppa/ubuntu` (a Nexus apt proxy serves one
+distribution, so one per codename) and set `criu_apt_repo` to it.
+
+**where it applies.** `prepare-node` is reached by `make setup` (every node) and, through `make sync`,
+only by the nodes `sync` adds — `sync` never re-prepares an existing node, so turning the flag on
+and running `sync` changes nothing on the nodes already in the cluster. to apply it to existing
+nodes, run `make setup` with the flag set. on a live cluster that is more than this feature: the
+whole `prepare-node` on every node, including the `apt upgrade: dist`, plus `install-addons` and
+`install-calico` (see [Running this against an existing cluster](#running-this-against-an-existing-cluster)).
+it also **restarts containerd** on every node whose config changed, in parallel across the play's
+hosts rather than one node at a time. running containers survive a containerd restart (their shims
+stay up), but kubelet loses the runtime for those seconds.
 
 # Upgrade Cluster
 
