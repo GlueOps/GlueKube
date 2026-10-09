@@ -1,23 +1,12 @@
 ---
-# apply-calico-firewall.yaml creates one HostEndpoint per loadbalancer node, named after the node
-# (calico-hostendpoint.yaml.j2: metadata.name == spec.node), and nothing ever deleted them, so a
-# scaled-down loadbalancer node left its HostEndpoint behind.
+# Deletes GlueKube's HostEndpoints (metadata.name == spec.node, see calico-hostendpoint.yaml.j2)
+# whose node is being removed by this sync or is no longer in the cluster. The first check is
+# needed because a removed node's kubelet can re-register it until the VM is destroyed.
 #
-# Only HostEndpoints that follow that naming are considered, so anything not made by GlueKube
-# (a hand-made HostEndpoint, Calico's own "<node>-auto-hep") is never touched. Of those, one goes
-# when its node is being removed by this sync, or when its node is no longer in the cluster at all
-# -- the second catches the ones left by earlier syncs, which no later nodes_to_remove names again
-# because the node is already gone. The first is still needed: until the VM is destroyed its
-# kubelet can re-register the node that scale-down just deleted.
-
-# Every call is pinned to this node's own apiserver. admin.conf points at ctrp, which right after
-# a scale-down or join can land on a master whose aggregated projectcalico.org API answers
-# ServiceUnavailable; 127.0.0.1 is in certSANs (same pin as select-orchestrator.yaml).
+# Calls are pinned to the local apiserver: via ctrp, the aggregated projectcalico.org API can
+# answer ServiceUnavailable right after a scale-down or join.
 #
-# The cleanup is cosmetic: a leftover HostEndpoint only clutters the list, so it should not turn an
-# otherwise successful sync red. A Calico API that is still down after a few retries only warns, and
-# whatever is left over goes on the next sync, which runs this again (sync-resources.yaml runs it on
-# every sync, in-sync ones included). The node read below is the one exception and does fail the sync.
+# Leftovers are only clutter, so Calico API failures warn and are retried on the next sync.
 - name: Read the Calico HostEndpoints
   ansible.builtin.shell:
     cmd: |
@@ -31,7 +20,7 @@
   retries: 4
   delay: 15
   until: master_hostendpoints.rc == 0
-  # read-only; without this a sync-resources --check run fails here, as this play runs every sync
+  # read-only; lets sync-resources --check pass
   check_mode: false
 
 - name: Warn that the HostEndpoints could not be read
@@ -42,8 +31,8 @@
       Stale HostEndpoints will be cleaned up on a later sync.
   when: master_hostendpoints.rc != 0
 
-# Unlike the other calls this one stays fatal: an empty or unreadable node list would make every
-# HostEndpoint look orphaned, so it fails rather than guess, and keeps the longer retries for that reason.
+# Fatal, unlike the other calls: an empty or unreadable node list would make every HostEndpoint
+# look orphaned.
 - name: Read the cluster's nodes
   ansible.builtin.shell:
     cmd: |
@@ -62,7 +51,6 @@
   check_mode: false
   when: master_hostendpoints.rc == 0
 
-# A HostEndpoint stays only if its node is in the cluster and not being removed by this sync.
 - name: Select the HostEndpoints of nodes that are gone
   ansible.builtin.set_fact:
     master_hostendpoints_to_delete: >-
