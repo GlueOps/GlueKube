@@ -225,7 +225,7 @@ What that means operationally:
 
 we treat the `hosts.yaml` as the source of truth to our resources, so to **scale up or down** the nodes, it will be enough to modify the hosts.yaml file
 
-Control-plane nodes are removed from etcd one at a time, after a health check. If a removal still fails, the sync output gives the manual `etcdctl member remove` command when it's safe; run it, then sync again.
+Control-plane nodes are removed from etcd one at a time, after a health check, and transient etcd errors are retried. If a removal still fails, sync will **not** retry it: those nodes are already deleted from Kubernetes, so the next run has nothing to remove. The sync output lists every etcd member still left with its `etcdctl member remove` command. Get etcd healthy first if the output says it isn't, then run the commands one at a time and check `member list` and `endpoint health` after each.
 
 example, the current `hosts.yaml` is:
 

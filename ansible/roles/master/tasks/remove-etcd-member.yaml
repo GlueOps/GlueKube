@@ -3,8 +3,8 @@
 # Inputs: master_etcd_node; master_etcd_exec_host (default: current host);
 # master_etcd_health_endpoints (optional, default --cluster).
 #
-# Raft takes one membership change at a time, so a removal sent right after another one can time
-# out ("context deadline exceeded") on a healthy etcd. The health gate and the retry prevent that.
+# Raft takes one membership change at a time, so a removal sent right after another one can fail
+# transiently on a healthy etcd. The health gate and the retry (master_etcd_transient_errors) cover that.
 
 # A fact, not a var: callers pass "{{ execution_host }}", which would otherwise loop.
 - name: Pick the host that runs etcdctl for {{ master_etcd_node }}
@@ -51,7 +51,7 @@
     master_etcd_current_step: removal
   when: master_etcd_current_member_id | length > 0
 
-# Only a timeout is retried; "member not found" means an earlier attempt went through.
+# Only transient errors are retried; "member not found" means an earlier attempt went through.
 - name: Remove the etcd member of {{ master_etcd_node }}
   ansible.builtin.shell: |
     export ETCDCTL_API=3
@@ -69,7 +69,7 @@
   until: >-
     master_etcd_member_removed.rc == 0 or
     'member not found' in master_etcd_member_removed.stderr | default('') or
-    'context deadline exceeded' not in master_etcd_member_removed.stderr | default('')
+    master_etcd_member_removed.stderr | default('') is not search(master_etcd_transient_errors)
   failed_when: >-
     master_etcd_member_removed.rc != 0 and
     'member not found' not in master_etcd_member_removed.stderr | default('')

@@ -21,16 +21,8 @@
   with_items: "{{ nodes_to_remove | default([]) }}"
   when: nodes_to_remove | length > 0
 
-# The etcd member list is the authority on which nodes are members, and this reads it once, with
-# its rc checked, before anything acts on the answer. Splitting the read from the removal is the
-# point: a failed or timed-out `member list` returns the same empty result as a node that has no
-# member, so a guard on emptiness alone cannot tell "this is not a member" from "could not ask" and
-# turns the second into a green no-op -- after cordon, drain and delete have already run, leaving a
-# phantom member counting toward quorum on a VM the operator is about to destroy. Failing here is
-# the whole behaviour: the removal below only ever runs on an answer etcd actually gave.
-#
-# Timeouts match remove-single-master.yaml and check-etcd-health.yaml; without them a single hung
-# probe eats the retry budget.
+# Read once, rc checked, for the health endpoints and the failure message below; each removal
+# re-reads it. A failed read must fail here, not look like "no members".
 - name: Read the etcd member list
   ansible.builtin.shell: |
     export ETCDCTL_API=3
@@ -57,17 +49,8 @@
          | map('trim') | select | list }}
   when: inventory_hostname == orchestrator_node and nodes_to_remove | length > 0
 
-# Gated on nothing but etcd's own membership (#475).
-#
-# This used to carry `when: item is search("master-node-*")`, so a control-plane node named
-# anything else skipped removal and left a phantom member counting toward quorum -- a two-member
-# cluster that has lost quorum while reporting three.
-#
-# The obvious repair, `item in groups['masters']`, is WRONG here and would be a worse bug:
-# nodes_to_remove is by definition what the cluster has and the inventory does NOT name
-# (compare-node.yaml), so a node being scaled down is already absent from groups['masters'] and
-# the condition would be false for exactly the nodes this has to act on -- silently skipping
-# every removal.
+# Gated only on etcd membership, not on node names or groups['masters'] (#475): a node being
+# scaled down is by definition no longer in the inventory.
 - name: Remove the etcd members of removed control-plane nodes
   when: inventory_hostname == orchestrator_node and nodes_to_remove | length > 0
   block:
@@ -77,7 +60,8 @@
       loop_control:
         loop_var: master_etcd_node
 
-  # If a removal still fails after its retries, explain it and the safe next step, then fail.
+  # Sync won't retry these: their Kubernetes nodes are gone, so a rerun finds nothing to remove.
+  # Explain what is left and how to remove it by hand, then fail.
   rescue:
     - name: Check the remaining etcd members after the failed removal
       ansible.builtin.include_tasks: master-node-rotation/check-etcd-health.yaml
@@ -91,23 +75,24 @@
         msg: "{{ master_etcd_removal_help | trim | from_json }}"
       vars:
         master_etcd_error: "{{ ansible_failed_result.stderr | default(ansible_failed_result.msg | default('')) | trim }}"
-        master_etcd_timed_out: "{{ 'context deadline exceeded' in master_etcd_error }}"
-        master_etcd_failed_health_wait: "{{ master_etcd_current_step | default('') == 'health check' }}"
-        master_etcd_left: >-
-          {{ nodes_to_remove | default([]) | difference(master_etcd_removed_nodes | default([])) }}
         master_etcd_removal_help: >-
-          {% set lines = ['etcd member removal failed. The nodes below were already cordoned, drained and deleted from Kubernetes; only their etcd member may be left.'] %}
-          {% set reason = 'the remaining members were not healthy before the removal, so it was not attempted' if master_etcd_failed_health_wait | bool else ('timed out (context deadline exceeded)' if master_etcd_timed_out | bool else 'unexpected error: ' ~ master_etcd_error) %}
-          {% set _ = lines.append('- failed on ' ~ (master_etcd_current_node | default('?')) ~ ' (etcd member ' ~ (master_etcd_current_member_id | default('?')) ~ '): ' ~ reason) %}
-          {% set rest = master_etcd_left | difference([master_etcd_current_node | default('')]) %}
-          {% if rest | length > 0 %}{% set _ = lines.append('- not attempted yet: ' ~ (rest | join(', '))) %}{% endif %}
+          {% set step = master_etcd_current_step | default('') %}
+          {% set cur_id = master_etcd_current_member_id | default('') %}
+          {% set err = master_etcd_error.splitlines() | last | default('') %}
           {% set healthy = etcd_health.rc | default(1) == 0 %}
-          {% set _ = lines.append('etcd health of the remaining members now: ' ~ ('healthy, quorum intact' if healthy else 'NOT healthy, do not remove anything else until it is: ' ~ (etcd_health.stderr | default(etcd_health.stdout | default('')) | trim))) %}
-          {% if healthy and master_etcd_timed_out | bool and not master_etcd_failed_health_wait | bool %}
-          {%   set _ = lines.append('Next: on ' ~ inventory_hostname ~ ', for each node above, one at a time: find its ID with `member list`, run `member remove <id>`, then check `endpoint health --cluster` before the next one. `member not found` means it is already gone. Then run sync again; it is safe to repeat.') %}
-          {%   set _ = lines.append('  sudo ETCDCTL_API=3 etcdctl --endpoints=https://127.0.0.1:2379 --cacert=/etc/kubernetes/pki/etcd/ca.crt --cert=/etc/kubernetes/pki/etcd/server.crt --key=/etc/kubernetes/pki/etcd/server.key member remove ' ~ (master_etcd_current_member_id | default('<id>'))) %}
-          {% else %}
-          {%   set _ = lines.append('Next: fix the error above (or get etcd healthy) before removing anything by hand, then run sync again.') %}
+          {% set left = nodes_to_remove | difference(master_etcd_removed_nodes | default([])) %}
+          {% set pairs = [] %}
+          {% for n in left %}{% for l in master_etcd_member_list.stdout_lines | select('search', '(?<![\w-])' ~ (n | regex_escape) ~ '(?![\w-])') %}{% set _ = pairs.append([n, l.split(',')[0] | trim]) %}{% endfor %}{% endfor %}
+          {% if step == 'health check' %}{% set reason = 'etcd was not healthy, so the removal was not attempted' %}
+          {% elif master_etcd_error is search(master_etcd_transient_errors) %}{% set reason = 'still failing after retries: ' ~ err %}
+          {% else %}{% set reason = 'unexpected error: ' ~ err %}{% endif %}
+          {% set lines = ['etcd member removal failed on ' ~ (master_etcd_current_node | default('?')) ~ ' (member ' ~ (cur_id or '?') ~ '): ' ~ reason] %}
+          {% set _ = lines.append('Sync will NOT retry this: the nodes are already deleted from Kubernetes. Still in etcd: ' ~ ((pairs | map('join', ' ') | join(', ')) or 'none')) %}
+          {% set _ = lines.append('etcd health now: ' ~ ('healthy' if healthy else 'NOT healthy: ' ~ (etcd_health.stderr | default(etcd_health.stdout | default('')) | trim))) %}
+          {% if pairs | length > 0 %}
+          {%   set first = 'get etcd healthy first, then ' if not healthy else ('fix the error above first, then ' if reason.startswith('unexpected') else '') %}
+          {%   set _ = lines.append('Next: ' ~ first ~ 'on ' ~ inventory_hostname ~ ' run these one at a time; after each, check `member list` and `endpoint health --cluster` (members not yet removed may show unhealthy; `member not found` = already gone):') %}
+          {%   for p in pairs %}{% set _ = lines.append('  sudo ETCDCTL_API=3 etcdctl --endpoints=https://127.0.0.1:2379 --cacert=/etc/kubernetes/pki/etcd/ca.crt --cert=/etc/kubernetes/pki/etcd/server.crt --key=/etc/kubernetes/pki/etcd/server.key member remove ' ~ p[1]) %}{% endfor %}
           {% endif %}
           {{ lines | to_json }}
 
