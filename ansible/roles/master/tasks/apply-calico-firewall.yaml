@@ -3,7 +3,7 @@
 - name: Wait for Calico API Server pods to be ready
   ansible.builtin.shell: |
     export KUBECONFIG=/etc/kubernetes/admin.conf
-    kubectl --server https://127.0.0.1:6443 wait --for=condition=Ready pods -l k8s-app=calico-apiserver -n calico-system --timeout=300s
+    kubectl wait --for=condition=Ready pods -l k8s-app=calico-apiserver -n calico-system --timeout=300s
   register: calico_apiserver_wait
   retries: 10
   delay: 30
@@ -14,7 +14,7 @@
 - name: Wait for Calico v3 API Service to be available
   ansible.builtin.shell: |
     export KUBECONFIG=/etc/kubernetes/admin.conf
-    kubectl --server https://127.0.0.1:6443 get apiservice v3.projectcalico.org -o jsonpath='{.status.conditions[?(@.type=="Available")].status}'
+    kubectl get apiservice v3.projectcalico.org -o jsonpath='{.status.conditions[?(@.type=="Available")].status}'
   register: calico_api_status
   until: calico_api_status.stdout == "True"
   retries: 30
@@ -50,23 +50,14 @@
   retries: 6
   delay: 15
   until: master_calico_config_apply.rc == 0
-  changed_when: master_calico_config_apply.stdout_lines | reject('search', ' unchanged$') | list | length > 0
   tags: install_calico
 
 
-# Pinned like the applies, so the node list does not come from a just-joined master either.
 - name: Get nodes with use-as-loadbalancer label
-  ansible.builtin.shell:
-    cmd: |
-      set -euo pipefail
-      export KUBECONFIG=/etc/kubernetes/admin.conf
-      kubectl --server https://127.0.0.1:6443 --request-timeout=30s \
-        get nodes -l use-as-loadbalancer --no-headers -o custom-columns=':metadata.name'
-    executable: /bin/bash
+  ansible.builtin.shell: |
+    export KUBECONFIG=/etc/kubernetes/admin.conf
+    kubectl get nodes -l use-as-loadbalancer --no-headers -o custom-columns=':metadata.name'
   register: loadbalancer_nodes
-  retries: 3
-  delay: 10
-  until: loadbalancer_nodes.rc == 0
   changed_when: false
   tags: install_calico
 
@@ -97,20 +88,18 @@
   loop: "{{ loadbalancer_interface_map | default({}) | dict2items }}"
   tags: install_calico
 
-# Pinned and retried for the same reason as the Felix and Global Network Policy apply above. One
-# call for every node, so they share one retry budget rather than one each.
-- name: Apply Calico HostEndpoint manifests for the loadbalancer nodes
+# Pinned and retried for the same reason as the Felix and Global Network Policy apply above.
+- name: Apply Calico HostEndpoint manifest for each loadbalancer node
   ansible.builtin.shell:
     cmd: |
       set -euo pipefail
       export KUBECONFIG=/etc/kubernetes/admin.conf
       kubectl --server https://127.0.0.1:6443 --request-timeout=30s \
-        apply{% for node in loadbalancer_interface_map | default({}) %} -f /opt/kubernetes/calico-hostendpoint-{{ node }}.yaml{% endfor %}
+        apply -f /opt/kubernetes/calico-hostendpoint-{{ item.key }}.yaml
     executable: /bin/bash
-  when: loadbalancer_interface_map | default({}) | length > 0
+  loop: "{{ loadbalancer_interface_map | default({}) | dict2items }}"
   register: master_calico_hostendpoint_apply
   retries: 6
   delay: 15
   until: master_calico_hostendpoint_apply.rc == 0
-  changed_when: master_calico_hostendpoint_apply.stdout_lines | reject('search', ' unchanged$') | list | length > 0
   tags: install_calico

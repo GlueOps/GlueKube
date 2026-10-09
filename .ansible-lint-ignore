@@ -17,6 +17,7 @@ ansible/playbooks/setup-cluster.yaml var-naming[no-role-prefix]
 ansible/playbooks/upgrade-cluster.yaml name[template]
 ansible/roles/master/tasks/apply-calico-firewall.yaml command-instead-of-shell
 ansible/roles/master/tasks/apply-calico-firewall.yaml jinja[spacing]
+ansible/roles/master/tasks/apply-calico-firewall.yaml no-changed-when
 ansible/roles/master/tasks/apply-calico-firewall.yaml var-naming[no-role-prefix]
 ansible/roles/master/tasks/compare-node.yaml var-naming[no-role-prefix]
 ansible/roles/master/tasks/copy-join-command.yaml no-changed-when
