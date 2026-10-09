@@ -31,7 +31,7 @@
   until: master_etcd_member_list.rc == 0
   when: inventory_hostname == orchestrator_node and nodes_to_remove | length > 0
 
-# Members that stay. Health checks probe only these, so a dead leftover member can't fail them.
+# Health checks probe only the members that stay, so a dead member being removed can't fail them.
 - name: Work out the etcd endpoints that remain after the scale-down
   ansible.builtin.set_fact:
     master_etcd_health_endpoints: >-
@@ -62,8 +62,7 @@
   when: inventory_hostname == orchestrator_node and master_etcd_probe_url | length > 0
 
 # Gated only on etcd membership, not on node names or groups['masters'] (#475): a node being
-# scaled down is by definition no longer in the inventory. A failure stops here with that node
-# still in Kubernetes, so the next sync finds it again and retries.
+# scaled down is by definition no longer in the inventory.
 - name: Remove each node from etcd and Kubernetes, one at a time
   ansible.builtin.include_tasks: remove-node.yaml
   loop: "{{ (master_etcd_unreachable | sort) + (nodes_to_remove | default([]) | difference(master_etcd_unreachable) | sort) }}"
@@ -75,7 +74,6 @@
          | rejectattr('rc', 'equalto', 0) | map(attribute='item') | list }}
   when: inventory_hostname == orchestrator_node and nodes_to_remove | length > 0
 
-# Don't report success until the remaining members are healthy.
 - name: Wait for etcd to be healthy after removing members
   ansible.builtin.include_tasks: master-node-rotation/check-etcd-health.yaml
   vars:

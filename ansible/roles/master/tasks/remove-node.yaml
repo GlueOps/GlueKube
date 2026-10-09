@@ -1,12 +1,10 @@
-# Removes one node from the cluster: its etcd member if it has one (wait for etcd to be healthy,
-# then remove it, retrying transient errors), THEN its Kubernetes Node. If the etcd step fails the Node
-# stays, so the next sync still sees the node and retries.
-# Used by scale-down.yaml (once per node) and master-node-rotation/remove-single-master.yaml.
+# Removes one node: its etcd member if it has one, THEN its Kubernetes Node, so a failed etcd step
+# keeps the Node and the next sync retries it. Used by scale-down.yaml and remove-single-master.yaml.
 # Inputs: master_etcd_node; master_etcd_exec_host (default: current host);
 # master_etcd_health_endpoints (optional, default --cluster).
 #
-# Raft takes one membership change at a time, so a removal sent right after another one can fail
-# transiently on a healthy etcd. The health gate and the retry (master_etcd_transient_errors) cover that.
+# Raft takes one membership change at a time, so a removal right after another can fail transiently
+# on a healthy etcd; the health gate and the retry (master_etcd_transient_errors) cover that.
 
 # A fact, not a var: callers pass "{{ execution_host }}", which would otherwise loop.
 - name: Pick the host that runs etcdctl for {{ master_etcd_node }}
@@ -75,9 +73,8 @@
     master_etcd_removed_nodes: "{{ master_etcd_removed_nodes | default([]) + [master_etcd_node] }}"
   when: master_etcd_current_member_id | length > 0
 
-# Pinned to the local apiserver: once its member is gone, the removed node's own apiserver accepts
-# the delete but can never commit it (see remove-single-master.yaml). master_etcd_run_on is never
-# the node being removed.
+# Pinned to the local apiserver (see remove-single-master.yaml): the removed node's apiserver would
+# accept the delete but never commit it. master_etcd_run_on is never the node being removed.
 - name: Delete node {{ master_etcd_node }}
   ansible.builtin.shell: |
     export KUBECONFIG=/etc/kubernetes/admin.conf
