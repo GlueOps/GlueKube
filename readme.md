@@ -225,6 +225,8 @@ What that means operationally:
 
 we treat the `hosts.yaml` as the source of truth to our resources, so to **scale up or down** the nodes, it will be enough to modify the hosts.yaml file
 
+Control-plane nodes are removed from etcd one at a time, after a health check, and transient etcd errors are retried. A node is deleted from Kubernetes only after its etcd member is gone, so if a removal still fails, sync fails and keeps that node; fix what the error points at (usually etcd health) and rerun sync to retry it.
+
 example, the current `hosts.yaml` is:
 
 ```yaml

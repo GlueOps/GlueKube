@@ -13,24 +13,8 @@
     loop_var: node_to_drain
   when: nodes_to_remove | length > 0
 
-- name: Delete Nodes
-  ansible.builtin.shell: |
-    export KUBECONFIG=/etc/kubernetes/admin.conf
-    echo "Deleting Node: {{ item }}"
-    kubectl delete node {{ item }} 
-  with_items: "{{ nodes_to_remove | default([]) }}"
-  when: nodes_to_remove | length > 0
-
-# The etcd member list is the authority on which nodes are members, and this reads it once, with
-# its rc checked, before anything acts on the answer. Splitting the read from the removal is the
-# point: a failed or timed-out `member list` returns the same empty result as a node that has no
-# member, so a guard on emptiness alone cannot tell "this is not a member" from "could not ask" and
-# turns the second into a green no-op -- after cordon, drain and delete have already run, leaving a
-# phantom member counting toward quorum on a VM the operator is about to destroy. Failing here is
-# the whole behaviour: the removal below only ever runs on an answer etcd actually gave.
-#
-# Timeouts match remove-single-master.yaml and check-etcd-health.yaml; without them a single hung
-# probe eats the retry budget.
+# Read once, rc checked, for the endpoints below; each removal re-reads it. A failed read
+# must fail here, not look like "no members".
 - name: Read the etcd member list
   ansible.builtin.shell: |
     export ETCDCTL_API=3
@@ -47,42 +31,54 @@
   until: master_etcd_member_list.rc == 0
   when: inventory_hostname == orchestrator_node and nodes_to_remove | length > 0
 
-# Gated on nothing but etcd's own membership (#475).
-#
-# This used to carry `when: item is search("master-node-*")`, so a control-plane node named
-# anything else skipped removal and left a phantom member counting toward quorum -- a two-member
-# cluster that has lost quorum while reporting three.
-#
-# The obvious repair, `item in groups['masters']`, is WRONG here and would be a worse bug:
-# nodes_to_remove is by definition what the cluster has and the inventory does NOT name
-# (compare-node.yaml), so a node being scaled down is already absent from groups['masters'] and
-# the condition would be false for exactly the nodes this has to act on -- silently skipping
-# every removal.
-#
-# The lookahead/lookbehind anchors keep master-node-3 from matching master-node-30's row, and a
-# worker matches no row and no-ops on its own, which is what the hostname regex was reaching for.
-- name: Remove the node's etcd member if it has one
+# Health checks probe only the members that stay, so a dead member being removed can't fail them.
+- name: Work out the etcd endpoints that remain after the scale-down
+  ansible.builtin.set_fact:
+    master_etcd_health_endpoints: >-
+      {{ master_etcd_member_list.stdout_lines | default([])
+         | reject('search', '(?<![\w-])(' ~ (nodes_to_remove | map('regex_escape') | join('|')) ~ ')(?![\w-])')
+         | map('regex_replace', '^(?:[^,]*,){4}\s*([^,]*),.*$', '\1')
+         | map('trim') | select | list }}
+  when: inventory_hostname == orchestrator_node and nodes_to_remove | length > 0
+
+# Unreachable members go first: while a dead member is still counted, etcd refuses to remove a
+# live one ("unhealthy cluster"), and nodes_to_remove has no fixed order.
+- name: Probe the etcd endpoint of each removed node
   ansible.builtin.shell: |
     export ETCDCTL_API=3
-    etcdctl \
-      --command-timeout=30s --dial-timeout=10s \
+    etcdctl endpoint health --endpoints={{ master_etcd_probe_url }} \
+      --dial-timeout=3s --command-timeout=5s \
       --cacert=/etc/kubernetes/pki/etcd/ca.crt \
       --cert=/etc/kubernetes/pki/etcd/server.crt \
-      --key=/etc/kubernetes/pki/etcd/server.key \
-      member remove {{ etcd_member_id }}
+      --key=/etc/kubernetes/pki/etcd/server.key
   vars:
-    etcd_member_id: >-
-      {{ master_etcd_member_list.stdout_lines | default([])
-         | select('search', '(?<![\w-])' ~ item ~ '(?![\w-])')
-         | map('regex_replace', '^([^,]*),.*$', '\1')
-         | map('trim') | list | first | default('') }}
-  with_items: "{{ nodes_to_remove | default([]) }}"
+    master_etcd_probe_url: >-
+      {{ master_etcd_member_list.stdout_lines | select('search', '(?<![\w-])' ~ (item | regex_escape) ~ '(?![\w-])')
+         | map('regex_replace', '^(?:[^,]*,){4}\s*([^,]*),.*$', '\1') | map('trim') | first | default('') }}
+  loop: "{{ nodes_to_remove | default([]) }}"
+  register: master_etcd_probe
+  changed_when: false
+  failed_when: false
+  when: inventory_hostname == orchestrator_node and master_etcd_probe_url | length > 0
+
+# Gated only on etcd membership, not on node names or groups['masters'] (#475): a node being
+# scaled down is by definition no longer in the inventory.
+- name: Remove each node from etcd and Kubernetes, one at a time
+  ansible.builtin.include_tasks: remove-node.yaml
+  loop: "{{ (master_etcd_unreachable | sort) + (nodes_to_remove | default([]) | difference(master_etcd_unreachable) | sort) }}"
+  loop_control:
+    loop_var: master_etcd_node
+  vars:
+    master_etcd_unreachable: >-
+      {{ master_etcd_probe.results | default([]) | selectattr('rc', 'defined')
+         | rejectattr('rc', 'equalto', 0) | map(attribute='item') | list }}
+  when: inventory_hostname == orchestrator_node and nodes_to_remove | length > 0
+
+- name: Wait for etcd to be healthy after removing members
+  ansible.builtin.include_tasks: master-node-rotation/check-etcd-health.yaml
+  vars:
+    health_check_stage: after removing members
+    master_etcd_health_retries: 10
   when:
     - inventory_hostname == orchestrator_node and nodes_to_remove | length > 0
-    - etcd_member_id | length > 0
-  register: master_etcd_member_removed
-  changed_when: master_etcd_member_removed.rc == 0
-  # tolerate the member disappearing between the read above and this removal, as the sibling does
-  failed_when: >-
-    master_etcd_member_removed.rc != 0 and
-    'member not found' not in master_etcd_member_removed.stderr | default('')
+    - master_etcd_removed_nodes | default([]) | length > 0

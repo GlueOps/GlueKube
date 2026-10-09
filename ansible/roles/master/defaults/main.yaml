@@ -1,0 +1,4 @@
+---
+# etcd errors that can clear on their own, so a member removal that hits one is retried.
+# "unhealthy cluster": etcd refuses a removal for ~5s after a membership change.
+master_etcd_transient_errors: 'context deadline exceeded|request timed out|unhealthy cluster|leader changed'
