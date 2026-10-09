@@ -14,10 +14,10 @@
 # a scale-down or join can land on a master whose aggregated projectcalico.org API answers
 # ServiceUnavailable; 127.0.0.1 is in certSANs (same pin as select-orchestrator.yaml).
 #
-# The cleanup is cosmetic and must never fail the sync: a failed sync reruns as in-sync and skips
-# the firewall play that gives new loadbalancer nodes their HostEndpoints. So a Calico API that
-# stays down only warns, and whatever is left over goes on the next sync, which runs this again
-# (sync-resources.yaml runs it on every sync, in-sync ones included).
+# The cleanup is cosmetic: a leftover HostEndpoint only clutters the list, so it should not turn an
+# otherwise successful sync red. A Calico API that is still down after a few retries only warns, and
+# whatever is left over goes on the next sync, which runs this again (sync-resources.yaml runs it on
+# every sync, in-sync ones included). The node read below is the one exception and does fail the sync.
 - name: Read the Calico HostEndpoints
   ansible.builtin.shell:
     cmd: |
@@ -28,7 +28,7 @@
   register: master_hostendpoints
   changed_when: false
   failed_when: false
-  retries: 10
+  retries: 4
   delay: 15
   until: master_hostendpoints.rc == 0
   # read-only; without this a sync-resources --check run fails here, as this play runs every sync
@@ -42,8 +42,8 @@
       Stale HostEndpoints will be cleaned up on a later sync.
   when: master_hostendpoints.rc != 0
 
-# Unlike the read above this one stays fatal: an empty answer would make every HostEndpoint look
-# orphaned, so it fails rather than guess.
+# Unlike the other calls this one stays fatal: an empty or unreadable node list would make every
+# HostEndpoint look orphaned, so it fails rather than guess, and keeps the longer retries for that reason.
 - name: Read the cluster's nodes
   ansible.builtin.shell:
     cmd: |
@@ -85,7 +85,7 @@
     executable: /bin/bash
   loop: "{{ master_hostendpoints_to_delete | default([]) }}"
   register: master_hostendpoints_deleted
-  retries: 10
+  retries: 4
   delay: 15
   until: master_hostendpoints_deleted.rc == 0
   changed_when: "'deleted' in master_hostendpoints_deleted.stdout"

@@ -33,9 +33,10 @@
 
 # Its own play, not part of sync.yaml, so it also runs when the cluster is already in sync (that
 # play ends early): HostEndpoints left by an earlier sync are swept on the very next run. It costs
-# two read-only calls to the local apiserver and never fails the sync. nodes_to_remove_list is set
-# by sync.yaml on every host of that play, the orchestrator included, and is undefined when the
-# play ended early -- nothing is being removed then.
+# two read-only calls to the local apiserver. A Calico API that is down only warns; only an
+# unreadable or empty node list fails the sync. nodes_to_remove_list is set by sync.yaml on every
+# host of that play, the orchestrator included, and is undefined when the play ended early --
+# nothing is being removed then.
 - name: Delete HostEndpoints of removed loadbalancer nodes
   hosts: orchestrator
   become: true
