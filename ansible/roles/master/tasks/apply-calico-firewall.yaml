@@ -1,16 +1,9 @@
 
-# Wait for Calico API server and pods to be available. Pinned to the local apiserver like the
-# applies below (see the comment there), and each wait is kept short so a persistently broken
-# Calico fails this file well inside AutoGlue's 60-minute run limit. No --request-timeout on the
-# pod wait: it is a watch, and --timeout is what bounds it.
+# Wait for Calico API server and pods to be available
 - name: Wait for Calico API Server pods to be ready
-  ansible.builtin.shell:
-    cmd: |
-      set -euo pipefail
-      export KUBECONFIG=/etc/kubernetes/admin.conf
-      kubectl --server https://127.0.0.1:6443 \
-        wait --for=condition=Ready pods -l k8s-app=calico-apiserver -n calico-system --timeout=60s
-    executable: /bin/bash
+  ansible.builtin.shell: |
+    export KUBECONFIG=/etc/kubernetes/admin.conf
+    kubectl --server https://127.0.0.1:6443 wait --for=condition=Ready pods -l k8s-app=calico-apiserver -n calico-system --timeout=300s
   register: calico_apiserver_wait
   retries: 10
   delay: 30
@@ -19,13 +12,9 @@
   tags: install_calico
 
 - name: Wait for Calico v3 API Service to be available
-  ansible.builtin.shell:
-    cmd: |
-      set -euo pipefail
-      export KUBECONFIG=/etc/kubernetes/admin.conf
-      kubectl --server https://127.0.0.1:6443 --request-timeout=30s \
-        get apiservice v3.projectcalico.org -o jsonpath='{.status.conditions[?(@.type=="Available")].status}'
-    executable: /bin/bash
+  ansible.builtin.shell: |
+    export KUBECONFIG=/etc/kubernetes/admin.conf
+    kubectl --server https://127.0.0.1:6443 get apiservice v3.projectcalico.org -o jsonpath='{.status.conditions[?(@.type=="Available")].status}'
   register: calico_api_status
   until: calico_api_status.stdout == "True"
   retries: 30
@@ -45,11 +34,10 @@
 # that takes the request proxies it to the calico-apiserver pods over the pod network. Through the
 # kubeconfig's ctrp name that can be a master that has just joined and has no pod network yet
 # (calico-node still initialising), which answers ServiceUnavailable. This play runs on the
-# orchestrator, whose apiserver is networked.
+# orchestrator, whose apiserver is networked. The waits above do not cover that path.
 #
-# Still retried: the waits above check the calico-apiserver pods and the APIService's status, not
-# a request through the aggregated path, and right after a master joins or leaves that path can
-# blip with ServiceUnavailable or Timeout for a minute or two. Apply is safe to repeat.
+# Still retried: right after a master joins or leaves, the aggregated path can blip with
+# ServiceUnavailable or Timeout for a minute or two, and apply is safe to repeat.
 - name: Apply Calico Configs(Felix and Global Network Policy)
   ansible.builtin.shell:
     cmd: |
