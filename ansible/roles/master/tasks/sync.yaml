@@ -74,3 +74,11 @@
   vars:
     nodes_to_remove: "{{ nodes_to_remove_list }}"
   when: nodes_to_remove_list | length > 0 and inventory_hostname == orchestrator_node
+
+# Runs on every sync that changed something, not only a scale-down, so HostEndpoints left by
+# earlier syncs are swept too.
+- name: Delete HostEndpoints of removed loadbalancer nodes
+  ansible.builtin.include_tasks: delete-hostendpoints.yaml
+  vars:
+    nodes_to_remove: "{{ nodes_to_remove_list }}"
+  when: inventory_hostname == orchestrator_node

@@ -1,0 +1,56 @@
+---
+# apply-calico-firewall.yaml creates one HostEndpoint per loadbalancer node, named after the node
+# (calico-hostendpoint.yaml.j2: metadata.name == spec.node), and nothing ever deleted them, so a
+# scaled-down loadbalancer node left its HostEndpoint behind.
+#
+# Only HostEndpoints that follow that naming are considered, so anything not made by GlueKube
+# (a hand-made HostEndpoint, Calico's own "<node>-auto-hep") is never touched. Of those, one goes
+# when its node is being removed by this sync, or when its node is no longer in the cluster at all
+# -- the second catches the ones left by earlier syncs, which no later nodes_to_remove names again
+# because the node is already gone. The first is still needed: until the VM is destroyed its
+# kubelet can re-register the node that scale-down just deleted.
+
+- name: Read the Calico HostEndpoints
+  ansible.builtin.shell: |
+    export KUBECONFIG=/etc/kubernetes/admin.conf
+    kubectl get hostendpoints.projectcalico.org -o json
+  register: master_hostendpoints
+  changed_when: false
+  retries: 10
+  delay: 15
+  until: master_hostendpoints.rc == 0
+
+# An empty answer would make every HostEndpoint look orphaned, so this fails rather than guess.
+- name: Read the cluster's nodes
+  ansible.builtin.shell: |
+    export KUBECONFIG=/etc/kubernetes/admin.conf
+    kubectl get nodes --no-headers -o custom-columns=':metadata.name'
+  register: master_hostendpoint_cluster_nodes
+  changed_when: false
+  retries: 3
+  delay: 10
+  until: master_hostendpoint_cluster_nodes.rc == 0
+  failed_when: >-
+    master_hostendpoint_cluster_nodes.rc != 0 or
+    master_hostendpoint_cluster_nodes.stdout_lines | select | list | length == 0
+
+# A HostEndpoint stays only if its node is in the cluster and not being removed by this sync.
+- name: Select the HostEndpoints of nodes that are gone
+  ansible.builtin.set_fact:
+    master_hostendpoints_to_delete: >-
+      {{ master_hostendpoints.stdout | from_json
+         | community.general.json_query('items[?metadata.name == spec.node].metadata.name')
+         | reject('in', master_hostendpoint_nodes_to_keep)
+         | sort | list }}
+  vars:
+    master_hostendpoint_nodes_to_keep: >-
+      {{ master_hostendpoint_cluster_nodes.stdout_lines | map('trim') | select
+         | difference(nodes_to_remove | default([])) }}
+
+- name: Delete the HostEndpoints of nodes that are gone
+  ansible.builtin.shell: |
+    export KUBECONFIG=/etc/kubernetes/admin.conf
+    kubectl delete hostendpoints.projectcalico.org {{ item }} --ignore-not-found
+  loop: "{{ master_hostendpoints_to_delete }}"
+  register: master_hostendpoints_deleted
+  changed_when: "'deleted' in master_hostendpoints_deleted.stdout"
