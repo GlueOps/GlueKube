@@ -31,7 +31,7 @@
   retries: 10
   delay: 15
   until: master_hostendpoints.rc == 0
-  # read-only, so run it under --check too and show what would be deleted
+  # read-only; without this a sync-resources --check run fails here, as this play runs every sync
   check_mode: false
 
 - name: Warn that the HostEndpoints could not be read
@@ -62,55 +62,43 @@
   check_mode: false
   when: master_hostendpoints.rc == 0
 
-- name: Clean up the HostEndpoints of nodes that are gone
+# A HostEndpoint stays only if its node is in the cluster and not being removed by this sync.
+- name: Select the HostEndpoints of nodes that are gone
+  ansible.builtin.set_fact:
+    master_hostendpoints_to_delete: >-
+      {{ master_hostendpoints.stdout | from_json
+         | community.general.json_query('items[?metadata.name == spec.node].metadata.name')
+         | reject('in', master_hostendpoint_nodes_to_keep)
+         | sort | list }}
+  vars:
+    master_hostendpoint_nodes_to_keep: >-
+      {{ master_hostendpoint_cluster_nodes.stdout_lines | map('trim') | select
+         | difference(master_hostendpoint_nodes_to_remove | default([])) }}
   when: master_hostendpoints.rc == 0
-  block:
-    # A HostEndpoint stays only if its node is in the cluster and not being removed by this sync.
-    - name: Select the HostEndpoints of nodes that are gone
-      ansible.builtin.set_fact:
-        master_hostendpoints_to_delete: >-
-          {{ master_hostendpoints.stdout | from_json
-             | community.general.json_query('items[?metadata.name == spec.node].metadata.name')
-             | reject('in', master_hostendpoint_nodes_to_keep)
-             | sort | list }}
-      vars:
-        master_hostendpoint_nodes_to_keep: >-
-          {{ master_hostendpoint_cluster_nodes.stdout_lines | map('trim') | select
-             | difference(master_hostendpoint_nodes_to_remove | default([])) }}
 
-    - name: Report the HostEndpoints of nodes that are gone
-      ansible.builtin.debug:
-        msg: "HostEndpoints to delete: {{ master_hostendpoints_to_delete }}"
+- name: Delete the HostEndpoints of nodes that are gone
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      export KUBECONFIG=/etc/kubernetes/admin.conf
+      kubectl --server https://127.0.0.1:6443 --request-timeout=30s delete hostendpoints.projectcalico.org {{ item }} --ignore-not-found
+    executable: /bin/bash
+  loop: "{{ master_hostendpoints_to_delete | default([]) }}"
+  register: master_hostendpoints_deleted
+  retries: 10
+  delay: 15
+  until: master_hostendpoints_deleted.rc == 0
+  changed_when: "'deleted' in master_hostendpoints_deleted.stdout"
+  failed_when: false
 
-    - name: Delete the HostEndpoints of nodes that are gone
-      ansible.builtin.shell:
-        cmd: |
-          set -euo pipefail
-          export KUBECONFIG=/etc/kubernetes/admin.conf
-          kubectl --server https://127.0.0.1:6443 --request-timeout=30s delete hostendpoints.projectcalico.org {{ item }} --ignore-not-found
-        executable: /bin/bash
-      loop: "{{ master_hostendpoints_to_delete }}"
-      register: master_hostendpoints_deleted
-      retries: 10
-      delay: 15
-      until: master_hostendpoints_deleted.rc == 0
-      changed_when: "'deleted' in master_hostendpoints_deleted.stdout"
-      failed_when: false
-
-    - name: Warn about HostEndpoints that could not be deleted
-      ansible.builtin.debug:
-        msg: >-
-          Could not delete HostEndpoint {{ item.item }}:
-          {{ item.stderr | default('') | trim }}.
-          It will be cleaned up on a later sync.
-      loop: "{{ master_hostendpoints_deleted.results | default([]) | selectattr('rc', 'defined') | rejectattr('rc', 'equalto', 0) | list }}"
-      loop_control:
-        label: "{{ item.item }}"
-
-  # an answer that is not the JSON list expected is treated like no answer
-  rescue:
-    - name: Warn that the HostEndpoints could not be parsed
-      ansible.builtin.debug:
-        msg: >-
-          Skipping HostEndpoint cleanup: {{ ansible_failed_result.msg | default('') }}.
-          Stale HostEndpoints will be cleaned up on a later sync.
+- name: Warn that some HostEndpoints could not be deleted
+  ansible.builtin.debug:
+    msg: >-
+      Could not delete HostEndpoints {{ master_hostendpoint_delete_failures }};
+      they will be cleaned up on a later sync.
+  vars:
+    master_hostendpoint_delete_failures: >-
+      {{ master_hostendpoints_deleted.results | default([])
+         | selectattr('rc', 'defined') | rejectattr('rc', 'equalto', 0)
+         | map(attribute='item') | list }}
+  when: master_hostendpoint_delete_failures | length > 0
