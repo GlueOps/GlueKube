@@ -116,6 +116,12 @@
   become: true
   serial: 1
   tasks: 
+    # make upgrade-control-plane passes upgrade_workers=false: the workers stay on their current
+    # kubelet and are replaced through `make sync` instead of being drained here.
+    - name: Skip the worker upgrade when only the control plane is being upgraded
+      ansible.builtin.meta: end_play
+      when: not (upgrade_workers | default(true) | bool)
+
     - name: Select the orchestrator node
       ansible.builtin.include_role:
         name: master
