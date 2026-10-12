@@ -1,12 +1,13 @@
 ---
-# Builds the nodes upgrade-control-plane upgrades and scales up, plus the bastion that drives them.
+# Builds the nodes upgrade-control-plane upgrades and replaces a worker in, plus the bastion that drives them.
 #
 # The provisioning is shared -- see ../common/proxmox-provision.yml. What is specific to this
-# scenario is the two inventories below. Every node is BUILT here, but worker-node-2 only joins
+# scenario is the three inventories below. Every node is BUILT here, but worker-node-2 only joins
 # after the control plane is upgraded:
 #
 #   inventory/hosts.yaml          three masters, worker-node-1 -- the cluster converge builds
 #   inventory/add-worker.yaml     three masters, worker-node-1 and worker-node-2
+#   inventory/remove-old-worker.yaml  three masters, worker-node-2
 #
 # Three masters rather than one so the "Upgrade Master Nodes Sequentially" play has nodes to work
 # on besides the orchestrator.
@@ -91,5 +92,6 @@
       loop:
         - {file: hosts.yaml, workers_from: 0, workers_to: 1}
         - {file: add-worker.yaml, workers_from: 0, workers_to: 2}
+        - {file: remove-old-worker.yaml, workers_from: 1, workers_to: 2}
       loop_control:
         label: "{{ item.file }} (workers {{ item.workers_from + 1 }}-{{ item.workers_to }})"

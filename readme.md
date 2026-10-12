@@ -153,8 +153,8 @@ these have no default and no other producer — an unset one becomes an empty st
 much later as a broken cluster rather than an error:
 
 ```bash
-export kubernetes_version=v1.34.5
-export kubernetes_package_version=1.34.5-1.1
+export kubernetes_version=v1.34.11
+export kubernetes_package_version=1.34.11-1.1
 export loadbalancer_apiserver=ctrp.example.com   # the apiserver DNS record
 export domain_name=example.com                   # kube-api.$domain_name goes in the certSANs,
                                                  # and the dex issuer is built from it
@@ -457,7 +457,7 @@ masters. adding a worker silently did nothing. that is fixed — the election no
 
 for clusters whose workers run jobs that can't be drained. it runs `playbooks/upgrade-cluster.yaml`
 with `upgrade_workers=false`: preflight, the orchestrator and every master are upgraded exactly as
-under `upgrade-cluster`, and the worker play ends before touching any worker. the old workers keep
+under `upgrade-cluster`, and the worker play matches no hosts, so no worker is even connected to. the old workers keep
 their kubelet, which the apiserver accepts up to three minors behind it.
 
 the workers are then replaced rather than upgraded:

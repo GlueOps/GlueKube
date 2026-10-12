@@ -123,9 +123,10 @@ jobs:
 
       - name: Set up environment variables
         env:
-          KUBERNETES_VERSION: 'v1.35.9'
-          KUBERNETES_PACKAGE_VERSION: '1.35.9-1.1'
-          # upgrade-control-plane builds at this and upgrades to the pin above: one minor below it.
+          KUBERNETES_VERSION: 'v1.34.11'
+          KUBERNETES_PACKAGE_VERSION: '1.34.11-1.1'
+          # upgrade-control-plane builds at this and upgrades to the pin its own step sets: one
+          # minor below that one, not the shared pin above.
           UPGRADE_FROM_KUBERNETES_VERSION: 'v1.34.12'
           UPGRADE_FROM_KUBERNETES_PACKAGE_VERSION: '1.34.12-1.1'
           LOADBALANCER_APISERVER: 'ctrp.qa-gluekube-molecule.kepler1638b.onglueops.rocks'
@@ -313,6 +314,12 @@ jobs:
       - name: Run Molecule Test - upgrade-control-plane
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.scenario == 'all' || github.event.inputs.scenario == 'upgrade-control-plane'
         working-directory: ansible
+        env:
+          # The upgrade target, for this scenario only: the other scenarios stay on the shared
+          # pin. Step env wins over $GITHUB_ENV, and bastion-prepare.yml writes the bastion's .env
+          # from this environment, so the upgrade and the sync both run at it.
+          kubernetes_version: 'v1.35.9'
+          kubernetes_package_version: '1.35.9-1.1'
         run: |
           mkdir -p molecule/upgrade-control-plane/keys/
           ssh-keygen -t rsa -b 4096 -f molecule/upgrade-control-plane/keys/vm_node -N "" -C "molecule-test-key"

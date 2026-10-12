@@ -20,7 +20,7 @@ provisioner:
 scenario:
   name: upgrade-control-plane
   # `make upgrade-control-plane` end to end: build at the previous minor, upgrade the masters
-  # only, then join a new worker through `sync`. Every step past `create` runs on the
+  # only, join a new worker through `sync`, then cordon the old one and remove it through `sync`. Every step past `create` runs on the
   # bastion -- see the wrappers in remote/, and converge.yml and verify.yml.
   test_sequence:
     - create
@@ -34,6 +34,10 @@ scenario:
     - side_effect remote/add_worker_node.yml
     # The worker joined after the upgrade comes up on the new version.
     - side_effect remote/test_new_worker_version.yml
+    # The readme's removal half: cordon worker-node-1, drop it from hosts.yaml, `make sync`.
+    # Also scale-down's drain and delete against an old-version node from the new client.
+    - side_effect remote/remove_old_worker.yml
+    - side_effect remote/test_old_worker_removed.yml
     - verify
     - destroy
 

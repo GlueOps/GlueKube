@@ -130,8 +130,8 @@ step's output is fetched back to, is gitignored.
 - create a `.env` file with the following data:
 
 ```
-export kubernetes_version=v1.34.5
-export kubernetes_package_version=1.34.5-1.1
+export kubernetes_version=v1.34.11
+export kubernetes_package_version=1.34.11-1.1
 export loadbalancer_apiserver="ctrp.<your-domain>"
 export domain_name="<your-domain>"
 export CERTIFICATE_KEY=""
@@ -369,10 +369,14 @@ in `common/bastion-run.yml` as `bastion_run_assert_no_changes`, which reads the 
 `upgrade-control-plane` tests `make upgrade-control-plane` end to end. `converge` builds the
 cluster one minor **below** the `.env` pin: `$UPGRADE_FROM_KUBERNETES_VERSION` and
 `$UPGRADE_FROM_KUBERNETES_PACKAGE_VERSION` (default `v1.33.13` / `1.33.13-1.1`) are passed as `-e`
-to that one run, and `create.yml` refuses a pair that isn't exactly one minor apart. Then
+to that one run, and `create.yml` refuses a pair that isn't exactly one minor apart. In CI this
+scenario's step sets its own pin (v1.34.12 → v1.35.9), so the shared pin the other scenarios use
+doesn't move. Then
 `upgrade-cluster.yaml -e upgrade_workers=false` runs at the pin. The test asserts that the
 apiserver and every master are on the pin while `worker-node-1` still runs the old kubelet.
-Finally `worker-node-2` joins through `sync` and must come up Ready on the pin.
+Then `worker-node-2` joins through `sync` and must come up Ready on the pin. Finally
+`worker-node-1` is cordoned and removed through `sync` (scale-down drains and deletes an old-version
+node from the upgraded client), after which it must be gone and every remaining node on the pin.
 
 ## DNS lifecycle
 
