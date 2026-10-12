@@ -1,6 +1,7 @@
 ## Which scenario runs where
 
-All three scenarios — `test-cluster`, `scale-cluster` and `rotate-master-nodes` — build on
+All four scenarios — `test-cluster`, `scale-cluster`, `rotate-master-nodes` and
+`upgrade-control-plane` — build on
 **Proxmox**. They share one implementation in `molecule/common/`:
 
 | file | what it is |
@@ -87,6 +88,7 @@ plus a per-scenario offset, masters at `base+1..`, workers at `base+11..`:
 | `test-cluster` | 0 | 9000 | 9001–9003 | 9011–9013 |
 | `scale-cluster` | 100 | 9100 | 9101–9103 | 9111–9113 |
 | `rotate-master-nodes` | 200 | 9200 | 9201–9209 | 9211 |
+| `upgrade-control-plane` | 300 | 9300 | 9301–9303 | 9311–9312 |
 
 The offsets keep the three scenarios from colliding with **each other**. They do nothing about a
 second run of the *same* scenario: create is idempotent on the vmid, so it does not fail, it
@@ -246,7 +248,7 @@ export PROXMOX_SNIPPET_DIR="/var/lib/vz/snippets"
 export PROXMOX_TAGS="qa-gluekube-molecule"
 
 # the bottom of the vmid range. each scenario adds its own offset on top -- see the table under
-# "Do not run a scenario while CI is running one". everything from base to base+211 must be free,
+# "Do not run a scenario while CI is running one". everything from base to base+312 must be free,
 # and must not be VMs you care about: destroy.yml deletes them.
 export PROXMOX_VMID_BASE="9000"
 
@@ -363,6 +365,14 @@ passes just as happily on an empty cluster.
 run, and the task that launches the remote playbook is always changed. The equivalent check lives
 in `common/bastion-run.yml` as `bastion_run_assert_no_changes`, which reads the remote
 `PLAY RECAP`. Set it on a second converge to restore the regression guard for #439.
+
+`upgrade-control-plane` tests `make upgrade-control-plane` end to end. `converge` builds the
+cluster one minor **below** the `.env` pin: `$UPGRADE_FROM_KUBERNETES_VERSION` and
+`$UPGRADE_FROM_KUBERNETES_PACKAGE_VERSION` (default `v1.33.13` / `1.33.13-1.1`) are passed as `-e`
+to that one run, and `create.yml` refuses a pair that isn't exactly one minor apart. Then
+`upgrade-cluster.yaml -e upgrade_workers=false` runs at the pin. The test asserts that the
+apiserver and every master are on the pin while `worker-node-1` still runs the old kubelet.
+Finally `worker-node-2` joins through `sync` and must come up Ready on the pin.
 
 ## DNS lifecycle
 

@@ -116,8 +116,8 @@ the SSH hop matters for a reason beyond convenience: the playbooks reach the nod
 workstation outside it will fail at `ansible all -m ping` no matter what `hosts.yaml` says.
 
 If you want throwaway VMs to try things on, the molecule scenarios under `ansible/molecule/`
-build and destroy a whole cluster. All three — `test-cluster`, `scale-cluster` and
-`rotate-master-nodes` — build on Proxmox, and each builds a **bastion** alongside the nodes and
+build and destroy a whole cluster. All four — `test-cluster`, `scale-cluster`,
+`rotate-master-nodes` and `upgrade-control-plane` — build on Proxmox, and each builds a **bastion** alongside the nodes and
 runs the playbooks from it, for the reason in the paragraph above: the nodes have private
 addresses only. See [ansible/molecule/readme.md](ansible/molecule/readme.md).
 

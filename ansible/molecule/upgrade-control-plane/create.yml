@@ -1,0 +1,95 @@
+---
+# Builds the nodes upgrade-control-plane upgrades and scales up, plus the bastion that drives them.
+#
+# The provisioning is shared -- see ../common/proxmox-provision.yml. What is specific to this
+# scenario is the two inventories below. Every node is BUILT here, but worker-node-2 only joins
+# after the control plane is upgraded:
+#
+#   inventory/hosts.yaml          three masters, worker-node-1 -- the cluster converge builds
+#   inventory/add-worker.yaml     three masters, worker-node-1 and worker-node-2
+#
+# Three masters rather than one so the "Upgrade Master Nodes Sequentially" play has nodes to work
+# on besides the orchestrator.
+- name: Create Proxmox VMs
+  hosts: localhost
+  gather_facts: true
+  vars_files:
+    - ../common/proxmox-vars.yml
+    - ../common/bastion-vars.yml
+    - versions.yml
+  vars:
+    num_master_nodes: 3
+    num_worker_nodes: 2
+    public_key: "{{ lookup('file', 'keys/vm_node.pub') }}"
+    # vmids 9300 (bastion), 9301-9303 (masters) and 9311-9312 (workers) -- disjoint from
+    # test-cluster's 9000+, scale-cluster's 9100+ and rotate-master-nodes' 9200+. destroy.yml must
+    # carry the same offset.
+    pve_vmid_offset: 300
+    snippet_prefix: molecule-upgrade-control-plane
+
+  pre_tasks:
+    # Checked before a single VM exists: a pair kubeadm can't upgrade between would only fail
+    # after converge, forty minutes in.
+    - name: The two versions are one minor apart
+      ansible.builtin.assert:
+        that:
+          - upgrade_from_kubernetes_version is match('^v[0-9]+\.[0-9]+\.[0-9]+$')
+          - upgrade_to_kubernetes_version is match('^v[0-9]+\.[0-9]+\.[0-9]+$')
+          - upgrade_from_kubernetes_package_version.startswith(upgrade_from_minor[1:] ~ '.')
+          - (upgrade_to_minor.split('.')[1] | int) == (upgrade_from_minor.split('.')[1] | int) + 1
+        fail_msg: >-
+          upgrade-control-plane builds at {{ upgrade_from_kubernetes_version }}
+          ({{ upgrade_from_kubernetes_package_version }}) and upgrades to the .env pin,
+          {{ upgrade_to_kubernetes_version }}. kubeadm upgrades one minor at a time, so set
+          UPGRADE_FROM_KUBERNETES_VERSION and UPGRADE_FROM_KUBERNETES_PACKAGE_VERSION to a
+          release one minor below the pin.
+        quiet: true
+      vars:
+        upgrade_from_minor: "{{ upgrade_from_kubernetes_version | regex_replace('^(v[0-9]+\\.[0-9]+).*$', '\\1') }}"
+        upgrade_to_minor: "{{ upgrade_to_kubernetes_version | regex_replace('^(v[0-9]+\\.[0-9]+).*$', '\\1') }}"
+
+  tasks:
+    - name: Build the nodes on Proxmox
+      ansible.builtin.import_tasks: ../common/proxmox-provision.yml
+
+    - name: Create the DNS domain and ctrp record
+      ansible.builtin.import_tasks: ../common/autoglue-create.yml
+      vars:
+        autoglue_record_values: >-
+          {{ master_nodes_list | map(attribute='name') | map('extract', node_addresses) | list }}
+
+    - name: Store the bastion inventory
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../common/bastion-hosts.yaml.j2"
+        dest: "./inventory/hosts.yaml"
+        mode: "0644"
+
+    - name: Pick up the bastion
+      ansible.builtin.meta: refresh_inventory
+
+- name: Make the bastion a GlueKube controller
+  hosts: bastion
+  gather_facts: true
+  vars_files:
+    - ../common/bastion-vars.yml
+  tasks:
+    - name: Install the toolchain and ship the code
+      ansible.builtin.import_tasks: ../common/bastion-prepare.yml
+
+    # After the ship, never before: bastion-prepare.yml unpacks the whole ansible/ tree over this
+    # directory, so anything templated first would be overwritten by the untar.
+    - name: Store the cluster inventories on the bastion
+      ansible.builtin.template:
+        src: "{{ bastion_local_ansible_root }}/molecule/common/hosts.yaml.j2"
+        dest: "{{ bastion_scenario_dir }}/inventory/{{ item.file }}"
+        owner: cluster
+        group: cluster
+        mode: "0644"
+      vars:
+        inv_masters: "{{ master_nodes_list }}"
+        inv_workers: "{{ worker_nodes_list[item.workers_from:item.workers_to] }}"
+      loop:
+        - {file: hosts.yaml, workers_from: 0, workers_to: 1}
+        - {file: add-worker.yaml, workers_from: 0, workers_to: 2}
+      loop_control:
+        label: "{{ item.file }} (workers {{ item.workers_from + 1 }}-{{ item.workers_to }})"
