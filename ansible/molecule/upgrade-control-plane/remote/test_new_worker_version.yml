@@ -1,0 +1,19 @@
+---
+# Molecule runs this; the bastion runs tests/test_new_worker_version.yaml.
+#
+# The cluster nodes have no address molecule can reach, so every step that touches them is a
+# thin play against the bastion that shells out to ansible-playbook there.
+- name: Check the new worker's version from the bastion
+  hosts: bastion
+  gather_facts: false
+  vars_files:
+    - ../../common/bastion-vars.yml
+    - ../versions.yml
+  tasks:
+    - name: Run tests/test_new_worker_version.yaml on the bastion
+      ansible.builtin.include_tasks: ../../common/bastion-run.yml
+      vars:
+        bastion_run_name: test_new_worker_version
+        bastion_run_playbook: tests/test_new_worker_version.yaml
+        bastion_run_extra_args: "{{ upgrade_test_extra_args }}"
+        bastion_run_timeout: 900

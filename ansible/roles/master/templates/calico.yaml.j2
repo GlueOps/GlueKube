@@ -49,6 +49,43 @@ installation:
             value: glueops-platform
             effect: NoSchedule
 
+  # Keep typha off the load-balancer nodes: it is hostNetwork, so there it listens on the
+  # public interface too. Tolerations are left to the operator (tolerate-all), which already
+  # covers the platform taint and the not-ready taint nodes carry until the CNI is up.
+  typhaDeployment:
+    spec:
+      template:
+        spec:
+          affinity:
+            nodeAffinity:
+              # "DoesNotExist" rather than a nodeSelector on glueops.dev/role: unlabelled nodes
+              # satisfy it, so it cannot deadlock the bootstrap (see the note above).
+              requiredDuringSchedulingIgnoredDuringExecution:
+                nodeSelectorTerms:
+                  - matchExpressions:
+                    - key: use-as-loadbalancer
+                      operator: DoesNotExist
+              preferredDuringSchedulingIgnoredDuringExecution:
+              - weight: 100
+                preference:
+                  matchExpressions:
+                  - key: glueops.dev/role
+                    operator: In
+                    values:
+                    - glueops-platform
+            # setting affinity replaces the operator's own, so restate its typha spread
+            podAntiAffinity:
+              preferredDuringSchedulingIgnoredDuringExecution:
+              - weight: 1
+                podAffinityTerm:
+                  labelSelector:
+                    matchExpressions:
+                    - key: k8s-app
+                      operator: In
+                      values:
+                      - calico-typha
+                  topologyKey: topology.kubernetes.io/zone
+
 apiServer:
   enabled: true
 

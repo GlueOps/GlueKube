@@ -1,0 +1,32 @@
+---
+# After the second sync the old worker is gone and every node left runs the new kubelet: the
+# cluster is fully on the new version without a worker ever being upgraded in place.
+- name: Verify the old worker is gone and the cluster is on one version
+  hosts: masters[0]
+  become: true
+  gather_facts: false
+  vars:
+    old_worker: worker-node-1
+    kubelet_versions: "{{ dict(node_versions.stdout_lines | map('split')) }}"
+  tasks:
+    - name: Read every node's kubelet version
+      ansible.builtin.shell: |
+        export KUBECONFIG=/etc/kubernetes/admin.conf
+        kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name} {.status.nodeInfo.kubeletVersion}{"\n"}{end}'
+      register: node_versions
+      changed_when: false
+
+    - name: The old worker left the cluster
+      ansible.builtin.assert:
+        that: old_worker not in kubelet_versions
+        fail_msg: "{{ old_worker }} is still a node: {{ node_versions.stdout_lines }}"
+        quiet: true
+
+    # Non-empty first: an empty node list would pass the version check below on no evidence.
+    - name: Every remaining node runs the new kubelet
+      ansible.builtin.assert:
+        that:
+          - kubelet_versions | length > 0
+          - kubelet_versions.values() | reject('equalto', upgrade_to_kubernetes_version) | list | length == 0
+        fail_msg: "Expected every node on {{ upgrade_to_kubernetes_version }}: {{ node_versions.stdout_lines }}"
+        quiet: true

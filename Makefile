@@ -23,7 +23,8 @@
 export
 
 .PHONY: ping-servers check-connectivity setup sync rotate-master-nodes label-taint-nodes \
-        rotate-certs-with-config upgrade-cluster migrate-local-path-provisioner \
+        rotate-certs-with-config upgrade-cluster upgrade-control-plane \
+        migrate-local-path-provisioner \
         migrate-calico-registry
 
 ping-servers: .env
@@ -54,6 +55,13 @@ rotate-certs-with-config: .env
 upgrade-cluster: .env
 	@echo "Upgrading the GlueKube cluster..."
 	ansible-playbook -i ansible/inventory/hosts.yaml ansible/playbooks/upgrade-cluster.yaml
+
+# Upgrades the masters only and leaves every worker running its current kubelet, for clusters whose
+# workloads can't be drained: join new workers with `make sync`, cordon the old ones by hand, and
+# remove them with `make sync` once they're empty.
+upgrade-control-plane: .env
+	@echo "Upgrading the GlueKube control plane only..."
+	ansible-playbook -i ansible/inventory/hosts.yaml ansible/playbooks/upgrade-cluster.yaml -e upgrade_workers=false
 
 # One-off, once per cluster built before local-path-provisioner moved to its Helm chart. Not part
 # of any other target: it deletes and recreates the running provisioner, so it stays something an

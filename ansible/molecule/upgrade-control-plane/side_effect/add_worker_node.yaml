@@ -1,0 +1,18 @@
+---
+# `make sync` after adding a worker to hosts.yaml. The .env pin is now the upgraded
+# version, so the new node is prepared and joins at it.
+- name: Add the new worker to the inventory
+  hosts: localhost
+  tasks:
+    - name: Swap in the inventory with both workers
+      ansible.builtin.copy:
+        src: ../inventory/add-worker.yaml
+        dest: ../inventory/hosts.yaml
+        mode: "0644"
+        force: true
+
+    - name: Refresh inventory to ensure new instances exist
+      ansible.builtin.meta: refresh_inventory
+
+- name: Sync Cluster
+  ansible.builtin.import_playbook: ../../../playbooks/sync-resources.yaml

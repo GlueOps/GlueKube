@@ -116,8 +116,8 @@ the SSH hop matters for a reason beyond convenience: the playbooks reach the nod
 workstation outside it will fail at `ansible all -m ping` no matter what `hosts.yaml` says.
 
 If you want throwaway VMs to try things on, the molecule scenarios under `ansible/molecule/`
-build and destroy a whole cluster. All three — `test-cluster`, `scale-cluster` and
-`rotate-master-nodes` — build on Proxmox, and each builds a **bastion** alongside the nodes and
+build and destroy a whole cluster. All four — `test-cluster`, `scale-cluster`,
+`rotate-master-nodes` and `upgrade-control-plane` — build on Proxmox, and each builds a **bastion** alongside the nodes and
 runs the playbooks from it, for the reason in the paragraph above: the nodes have private
 addresses only. See [ansible/molecule/readme.md](ansible/molecule/readme.md).
 
@@ -153,8 +153,8 @@ these have no default and no other producer — an unset one becomes an empty st
 much later as a broken cluster rather than an error:
 
 ```bash
-export kubernetes_version=v1.34.5
-export kubernetes_package_version=1.34.5-1.1
+export kubernetes_version=v1.34.11
+export kubernetes_package_version=1.34.11-1.1
 export loadbalancer_apiserver=ctrp.example.com   # the apiserver DNS record
 export domain_name=example.com                   # kube-api.$domain_name goes in the certSANs,
                                                  # and the dex issuer is built from it
@@ -224,6 +224,8 @@ What that means operationally:
 # Scale Nodes
 
 we treat the `hosts.yaml` as the source of truth to our resources, so to **scale up or down** the nodes, it will be enough to modify the hosts.yaml file
+
+Control-plane nodes are removed from etcd one at a time, after a health check, and transient etcd errors are retried. A node is deleted from Kubernetes only after its etcd member is gone, so if a removal still fails, sync fails and keeps that node; fix what the error points at (usually etcd health) and rerun sync to retry it.
 
 example, the current `hosts.yaml` is:
 
@@ -347,7 +349,10 @@ selects the nodes labelled `use-as-loadbalancer`, reads the public interface eac
 creates a Calico `HostEndpoint` per node for that interface, and applies the two policies in
 `calico-global-network-policy.yaml.j2`: a `preDNAT` ingress policy allowing TCP 80 and 443 and
 ICMP and denying everything else, plus an allow-all egress policy. the ingress half is what lets
-ingress take public traffic on nodes that are deliberately exposed.
+ingress take public traffic on nodes that are deliberately exposed. the same file sets
+`failsafeInboundHostPorts` on the `default` `FelixConfiguration` to UDP 68 only: Felix accepts its
+failsafe ports ahead of every policy, and the defaults (TCP 22, 5473, 6443, ...) would otherwise
+stay open on the public interface no matter what the deny rule says.
 
 read the egress half carefully before relying on either: despite the name
 (`allow-all-egress-lb-nodes`) it carries `selector: all()`, so it is **not** scoped to
@@ -448,6 +453,29 @@ masters. adding a worker silently did nothing. that is fixed — the election no
   and `sources.list` emptied (see [Apt sources](#apt-sources)), so any custom mirror or backports
   line in them is dropped.
 
+## running `upgrade-control-plane`
+
+for clusters whose workers run jobs that can't be drained. it runs `playbooks/upgrade-cluster.yaml`
+with `upgrade_workers=false`: preflight, the orchestrator and every master are upgraded exactly as
+under `upgrade-cluster`, and the worker play matches no hosts, so no worker is even connected to. the old workers keep
+their kubelet, which the apiserver accepts up to three minors behind it.
+
+the workers are then replaced rather than upgraded:
+
+1. bump `kubernetes_version` and `kubernetes_package_version` in `.env`, then
+   `make upgrade-control-plane`.
+2. add the new workers to `hosts.yaml` and `make sync`. they are prepared with the
+   `kubernetes_package_version` from `.env`, so they join at the new version.
+3. `kubectl cordon` the old workers by hand. running pods stay where they are; new ones land on the
+   new workers.
+4. once an old worker has nothing left but DaemonSet pods, remove it from `hosts.yaml` and
+   `make sync`.
+
+- **the masters are still drained.** this only spares workloads on the workers.
+- **only remove workers that are already empty.** `sync`'s scale-down runs `kubectl drain`, which
+  evicts whatever is still running there.
+- **pods on local-path volumes can't move.** their PV is pinned to the old node and goes with it.
+
 ## running `rotate-certs-with-config`
 
 **this playbook re-uploads the cluster's `kubeadm-config` ConfigMap on every run.** it sets
@@ -537,6 +565,7 @@ first on the starred ones and stops the run if a variable or the inventory shape
 | add or remove a worker or a master | edit `hosts.yaml`, then `playbooks/sync-resources.yaml` | ★ |
 | replace every master with new machines | `playbooks/rotate-master-nodes.yaml` | |
 | upgrade Kubernetes | bump the versions in `.env`, then `playbooks/upgrade-cluster.yaml` | ★ |
+| upgrade the masters only and replace the workers instead of draining them | bump the versions in `.env`, then `make upgrade-control-plane` — see [running `upgrade-control-plane`](#running-upgrade-control-plane) | |
 | rotate the control-plane certificates | `playbooks/rotate-certs-with-config.yaml` | |
 | re-apply labels and taints only | `playbooks/setup-cluster.yaml --tags label_nodes` | |
 | move local-path-provisioner to Helm — once per pre-existing cluster; until you do, `setup-cluster.yaml` skips the release and says so | `playbooks/migrate-local-path-provisioner.yaml` | |

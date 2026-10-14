@@ -1,0 +1,88 @@
+# Removes one node: its etcd member if it has one, THEN its Kubernetes Node, so a failed etcd step
+# keeps the Node and the next sync retries it. Used by scale-down.yaml and remove-single-master.yaml.
+# Inputs: master_etcd_node; master_etcd_exec_host (default: current host);
+# master_etcd_health_endpoints (optional, default --cluster).
+#
+# Raft takes one membership change at a time, so a removal right after another can fail transiently
+# on a healthy etcd; the health gate and the retry (master_etcd_transient_errors) cover that.
+
+# A fact, not a var: callers pass "{{ execution_host }}", which would otherwise loop.
+- name: Pick the host that runs etcdctl for {{ master_etcd_node }}
+  ansible.builtin.set_fact:
+    master_etcd_run_on: "{{ master_etcd_exec_host | default(inventory_hostname) }}"
+
+- name: Read the etcd member list before removing the member of {{ master_etcd_node }}
+  ansible.builtin.shell: |
+    export ETCDCTL_API=3
+    etcdctl \
+      --command-timeout=30s --dial-timeout=10s \
+      --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+      --cert=/etc/kubernetes/pki/etcd/server.crt \
+      --key=/etc/kubernetes/pki/etcd/server.key \
+      member list
+  delegate_to: "{{ master_etcd_run_on }}"
+  register: master_etcd_current_list
+  changed_when: false
+  retries: 3
+  delay: 10
+  until: master_etcd_current_list.rc == 0
+
+# Anchored so master-node-3 doesn't match master-node-30; a worker matches nothing (#475).
+- name: Find the etcd member of {{ master_etcd_node }}
+  ansible.builtin.set_fact:
+    master_etcd_current_member_id: >-
+      {{ master_etcd_current_list.stdout_lines
+         | select('search', '(?<![\w-])' ~ master_etcd_node ~ '(?![\w-])')
+         | map('regex_replace', '^([^,]*),.*$', '\1')
+         | map('trim') | list | first | default('') }}
+
+- name: Wait for etcd to be healthy before removing the member of {{ master_etcd_node }}
+  ansible.builtin.include_tasks: master-node-rotation/check-etcd-health.yaml
+  vars:
+    health_check_stage: "before removing {{ master_etcd_node }}"
+    execution_host: "{{ master_etcd_run_on }}"
+    master_etcd_health_retries: 10
+  when: master_etcd_current_member_id | length > 0
+
+# Only transient errors are retried; "member not found" means an earlier attempt went through.
+- name: Remove the etcd member of {{ master_etcd_node }}
+  ansible.builtin.shell: |
+    export ETCDCTL_API=3
+    etcdctl \
+      --command-timeout=30s --dial-timeout=10s \
+      --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+      --cert=/etc/kubernetes/pki/etcd/server.crt \
+      --key=/etc/kubernetes/pki/etcd/server.key \
+      member remove {{ master_etcd_current_member_id }}
+  delegate_to: "{{ master_etcd_run_on }}"
+  register: master_etcd_member_removed
+  changed_when: master_etcd_member_removed.rc == 0
+  retries: 5
+  delay: 15
+  until: >-
+    master_etcd_member_removed.rc == 0 or
+    'member not found' in master_etcd_member_removed.stderr | default('') or
+    master_etcd_member_removed.stderr | default('') is not search(master_etcd_transient_errors)
+  failed_when: >-
+    master_etcd_member_removed.rc != 0 and
+    'member not found' not in master_etcd_member_removed.stderr | default('')
+  when: master_etcd_current_member_id | length > 0
+
+- name: Record the handled etcd member of {{ master_etcd_node }}
+  ansible.builtin.set_fact:
+    master_etcd_removed_nodes: "{{ master_etcd_removed_nodes | default([]) + [master_etcd_node] }}"
+  when: master_etcd_current_member_id | length > 0
+
+# Pinned to the local apiserver (see remove-single-master.yaml): the removed node's apiserver would
+# accept the delete but never commit it. master_etcd_run_on is never the node being removed.
+- name: Delete node {{ master_etcd_node }}
+  ansible.builtin.shell: |
+    export KUBECONFIG=/etc/kubernetes/admin.conf
+    kubectl --server https://127.0.0.1:6443 --request-timeout=30s \
+      delete node {{ master_etcd_node }} --ignore-not-found
+  delegate_to: "{{ master_etcd_run_on }}"
+  register: master_node_deleted
+  changed_when: "'deleted' in master_node_deleted.stdout"
+  retries: 5
+  delay: 10
+  until: master_node_deleted.rc == 0

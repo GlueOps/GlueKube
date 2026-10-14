@@ -1,0 +1,124 @@
+---
+# After upgrade-cluster.yaml -e upgrade_workers=false: the apiserver and every master are on the
+# new version, etcd is healthy on every member and on the etcd kubeadm ships for that version, and
+# the existing worker still runs the old kubelet -- the worker play matched no hosts.
+- name: Verify only the control plane was upgraded
+  hosts: masters[0]
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Read the apiserver version
+      ansible.builtin.shell: |
+        export KUBECONFIG=/etc/kubernetes/admin.conf
+        kubectl version -o json | jq -r '.serverVersion.gitVersion'
+      register: server_version
+      changed_when: false
+
+    - name: Read every node's kubelet version
+      ansible.builtin.shell: |
+        export KUBECONFIG=/etc/kubernetes/admin.conf
+        kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name} {.status.nodeInfo.kubeletVersion}{"\n"}{end}'
+      register: node_versions
+      changed_when: false
+
+    - name: The apiserver runs the new version
+      ansible.builtin.assert:
+        that: server_version.stdout == upgrade_to_kubernetes_version
+        fail_msg: "apiserver is {{ server_version.stdout }}, expected {{ upgrade_to_kubernetes_version }}"
+        quiet: true
+
+    - name: Every master runs the new kubelet
+      ansible.builtin.assert:
+        that: kubelet_versions[item] | default('missing') == upgrade_to_kubernetes_version
+        fail_msg: >-
+          {{ item }} runs kubelet {{ kubelet_versions[item] | default('missing') }}, expected
+          {{ upgrade_to_kubernetes_version }}
+        quiet: true
+      loop: "{{ groups['masters'] }}"
+
+    - name: The existing worker kept the old kubelet
+      ansible.builtin.assert:
+        that: kubelet_versions[old_worker] | default('missing') == upgrade_from_kubernetes_version
+        fail_msg: >-
+          {{ old_worker }} runs kubelet {{ kubelet_versions[old_worker] | default('missing') }},
+          expected {{ upgrade_from_kubernetes_version }}: upgrade_workers=false should leave the
+          workers alone
+        quiet: true
+
+    # Member count alone passes on a stopped or crash-looping member, or one still on the old
+    # image. Every member must answer healthy, from all three masters' endpoints.
+    #
+    # endpoint health exits non-zero while any member is unhealthy, so rc is not fatal here: the
+    # until condition is the check, and it gives a member whose static pod was just recreated by
+    # the kubelet restart time to come back.
+    - name: Read etcd endpoint health across the cluster
+      ansible.builtin.shell: |
+        ETCDCTL_API=3 etcdctl endpoint health --cluster -w json \
+          --dial-timeout=5s --command-timeout=10s \
+          --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+          --cert=/etc/kubernetes/pki/etcd/server.crt \
+          --key=/etc/kubernetes/pki/etcd/server.key
+      register: etcd_health
+      changed_when: false
+      failed_when: false
+      retries: 12
+      delay: 10
+      until: >-
+        etcd_health.stdout | default('', true) | length > 0 and
+        etcd_health.stdout | from_json | length == groups['masters'] | length and
+        etcd_health.stdout | from_json | rejectattr('health', 'equalto', true) | list | length == 0
+
+    # Non-empty and one entry per master first: an empty list would pass "all healthy" on no
+    # evidence.
+    - name: Every etcd member is healthy
+      ansible.builtin.assert:
+        that:
+          - etcd_health.rc == 0
+          - etcd_health_endpoints | length == groups['masters'] | length
+          - etcd_health_endpoints | rejectattr('health', 'equalto', true) | list | length == 0
+        fail_msg: >-
+          Expected {{ groups['masters'] | length }} healthy etcd endpoints, got
+          {{ etcd_health.stdout | default('no output', true) }} {{ etcd_health.stderr | default('') }}
+        quiet: true
+      vars:
+        etcd_health_endpoints: "{{ etcd_health.stdout | default('[]', true) | from_json }}"
+
+    # The etcd kubeadm ships for the target, from the kubeadm that was just upgraded on this node.
+    # --kubernetes-version keeps it offline: it renders the image list, it doesn't fetch anything.
+    # The tag is "<etcd version>-<build>", e.g. 3.6.5-0; etcd reports only the first part.
+    - name: Read the etcd version kubeadm ships for {{ upgrade_to_kubernetes_version }}
+      ansible.builtin.shell: |
+        set -o pipefail
+        kubeadm config images list --kubernetes-version {{ upgrade_to_kubernetes_version | quote }} \
+          | grep -E '/etcd:' | sed -E 's/^.*:([0-9]+\.[0-9]+\.[0-9]+).*$/\1/'
+      args:
+        executable: /bin/bash
+      register: kubeadm_etcd_version
+      changed_when: false
+
+    - name: Read every etcd member's status
+      ansible.builtin.shell: |
+        ETCDCTL_API=3 etcdctl endpoint status --cluster -w json \
+          --dial-timeout=5s --command-timeout=10s \
+          --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+          --cert=/etc/kubernetes/pki/etcd/server.crt \
+          --key=/etc/kubernetes/pki/etcd/server.key
+      register: etcd_status
+      changed_when: false
+
+    - name: Every etcd member runs the version kubeadm ships for the target
+      ansible.builtin.assert:
+        that:
+          - kubeadm_etcd_version.stdout is match('^[0-9]+\.[0-9]+\.[0-9]+$')
+          - etcd_member_versions | length == groups['masters'] | length
+          - etcd_member_versions | reject('equalto', kubeadm_etcd_version.stdout) | list | length == 0
+        fail_msg: >-
+          Expected {{ groups['masters'] | length }} etcd members on {{ kubeadm_etcd_version.stdout }}
+          (kubeadm's etcd for {{ upgrade_to_kubernetes_version }}), got
+          {{ etcd_status.stdout | from_json | map(attribute='Endpoint') | zip(etcd_member_versions) | list }}
+        quiet: true
+      vars:
+        etcd_member_versions: "{{ etcd_status.stdout | from_json | map(attribute='Status') | map(attribute='version') | list }}"
+  vars:
+    old_worker: worker-node-1
+    kubelet_versions: "{{ dict(node_versions.stdout_lines | map('split')) }}"

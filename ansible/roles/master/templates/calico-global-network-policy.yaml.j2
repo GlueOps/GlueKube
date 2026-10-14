@@ -30,3 +30,19 @@ spec:
     - Egress
   egress:
     - action: Allow
+
+---
+
+# Felix's default inbound failsafes (tcp 22, 179, 2379, 2380, 5473, 6443, 6666, 6667, udp 68) are
+# accepted on a HostEndpoint BEFORE any policy, so the Deny above never sees them and they are
+# open on the load-balancer nodes' public interface. Nothing public needs them: ssh goes through
+# the bastion on the private interface, which has no HostEndpoint. Only the DHCP client port
+# stays, because the public interface gets its address by DHCP.
+apiVersion: projectcalico.org/v3
+kind: FelixConfiguration
+metadata:
+  name: default
+spec:
+  failsafeInboundHostPorts:
+    - protocol: UDP
+      port: 68

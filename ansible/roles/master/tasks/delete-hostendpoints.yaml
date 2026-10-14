@@ -1,0 +1,92 @@
+---
+# Deletes GlueKube's HostEndpoints (metadata.name == spec.node, see calico-hostendpoint.yaml.j2)
+# whose node is being removed by this sync or is no longer in the cluster. The first check is
+# needed because a removed node's kubelet can re-register it until the VM is destroyed.
+#
+# Calls are pinned to the local apiserver: via ctrp, the aggregated projectcalico.org API can
+# answer ServiceUnavailable right after a scale-down or join.
+#
+# Leftovers are only clutter, so Calico API failures warn and are retried on the next sync.
+- name: Read the Calico HostEndpoints
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      export KUBECONFIG=/etc/kubernetes/admin.conf
+      kubectl --server https://127.0.0.1:6443 --request-timeout=30s get hostendpoints.projectcalico.org -o json
+    executable: /bin/bash
+  register: master_hostendpoints
+  changed_when: false
+  failed_when: false
+  retries: 4
+  delay: 15
+  until: master_hostendpoints.rc == 0
+  # read-only; lets sync-resources --check pass
+  check_mode: false
+
+- name: Warn that the HostEndpoints could not be read
+  ansible.builtin.debug:
+    msg: >-
+      Skipping HostEndpoint cleanup, the Calico API did not answer:
+      {{ master_hostendpoints.stderr | default('') | trim }}.
+      Stale HostEndpoints will be cleaned up on a later sync.
+  when: master_hostendpoints.rc != 0
+
+# Fatal, unlike the other calls: an empty or unreadable node list would make every HostEndpoint
+# look orphaned.
+- name: Read the cluster's nodes
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      export KUBECONFIG=/etc/kubernetes/admin.conf
+      kubectl --server https://127.0.0.1:6443 --request-timeout=30s get nodes --no-headers -o custom-columns=':metadata.name'
+    executable: /bin/bash
+  register: master_hostendpoint_cluster_nodes
+  changed_when: false
+  retries: 10
+  delay: 15
+  until: master_hostendpoint_cluster_nodes.rc == 0
+  failed_when: >-
+    master_hostendpoint_cluster_nodes.rc != 0 or
+    master_hostendpoint_cluster_nodes.stdout_lines | select | list | length == 0
+  check_mode: false
+  when: master_hostendpoints.rc == 0
+
+- name: Select the HostEndpoints of nodes that are gone
+  ansible.builtin.set_fact:
+    master_hostendpoints_to_delete: >-
+      {{ master_hostendpoints.stdout | from_json
+         | community.general.json_query('items[?metadata.name == spec.node].metadata.name')
+         | reject('in', master_hostendpoint_nodes_to_keep)
+         | sort | list }}
+  vars:
+    master_hostendpoint_nodes_to_keep: >-
+      {{ master_hostendpoint_cluster_nodes.stdout_lines | map('trim') | select
+         | difference(master_hostendpoint_nodes_to_remove | default([])) }}
+  when: master_hostendpoints.rc == 0
+
+- name: Delete the HostEndpoints of nodes that are gone
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      export KUBECONFIG=/etc/kubernetes/admin.conf
+      kubectl --server https://127.0.0.1:6443 --request-timeout=30s delete hostendpoints.projectcalico.org {{ item }} --ignore-not-found
+    executable: /bin/bash
+  loop: "{{ master_hostendpoints_to_delete | default([]) }}"
+  register: master_hostendpoints_deleted
+  retries: 4
+  delay: 15
+  until: master_hostendpoints_deleted.rc == 0
+  changed_when: "'deleted' in master_hostendpoints_deleted.stdout"
+  failed_when: false
+
+- name: Warn that some HostEndpoints could not be deleted
+  ansible.builtin.debug:
+    msg: >-
+      Could not delete HostEndpoints {{ master_hostendpoint_delete_failures }};
+      they will be cleaned up on a later sync.
+  vars:
+    master_hostendpoint_delete_failures: >-
+      {{ master_hostendpoints_deleted.results | default([])
+         | selectattr('rc', 'defined') | rejectattr('rc', 'equalto', 0)
+         | map(attribute='item') | list }}
+  when: master_hostendpoint_delete_failures | length > 0

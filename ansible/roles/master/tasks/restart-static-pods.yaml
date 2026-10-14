@@ -1,0 +1,131 @@
+# Restarts a group of control-plane static pods on this node by parking their manifests and
+# restoring them, then waits for this node's apiserver. Included from rotate-certs-with-config.yaml,
+# which explains why the pods are grouped the way they are.
+#
+# Expects:
+#   master_static_pods      manifest names without `.yaml`, restarted together
+#   master_etcd_extra_args  optional: the rendered ClusterConfiguration's etcd.local.extraArgs,
+#                           written into the parked etcd manifest before it is restored
+#
+# Parking the manifests is the one window where this node has no control plane. Two things make
+# that window recoverable by re-running rather than a brick that fails at the same task every time
+# (#426):
+#
+#   block/always -- the restore runs even when the wait exhausts its retries or the block is
+#   interrupted, so the pods come back on the way out instead of staying down until someone moves
+#   the files back by hand.
+#
+#   creates:/removes: on the park -- a recovery run finds the manifest already in /opt and walks
+#   past the task, instead of failing on an `mv` whose source no longer exists and never reaching
+#   the restore.
+
+- name: Ensure temporary manifest directory exists
+  ansible.builtin.file:
+    path: /opt/kubernetes/manifests
+    state: directory
+    mode: "0755"
+  tags: rotate-certs-with-config
+
+- name: Park, update and restore the static pod manifests
+  tags: rotate-certs-with-config
+  block:
+    - name: Park the static pod manifests
+      ansible.builtin.command: "mv /etc/kubernetes/manifests/{{ item }}.yaml /opt/kubernetes/manifests/{{ item }}.yaml"
+      args:
+        creates: "/opt/kubernetes/manifests/{{ item }}.yaml"
+        removes: "/etc/kubernetes/manifests/{{ item }}.yaml"
+      loop: "{{ master_static_pods }}"
+
+    # Nothing else ever rewrites etcd.yaml: `kubeadm certs renew` leaves manifests alone and the
+    # apiserver is the only component regenerated from --config above, so a changed etcd flag --
+    # listen-metrics-urls moving to 0.0.0.0 -- used to reach the kubeadm-config ConfigMap and never
+    # the running etcd. `kubeadm init phase etcd local` is not the answer: it writes a manifest for a
+    # brand-new single-member cluster and drops this member's --initial-cluster. Only the flags the
+    # template sets are touched; kubeadm writes one `- --name=value` per line under `- etcd`.
+    - name: Apply the rendered etcd flags to the parked etcd manifest
+      ansible.builtin.lineinfile:
+        path: /opt/kubernetes/manifests/etcd.yaml
+        regexp: '^\s*- --{{ item.name | regex_escape }}='
+        line: "    - --{{ item.name }}={{ item.value }}"
+        insertafter: '^\s*- etcd$'
+      loop: "{{ master_etcd_extra_args | default([]) }}"
+      loop_control:
+        label: "{{ item.name }}={{ item.value }}"
+      when: "'etcd' in master_static_pods"
+
+    - name: Wait until the parked containers are removed
+      ansible.builtin.shell: |
+        set -o pipefail
+        ctr -n k8s.io containers list | grep {{ item }} || true
+      args:
+        executable: /bin/bash
+      register: master_parked_container
+      retries: 18
+      delay: 5
+      until: master_parked_container.stdout == ""
+      changed_when: false
+      loop: "{{ master_static_pods }}"
+  always:
+    # No condition beyond the file existing: `always` is what makes it run after a failed wait,
+    # and `removes` is what keeps it a no-op when the park itself was skipped.
+    - name: Restore the static pod manifests
+      ansible.builtin.command: "mv /opt/kubernetes/manifests/{{ item }}.yaml /etc/kubernetes/manifests/{{ item }}.yaml"
+      args:
+        removes: "/opt/kubernetes/manifests/{{ item }}.yaml"
+      loop: "{{ master_static_pods }}"
+
+# The kubelet can sit on a restored manifest for minutes when the API calls it makes for the static
+# pod hang, which is what left kube-scheduler missing for ~5.5 minutes on a single-master cluster.
+# The grouping in rotate-certs-with-config.yaml removes that cause; this is the backstop. A kubelet
+# restart re-reads the manifest directory and starts whatever is missing, and it does not touch
+# running containers.
+- name: Wait for the static pod containers to be recreated
+  tags: rotate-certs-with-config
+  block:
+    - name: Verify the static pod containers are recreated
+      ansible.builtin.shell: |
+        set -o pipefail
+        ctr -n k8s.io containers list | grep {{ item }} || true
+      args:
+        executable: /bin/bash
+      register: master_recreated_container
+      retries: 24
+      delay: 5
+      until: master_recreated_container.stdout != ""
+      changed_when: false
+      loop: "{{ master_static_pods }}"
+  rescue:
+    - name: Restart the kubelet so it picks up the restored manifests
+      ansible.builtin.systemd:
+        name: kubelet
+        state: restarted
+
+    - name: Verify the static pod containers are recreated after the kubelet restart
+      ansible.builtin.shell: |
+        set -o pipefail
+        ctr -n k8s.io containers list | grep {{ item }} || true
+      args:
+        executable: /bin/bash
+      register: master_recreated_container_after_kubelet_restart
+      retries: 24
+      delay: 5
+      until: master_recreated_container_after_kubelet_restart.stdout != ""
+      changed_when: false
+      loop: "{{ master_static_pods }}"
+
+# Pinned to the LOCAL apiserver (#486). admin.conf's server is the ctrp record, and this playbook is
+# `serial: 1`, so every other master is healthy while this one restarts. Unpinned, a sibling answered
+# on the first try and the play moved on to the NEXT master with this one still down, which is how a
+# serial rotation loses more than one control plane at a time. --request-timeout bounds each try: a
+# wedged apiserver that accepts the connection and never answers would otherwise hang here forever.
+# 300s rather than 180s: after an etcd restart the apiserver can crash-loop once while etcd comes up.
+- name: Wait for the API server to become ready
+  ansible.builtin.shell: |
+    export KUBECONFIG=/etc/kubernetes/admin.conf
+    kubectl --server https://127.0.0.1:6443 --request-timeout=10s get --raw='/readyz'
+  register: master_apiserver_ready
+  retries: 30
+  delay: 10
+  until: master_apiserver_ready.rc == 0 and ('ok' in master_apiserver_ready.stdout)
+  changed_when: false
+  tags: rotate-certs-with-config

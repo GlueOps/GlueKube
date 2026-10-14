@@ -1,0 +1,6 @@
+---
+kubernetes_version: "{{ lookup('env', 'kubernetes_version') }}"
+kubernetes_package_version: "{{ lookup('env', 'kubernetes_package_version') }}" # the upgrade target -- 1.35.9-1.1 in CI, set on this scenario's own step. converge builds one minor below it, at UPGRADE_FROM_* (see ../../versions.yml)
+loadbalancer_apiserver: "{{ lookup('env', 'loadbalancer_apiserver') }}"
+domain_name: "{{ lookup('env', 'domain_name') }}"
+

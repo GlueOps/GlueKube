@@ -1,0 +1,22 @@
+---
+# Molecule runs this; the bastion runs ../../playbooks/setup-cluster.yaml.
+#
+# Unlike the other scenarios, the cluster is built one minor BELOW the .env pin: the -e overrides
+# win over inventory/group_vars/all.yaml's lookup('env', ...), for this run only. Every later
+# step runs at the .env pin, which is what makes the next one an upgrade.
+- name: Converge the cluster from the bastion
+  hosts: bastion
+  gather_facts: false
+  vars_files:
+    - ../common/bastion-vars.yml
+    - versions.yml
+  tasks:
+    - name: Run ../../playbooks/setup-cluster.yaml on the bastion
+      ansible.builtin.include_tasks: ../common/bastion-run.yml
+      vars:
+        bastion_run_name: converge
+        bastion_run_playbook: ../../playbooks/setup-cluster.yaml
+        bastion_run_extra_args: >-
+          -e kubernetes_version={{ upgrade_from_kubernetes_version | quote }}
+          -e kubernetes_package_version={{ upgrade_from_kubernetes_package_version | quote }}
+        bastion_run_timeout: 7200

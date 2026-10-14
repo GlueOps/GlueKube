@@ -8,6 +8,9 @@
 #   bastion_run_name       short label; names the log file on both sides
 #   bastion_run_timeout    seconds before the remote run is killed. Default 2h.
 #   bastion_run_assert_no_changes  fail unless the remote PLAY RECAP reports changed=0 everywhere
+#   bastion_run_extra_args  appended to the ansible-playbook command line as-is, e.g.
+#                          "-e upgrade_workers=false". Literals only: it lands in a shell command,
+#                          and anything secret belongs in the root-only .env instead.
 #
 # The remote playbook, its inventory and its group_vars are the ones shipped by
 # common/bastion-prepare.yml, unmodified. Nothing under playbooks/, roles/, side_effect/ or tests/
@@ -53,7 +56,7 @@
           . {{ bastion_env_file }}
           set +a
           ansible-playbook -i inventory/hosts.yaml {{ bastion_run_playbook }} \
-            > {{ bastion_run_log }} 2>&1
+            {{ bastion_run_extra_args | default('') }} > {{ bastion_run_log }} 2>&1
           echo $? > {{ bastion_run_rc_file }}
         chdir: "{{ bastion_scenario_dir }}"
         executable: /bin/bash

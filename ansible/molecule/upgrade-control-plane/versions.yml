@@ -1,0 +1,24 @@
+---
+# The two Kubernetes versions this scenario moves between. Loaded with vars_files by create.yml,
+# converge.yml and every remote/ wrapper, all of which run on the molecule controller -- the
+# bastion only ever sees these as -e arguments on the command line.
+#
+# The cluster is BUILT at the "from" version (converge.yml overrides the .env pin with -e), and
+# everything after that -- upgrade-cluster.yaml, and the sync that joins the new worker --
+# runs at the .env pin, the same as an operator's `make upgrade-control-plane` and `make sync`.
+#
+# In CI the .env pin for this scenario is NOT the shared one: its workflow step sets
+# kubernetes_version itself (v1.35.9, from v1.34.12), so the other scenarios keep theirs.
+#
+# "from" must be exactly one minor below the .env pin: kubeadm upgrades one minor at a time.
+# create.yml asserts that before it builds anything.
+upgrade_from_kubernetes_version: >-
+  {{ lookup('env', 'UPGRADE_FROM_KUBERNETES_VERSION') | default('v1.33.13', true) }}
+upgrade_from_kubernetes_package_version: >-
+  {{ lookup('env', 'UPGRADE_FROM_KUBERNETES_PACKAGE_VERSION') | default('1.33.13-1.1', true) }}
+upgrade_to_kubernetes_version: "{{ lookup('env', 'kubernetes_version') }}"
+
+# Passed to every tests/ run, which compare node versions against both ends.
+upgrade_test_extra_args: >-
+  -e upgrade_from_kubernetes_version={{ upgrade_from_kubernetes_version | quote }}
+  -e upgrade_to_kubernetes_version={{ upgrade_to_kubernetes_version | quote }}

@@ -1,0 +1,19 @@
+---
+# Tears down what create.yml built. The node counts and vmid offset must match create.yml's.
+- name: Destroy Proxmox VMs
+  hosts: localhost
+  gather_facts: true
+  vars_files:
+    - ../common/proxmox-vars.yml
+  vars:
+    num_master_nodes: 3
+    num_worker_nodes: 2
+    pve_vmid_offset: 300
+    snippet_prefix: molecule-upgrade-control-plane
+
+  tasks:
+    - name: Remove the nodes from Proxmox
+      ansible.builtin.import_tasks: ../common/proxmox-teardown.yml
+
+    - name: Remove the DNS domain and ctrp record
+      ansible.builtin.import_tasks: ../common/autoglue-destroy.yml

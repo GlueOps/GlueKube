@@ -1,0 +1,22 @@
+---
+# Molecule runs this; the bastion runs ../../playbooks/upgrade-cluster.yaml.
+#
+# The cluster nodes have no address molecule can reach, so every step that touches them is a
+# thin play against the bastion that shells out to ansible-playbook there.
+#
+# The .env pin is the version upgraded TO; converge.yml built the cluster one minor below it.
+- name: Upgrade the control plane only from the bastion
+  hosts: bastion
+  gather_facts: false
+  vars_files:
+    - ../../common/bastion-vars.yml
+    - ../versions.yml
+  tasks:
+    - name: Run ../../playbooks/upgrade-cluster.yaml on the bastion
+      ansible.builtin.include_tasks: ../../common/bastion-run.yml
+      vars:
+        bastion_run_name: upgrade_control_plane
+        bastion_run_playbook: ../../playbooks/upgrade-cluster.yaml
+        # Exactly what `make upgrade-control-plane` runs.
+        bastion_run_extra_args: "-e upgrade_workers=false"
+        bastion_run_timeout: 7200

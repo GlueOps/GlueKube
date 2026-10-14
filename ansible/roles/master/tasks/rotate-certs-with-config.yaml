@@ -164,153 +164,41 @@
   ansible.builtin.command: "kubeadm init phase control-plane apiserver --config {{ kubeadm_config_file }}"
   tags: rotate-certs-with-config
 
-- name: Ensure temporary manifest directory exists
-  ansible.builtin.file:
-    path: /opt/kubernetes/manifests
-    state: directory
-    mode: "0755"
-  tags: rotate-certs-with-config
-
-# Parking the manifest is what restarts the apiserver, and it is the one window in this playbook
-# where a host has no control plane. Two things make that window recoverable by re-running rather
-# than a brick that fails at the same task every time (#426):
+# Restart order. etcd goes down WITH the apiserver, not after it, and controller-manager and
+# scheduler only once the apiserver is ready again.
 #
-#   block/always -- the restore runs even when the wait below exhausts its retries or the block is
-#   interrupted, so the apiserver comes back on the way out instead of staying down until someone
-#   moves the file back by hand on every master.
+# The kubelet makes API calls for a static pod (the mirror pod) before it recreates it. With etcd
+# parked on its own, the local apiserver stays up with no etcd behind it, and those calls hang until
+# they time out instead of failing. That is how kube-scheduler stayed missing for ~5.5 minutes on a
+# single-master cluster and failed the run: it had been parked alongside etcd, and the kubelet only
+# recreated it once the apiserver restarted and the calls failed fast with "connection refused".
+# With 3 masters the same hang hits every call ctrp routes to this node.
 #
-#   creates:/removes: on the park -- a recovery run finds the manifest already in /opt and walks
-#   past the task, instead of failing on an `mv` whose source no longer exists and never reaching
-#   the restore. Either guard alone is enough; both are stated because they describe the two
-#   different states a half-finished run can leave behind.
-- name: Restart the kube-apiserver static pod onto the new certificate
-  tags: rotate-certs-with-config
-  block:
-    - name: Force restart of kube-apiserver static pod
-      ansible.builtin.command: "mv /etc/kubernetes/manifests/kube-apiserver.yaml /opt/kubernetes/manifests/kube-apiserver.yaml"
-      args:
-        creates: /opt/kubernetes/manifests/kube-apiserver.yaml
-        removes: /etc/kubernetes/manifests/kube-apiserver.yaml
-
-    - name: Wait until old kube-apiserver container is removed
-      ansible.builtin.shell: |
-        set -o pipefail
-        ctr -n k8s.io containers list | grep kube-apiserver || true
-      args:
-        executable: /bin/bash
-      register: old_apiserver_container
-      retries: 18
-      delay: 5
-      until: old_apiserver_container.stdout == ""
-      changed_when: false
-  always:
-    # No condition on this task beyond the file existing: `always` is what makes it run after a
-    # failed wait, and `removes` is what keeps it a no-op when the park itself was skipped.
-    - name: Restore kube-apiserver manifest to recreate static pod
-      ansible.builtin.command: "mv /opt/kubernetes/manifests/kube-apiserver.yaml /etc/kubernetes/manifests/kube-apiserver.yaml"
-      args:
-        removes: /opt/kubernetes/manifests/kube-apiserver.yaml
-
-- name: Verify kube-apiserver static pod container is recreated
-  ansible.builtin.shell: |
-    set -o pipefail
-    ctr -n k8s.io containers list | grep kube-apiserver || true
-  args:
-    executable: /bin/bash
-  register: new_apiserver_container
-  retries: 18
-  delay: 5
-  until: new_apiserver_container.stdout != ""
-  changed_when: false
-  tags: rotate-certs-with-config
-
-# Pinned to the LOCAL apiserver (#486). admin.conf's server is the cluster-wide
-# controlPlaneEndpoint -- the multi-value ctrp record -- and this playbook is `serial: 1`, so every
-# other master is still healthy while this one's apiserver is being recreated. Unpinned, this wait
-# was answered by a sibling on the first try and returned `ok` whether or not the node it is
-# guarding had come back: the play then moved on to park the NEXT master's apiserver with the
-# previous one still down, which is how a serial rotation loses more than one control plane at a
-# time. 127.0.0.1 is the node whose manifest was just restored, which is the question being asked.
-# --request-timeout also bounds it: kubectl defaults to no timeout, so a wedged apiserver that
-# accepts the connection and never answers hung here forever instead of consuming a retry.
-- name: Wait for API server to become ready
-  ansible.builtin.shell: |
-    export KUBECONFIG=/etc/kubernetes/admin.conf
-    kubectl --server https://127.0.0.1:6443 --request-timeout=10s get --raw='/readyz'
-  register: apiserver_ready
-  retries: 18
-  delay: 10
-  until: apiserver_ready.rc == 0 and ('ok' in apiserver_ready.stdout)
-  changed_when: false
-  tags: rotate-certs-with-config
-
-# The apiserver picked up its new certificate by being parked above; the other three static pods
-# hold the certs `certs renew all` just replaced -- etcd/server and etcd/peer on etcd,
-# controller-manager.conf and scheduler.conf on the other two -- and keep serving the old ones
-# until their containers are recreated. Same park/restore shape as the apiserver, and for the same
-# reason: `always` restores the manifests even if the wait exhausts its retries, and
-# `creates:`/`removes:` make a recovery run walk past a half-finished park instead of failing on an
-# `mv` with no source.
+# Parking the apiserver with etcd means there is never an apiserver that accepts and then hangs:
+# the calls are refused (single master) or answered by a sibling (ctrp). It is also one control-plane
+# outage on this node instead of two. On this `serial: 1` play only one etcd member is down at a
+# time, so a 3-node cluster keeps quorum.
 #
-# Deliberately after the apiserver is confirmed ready, not alongside it. On this `serial: 1` play
-# only one master's etcd member is down at a time, so a 3-node cluster keeps quorum -- but this
-# node's apiserver talks to 127.0.0.1:2379 only, so overlapping the two windows would take the
-# local control plane down twice over rather than once.
-- name: Restart the remaining control-plane static pods onto the renewed certificates
-  tags: rotate-certs-with-config
+# The etcd flags come from the ClusterConfiguration this run rendered and the guard above compared.
+- name: Restart etcd and the apiserver onto the renewed certificates and the rendered etcd flags
+  ansible.builtin.include_tasks: restart-static-pods.yaml
   vars:
-    remaining_static_pods: [etcd, kube-controller-manager, kube-scheduler]
-  block:
-    - name: Park the remaining static pod manifests
-      ansible.builtin.command: "mv /etc/kubernetes/manifests/{{ item }}.yaml /opt/kubernetes/manifests/{{ item }}.yaml"
-      args:
-        creates: "/opt/kubernetes/manifests/{{ item }}.yaml"
-        removes: "/etc/kubernetes/manifests/{{ item }}.yaml"
-      loop: "{{ remaining_static_pods }}"
-
-    - name: Wait until the parked containers are removed
-      ansible.builtin.shell: |
-        set -o pipefail
-        ctr -n k8s.io containers list | grep {{ item }} || true
-      args:
-        executable: /bin/bash
-      register: old_static_pod_container
-      retries: 18
-      delay: 5
-      until: old_static_pod_container.stdout == ""
-      changed_when: false
-      loop: "{{ remaining_static_pods }}"
-  always:
-    - name: Restore the remaining static pod manifests
-      ansible.builtin.command: "mv /opt/kubernetes/manifests/{{ item }}.yaml /etc/kubernetes/manifests/{{ item }}.yaml"
-      args:
-        removes: "/opt/kubernetes/manifests/{{ item }}.yaml"
-      loop: "{{ remaining_static_pods }}"
-
-- name: Verify the remaining static pod containers are recreated
-  ansible.builtin.shell: |
-    set -o pipefail
-    ctr -n k8s.io containers list | grep {{ item }} || true
-  args:
-    executable: /bin/bash
-  register: new_static_pod_container
-  retries: 18
-  delay: 5
-  until: new_static_pod_container.stdout != ""
-  changed_when: false
-  loop: [etcd, kube-controller-manager, kube-scheduler]
+    master_static_pods: [etcd, kube-apiserver]
+    master_etcd_extra_args: >-
+      {{ ((((rendered_kubeadm_config.content | b64decode | from_yaml_all | list)
+             | selectattr('kind', 'defined')
+             | selectattr('kind', 'equalto', 'ClusterConfiguration')
+             | first | default({}, true)).get('etcd', {}) or {}).get('local', {}) or {}).get('extraArgs', [])
+         | default([], true) }}
   tags: rotate-certs-with-config
 
-# Local apiserver and a bounded request, for the same reason as the wait after the park above.
-- name: Wait for the API server to become ready again
-  ansible.builtin.shell: |
-    export KUBECONFIG=/etc/kubernetes/admin.conf
-    kubectl --server https://127.0.0.1:6443 --request-timeout=10s get --raw='/readyz'
-  register: apiserver_ready_after_restart
-  retries: 18
-  delay: 10
-  until: apiserver_ready_after_restart.rc == 0 and ('ok' in apiserver_ready_after_restart.stdout)
-  changed_when: false
+# controller-manager.conf and scheduler.conf were rewritten by `certs renew all`, and both pods keep
+# the old credential until they are recreated. The apiserver is ready by now, so the kubelet's calls
+# for these two pods return straight away.
+- name: Restart the controller-manager and scheduler onto the renewed certificates
+  ansible.builtin.include_tasks: restart-static-pods.yaml
+  vars:
+    master_static_pods: [kube-controller-manager, kube-scheduler]
   tags: rotate-certs-with-config
 
 # `certs renew all` rewrote /etc/kubernetes/admin.conf with a fresh client certificate. Without this

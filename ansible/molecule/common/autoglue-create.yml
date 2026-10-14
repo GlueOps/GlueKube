@@ -15,6 +15,80 @@
 #                            and what every node resolves ctrp to, so it has to match the
 #                            inventory's `ip`.
 
+# A run cancelled after the domain POST never reaches destroy, and its id file is lost with the
+# runner, so the domain stays behind and every later create fails with uniq_org_domain. Runs are
+# serialized and all scenarios use this name, so any domain with it here is a leftover: delete it
+# (records first) before creating a fresh one.
+- name: List the DNS domains via AutoGlue API
+  ansible.builtin.uri:
+    url: "{{ lookup('env', 'AUTOGLUE_BASE_URL') }}/api/v1/dns/domains"
+    method: GET
+    headers:
+      accept: application/json
+      x-org-key: "{{ lookup('env', 'AUTOGLUE_ORG_KEY') }}"
+      x-org-secret: "{{ lookup('env', 'AUTOGLUE_ORG_SECRET') }}"
+    status_code: [200]
+  register: autoglue_domains
+
+- name: Find a leftover domain with this run's name
+  ansible.builtin.set_fact:
+    autoglue_leftover_domain_ids: >-
+      {{ autoglue_domains.json | selectattr('domain_name', 'equalto', lookup('env', 'domain_name'))
+         | map(attribute='id') | list }}
+
+- name: List the leftover domain's records via AutoGlue API
+  ansible.builtin.uri:
+    url: "{{ lookup('env', 'AUTOGLUE_BASE_URL') }}/api/v1/dns/domains/{{ item }}/records"
+    method: GET
+    headers:
+      accept: application/json
+      x-org-key: "{{ lookup('env', 'AUTOGLUE_ORG_KEY') }}"
+      x-org-secret: "{{ lookup('env', 'AUTOGLUE_ORG_SECRET') }}"
+    status_code: [200, 404]
+  loop: "{{ autoglue_leftover_domain_ids }}"
+  register: autoglue_leftover_records
+
+- name: Delete the leftover domain's records via AutoGlue API
+  ansible.builtin.uri:
+    url: "{{ lookup('env', 'AUTOGLUE_BASE_URL') }}/api/v1/dns/records/{{ item }}"
+    method: DELETE
+    headers:
+      accept: application/json
+      x-org-key: "{{ lookup('env', 'AUTOGLUE_ORG_KEY') }}"
+      x-org-secret: "{{ lookup('env', 'AUTOGLUE_ORG_SECRET') }}"
+    status_code: [200, 202, 204, 404]
+  loop: >-
+    {{ autoglue_leftover_records.results | selectattr('json', 'defined') | map(attribute='json')
+       | flatten | map(attribute='id') | list }}
+
+- name: Delete the leftover domain via AutoGlue API
+  ansible.builtin.uri:
+    url: "{{ lookup('env', 'AUTOGLUE_BASE_URL') }}/api/v1/dns/domains/{{ item }}"
+    method: DELETE
+    headers:
+      accept: application/json
+      x-org-key: "{{ lookup('env', 'AUTOGLUE_ORG_KEY') }}"
+      x-org-secret: "{{ lookup('env', 'AUTOGLUE_ORG_SECRET') }}"
+    status_code: [200, 202, 204, 404]
+  loop: "{{ autoglue_leftover_domain_ids }}"
+
+- name: Wait for the leftover domain to be gone
+  ansible.builtin.uri:
+    url: "{{ lookup('env', 'AUTOGLUE_BASE_URL') }}/api/v1/dns/domains"
+    method: GET
+    headers:
+      accept: application/json
+      x-org-key: "{{ lookup('env', 'AUTOGLUE_ORG_KEY') }}"
+      x-org-secret: "{{ lookup('env', 'AUTOGLUE_ORG_SECRET') }}"
+    status_code: [200]
+  register: autoglue_domains_after
+  until: >-
+    autoglue_domains_after.json | selectattr('domain_name', 'equalto', lookup('env', 'domain_name'))
+    | list | length == 0
+  retries: 12
+  delay: 5
+  when: autoglue_leftover_domain_ids | length > 0
+
 - name: Create the DNS domain via AutoGlue API
   ansible.builtin.uri:
     url: "{{ lookup('env', 'AUTOGLUE_BASE_URL') }}/api/v1/dns/domains"
