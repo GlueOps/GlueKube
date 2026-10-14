@@ -1,0 +1,18 @@
+---
+# Molecule runs this; the bastion runs side_effect/remove_old_worker.yaml.
+#
+# The cluster nodes have no address molecule can reach, so every step that touches them is a
+# thin play against the bastion that shells out to ansible-playbook there.
+- name: Cordon and remove the old worker from the bastion
+  hosts: bastion
+  gather_facts: false
+  vars_files:
+    - ../../common/bastion-vars.yml
+    - ../versions.yml
+  tasks:
+    - name: Run side_effect/remove_old_worker.yaml on the bastion
+      ansible.builtin.include_tasks: ../../common/bastion-run.yml
+      vars:
+        bastion_run_name: remove_old_worker
+        bastion_run_playbook: side_effect/remove_old_worker.yaml
+        bastion_run_timeout: 3600

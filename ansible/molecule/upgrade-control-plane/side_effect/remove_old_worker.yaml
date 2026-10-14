@@ -1,0 +1,33 @@
+---
+# The removal half of the procedure: cordon the old worker by hand, take it out of hosts.yaml,
+# and `make sync`. scale-down then drains and deletes a node still on the old kubelet, from the
+# upgraded kubectl.
+- name: Cordon the old worker
+  hosts: masters[0]
+  become: true
+  gather_facts: false
+  vars:
+    old_worker: worker-node-1
+  tasks:
+    - name: Cordon {{ old_worker }}
+      ansible.builtin.shell: |
+        export KUBECONFIG=/etc/kubernetes/admin.conf
+        kubectl cordon {{ old_worker }}
+      register: cordon_result
+      changed_when: "'cordoned' in cordon_result.stdout and 'already' not in cordon_result.stdout"
+
+- name: Remove the old worker from the inventory
+  hosts: localhost
+  tasks:
+    - name: Swap in the inventory without the old worker
+      ansible.builtin.copy:
+        src: ../inventory/remove-old-worker.yaml
+        dest: ../inventory/hosts.yaml
+        mode: "0644"
+        force: true
+
+    - name: Refresh inventory to drop the old worker
+      ansible.builtin.meta: refresh_inventory
+
+- name: Sync Cluster
+  ansible.builtin.import_playbook: ../../../playbooks/sync-resources.yaml

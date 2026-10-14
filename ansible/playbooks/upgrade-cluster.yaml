@@ -112,10 +112,14 @@
 
 
 - name: Upgrade Worker Nodes Sequentially
-  hosts: workers
+  # upgrade_workers=false (make upgrade-control-plane): match no hosts, so this play gathers nothing
+  # and runs nothing -- the workers stay on their current kubelet and are replaced through
+  # `make sync` instead. Gated here rather than by a skip task so --tags can't bypass it and no
+  # worker is connected to at all.
+  hosts: "{{ 'workers' if (upgrade_workers | default(true) | bool) else 'workers:!workers' }}"
   become: true
   serial: 1
-  tasks: 
+  tasks:
     - name: Select the orchestrator node
       ansible.builtin.include_role:
         name: master

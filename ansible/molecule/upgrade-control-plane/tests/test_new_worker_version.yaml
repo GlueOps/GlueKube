@@ -1,0 +1,42 @@
+---
+# The new worker joined through `make sync` with nothing version-specific: it must come up Ready
+# on the new control-plane version while the existing worker stays where it was.
+- name: Verify the new worker joined at the new version
+  hosts: masters[0]
+  become: true
+  gather_facts: false
+  vars:
+    old_worker: worker-node-1
+    new_worker: worker-node-2
+  tasks:
+    - name: Wait for the new worker to report Ready
+      ansible.builtin.shell: |
+        export KUBECONFIG=/etc/kubernetes/admin.conf
+        kubectl get node {{ new_worker }} \
+          -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
+      register: new_worker_ready
+      changed_when: false
+      retries: 12
+      delay: 10
+      until: new_worker_ready.stdout == 'True'
+
+    - name: Read the workers' kubelet versions
+      ansible.builtin.shell: |
+        export KUBECONFIG=/etc/kubernetes/admin.conf
+        kubectl get node {{ item }} -o jsonpath='{.status.nodeInfo.kubeletVersion}'
+      register: worker_versions
+      changed_when: false
+      loop:
+        - "{{ new_worker }}"
+        - "{{ old_worker }}"
+
+    - name: The new worker runs the new kubelet, the old one the old kubelet
+      ansible.builtin.assert:
+        that:
+          - worker_versions.results[0].stdout == upgrade_to_kubernetes_version
+          - worker_versions.results[1].stdout == upgrade_from_kubernetes_version
+        fail_msg: >-
+          {{ new_worker }} runs {{ worker_versions.results[0].stdout }} (expected
+          {{ upgrade_to_kubernetes_version }}), {{ old_worker }} runs
+          {{ worker_versions.results[1].stdout }} (expected {{ upgrade_from_kubernetes_version }})
+        quiet: true
