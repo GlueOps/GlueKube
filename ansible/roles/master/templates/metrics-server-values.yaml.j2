@@ -15,17 +15,16 @@ affinity:
               operator: In
               values:
                 - glueops-platform
-# Kept: the platform nodepool carries a matching NoSchedule taint, and the control-plane
-# tolerations let this schedule during a bootstrap where the masters are still the only nodes.
+# The platform nodepool carries a matching NoSchedule taint. The control-plane taint is deliberately
+# NOT tolerated: with no glueops-platform node (molecule, or a cluster without that pool) the
+# preferred affinity above matches nothing and the scheduler would otherwise pick a master. The
+# helm install does not wait, so on a fresh cluster the pod sits Pending only until the workers join
+# in the next play. A master with its control-plane taint removed in the inventory still qualifies.
 tolerations:
   - effect: NoSchedule
     key: glueops.dev/role
     operator: Equal
     value: glueops-platform
-  - effect: NoSchedule
-    key: node-role.kubernetes.io/control-plane
-  - effect: NoSchedule
-    key: node-role.kubernetes.io/master
 
 defaultArgs:
   - --cert-dir=/tmp
