@@ -2,3 +2,8 @@
 # etcd errors that can clear on their own, so a member removal that hits one is retried.
 # "unhealthy cluster": etcd refuses a removal for ~5s after a membership change.
 master_etcd_transient_errors: 'context deadline exceeded|request timed out|unhealthy cluster|leader changed'
+
+# defrag-etcd.yaml: a member with less than this much reclaimable space (dbSize - dbSizeInUse) is
+# skipped, unless master_etcd_defrag_force is set.
+master_etcd_defrag_min_free_mb: 100
+master_etcd_defrag_force: false

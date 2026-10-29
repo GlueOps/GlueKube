@@ -1,0 +1,107 @@
+---
+# Defragments the etcd member on the current host, and only that member: every call is pinned to
+# the local client URL, never --cluster. A member blocks reads and writes while it defragments, so
+# defrag-etcd.yaml runs this one host at a time, leader last.
+#
+# Inputs (roles/master/defaults/main.yaml): master_etcd_defrag_min_free_mb, master_etcd_defrag_force.
+
+- name: Read the local etcd member's size before defragmenting
+  ansible.builtin.shell: |
+    export ETCDCTL_API=3
+    etcdctl endpoint status \
+      --endpoints=https://127.0.0.1:2379 \
+      --command-timeout=30s --dial-timeout=10s \
+      --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+      --cert=/etc/kubernetes/pki/etcd/server.crt \
+      --key=/etc/kubernetes/pki/etcd/server.key \
+      --write-out=json
+  register: master_etcd_status_before
+  changed_when: false
+  retries: 3
+  delay: 10
+  until: master_etcd_status_before.rc == 0
+
+# dbSizeInUse only exists from etcdctl 3.4 on. Without it nothing says how much would be reclaimed,
+# so the member is defragmented rather than skipped.
+- name: Work out how much space defragmenting would reclaim
+  ansible.builtin.set_fact:
+    master_etcd_before: "{{ (master_etcd_status_before.stdout | from_json | first).Status }}"
+    master_etcd_reclaimable_mb: >-
+      {{ (((master_etcd_status_before.stdout | from_json | first).Status.dbSize
+           - (master_etcd_status_before.stdout | from_json | first).Status.get('dbSizeInUse',
+               0)) / 1048576) | int }}
+
+# bbolt writes a compacted copy of the db next to the original before swapping it in, so the data
+# directory needs room for the in-use size at least.
+- name: Read the free space under /var/lib/etcd
+  ansible.builtin.command: df --output=avail -B1 /var/lib/etcd
+  register: master_etcd_data_free
+  changed_when: false
+
+- name: There is room for the defragmented copy
+  ansible.builtin.assert:
+    that:
+      - master_etcd_data_free.stdout_lines[-1] | trim | int >
+        master_etcd_before.get('dbSizeInUse', master_etcd_before.dbSize) | int
+    fail_msg: >-
+      /var/lib/etcd on {{ inventory_hostname }} has {{ master_etcd_data_free.stdout_lines[-1] | trim }}
+      bytes free, but defragmenting writes a copy of up to
+      {{ master_etcd_before.get('dbSizeInUse', master_etcd_before.dbSize) }} bytes. Free some space first.
+    quiet: true
+
+- name: Decide whether to defragment {{ inventory_hostname }}
+  ansible.builtin.set_fact:
+    master_etcd_do_defrag: >-
+      {{ master_etcd_defrag_force | bool
+         or 'dbSizeInUse' not in master_etcd_before
+         or master_etcd_reclaimable_mb | int >= master_etcd_defrag_min_free_mb | int }}
+
+- name: Report the skipped member
+  ansible.builtin.debug:
+    msg: >-
+      Skipping {{ inventory_hostname }}: only {{ master_etcd_reclaimable_mb }}MB reclaimable, under
+      master_etcd_defrag_min_free_mb ({{ master_etcd_defrag_min_free_mb }}MB).
+      Pass -e master_etcd_defrag_force=true to defragment it anyway.
+  when: not master_etcd_do_defrag | bool
+
+- name: Defragment the local etcd member
+  when: master_etcd_do_defrag | bool
+  block:
+    # The default command timeout is a few seconds and a multi-GB db takes far longer. Timing out
+    # does not stop the defrag, it only makes the run report a failure while etcd is still busy.
+    - name: Defragment the etcd member on {{ inventory_hostname }}
+      ansible.builtin.shell: |
+        export ETCDCTL_API=3
+        etcdctl defrag \
+          --endpoints=https://127.0.0.1:2379 \
+          --command-timeout=5m --dial-timeout=10s \
+          --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+          --cert=/etc/kubernetes/pki/etcd/server.crt \
+          --key=/etc/kubernetes/pki/etcd/server.key
+      register: master_etcd_defrag
+      changed_when: master_etcd_defrag.rc == 0
+
+    - name: Wait for the whole cluster to be healthy again
+      ansible.builtin.include_tasks: master-node-rotation/check-etcd-health.yaml
+      vars:
+        health_check_stage: "after defragmenting {{ inventory_hostname }}"
+        master_etcd_health_retries: 10
+
+    - name: Read the local etcd member's size after defragmenting
+      ansible.builtin.shell: |
+        export ETCDCTL_API=3
+        etcdctl endpoint status \
+          --endpoints=https://127.0.0.1:2379 \
+          --command-timeout=30s --dial-timeout=10s \
+          --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+          --cert=/etc/kubernetes/pki/etcd/server.crt \
+          --key=/etc/kubernetes/pki/etcd/server.key \
+          --write-out=json
+      register: master_etcd_status_after
+      changed_when: false
+
+    - name: Report the size change
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: dbSize {{ (master_etcd_before.dbSize / 1048576) | int }}MB ->
+          {{ ((master_etcd_status_after.stdout | from_json | first).Status.dbSize / 1048576) | int }}MB

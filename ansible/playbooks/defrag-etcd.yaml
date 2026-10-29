@@ -1,0 +1,187 @@
+---
+# Defragments etcd: gives back to the filesystem the space that compaction freed inside the db.
+# Compaction (auto-compaction-retention in kubeadm-stacked-config.yaml.j2) never shrinks the file, so
+# without this dbSize only grows toward quota-backend-bytes, and at the quota etcd raises NOSPACE and
+# the cluster turns read-only.
+#
+# A member blocks reads and writes while it defragments, so this never uses `defrag --cluster`:
+#   1. every member must be healthy, and a snapshot is taken on the orchestrator first
+#   2. members go one at a time (serial: 1), followers first and the leader last, so the run causes
+#      at most one leader election, and the health gate runs again after each one
+#   3. a NOSPACE alarm is cleared at the end; etcd stays read-only until it is, even with space free
+#
+# Operator-triggered only, like the migrate-* playbooks: run it at a quiet time. Safe to re-run;
+# members with less than master_etcd_defrag_min_free_mb to reclaim are skipped.
+# Knobs, all -e overridable: master_etcd_defrag_force and master_etcd_defrag_min_free_mb
+# (roles/master/defaults/main.yaml), and the etcd_defrag_snapshot* play vars below.
+- name: Elect the orchestrator
+  ansible.builtin.import_playbook: elect-orchestrator.yaml
+
+- name: Check etcd, snapshot it, and order the members leader last
+  hosts: orchestrator
+  become: true
+  vars:
+    etcd_defrag_snapshot: true
+    etcd_defrag_snapshot_dir: /var/lib/etcd-backup
+    # a snapshot is as big as the db's in-use size, up to the 8GB quota, so only a few are kept
+    etcd_defrag_snapshot_keep: 3
+  tasks:
+    - name: Every etcd member is healthy before anything is defragmented
+      ansible.builtin.include_role:
+        name: master
+        tasks_from: master-node-rotation/check-etcd-health.yaml
+
+    - name: Read the status of every etcd member
+      ansible.builtin.shell: |
+        export ETCDCTL_API=3
+        etcdctl endpoint status --cluster \
+          --command-timeout=30s --dial-timeout=10s \
+          --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+          --cert=/etc/kubernetes/pki/etcd/server.crt \
+          --key=/etc/kubernetes/pki/etcd/server.key \
+          --write-out=json
+      register: etcd_defrag_status
+      changed_when: false
+
+    # Every member reports the same leader id; the leader is the member whose own id matches it.
+    - name: Find the leader and the followers
+      ansible.builtin.set_fact:
+        etcd_defrag_leader_ips: >-
+          {{ etcd_defrag_members
+             | selectattr('Status.header.member_id', 'equalto', etcd_defrag_leader_id)
+             | map(attribute='Endpoint') | map('urlsplit', 'hostname') | list }}
+        etcd_defrag_follower_ips: >-
+          {{ etcd_defrag_members
+             | rejectattr('Status.header.member_id', 'equalto', etcd_defrag_leader_id)
+             | map(attribute='Endpoint') | map('urlsplit', 'hostname') | list }}
+      vars:
+        etcd_defrag_members: "{{ etcd_defrag_status.stdout | from_json }}"
+        etcd_defrag_leader_id: "{{ (etcd_defrag_status.stdout | from_json | first).Status.leader }}"
+
+    # Members are matched back to inventory hosts by the `ip` their client URL carries, the same
+    # address etcd_initial_cluster is built from.
+    - name: Order the members, followers first and the leader last
+      ansible.builtin.set_fact:
+        etcd_defrag_order: >-
+          {{ (etcd_defrag_follower_ips | map('extract', etcd_defrag_hosts_by_ip) | sort)
+             + (etcd_defrag_leader_ips | map('extract', etcd_defrag_hosts_by_ip) | list) }}
+      vars:
+        etcd_defrag_hosts_by_ip: >-
+          {{ dict(groups['masters'] | map('extract', hostvars, 'ip') | zip(groups['masters'])) }}
+
+    - name: Every etcd member is an inventory master, and there is exactly one leader
+      ansible.builtin.assert:
+        that:
+          - etcd_defrag_leader_ips | length == 1
+          - (etcd_defrag_follower_ips + etcd_defrag_leader_ips) | length == groups['masters'] | length
+          - (etcd_defrag_follower_ips + etcd_defrag_leader_ips)
+            | difference(groups['masters'] | map('extract', hostvars, 'ip')) | length == 0
+        fail_msg: >-
+          etcd reports members {{ etcd_defrag_follower_ips + etcd_defrag_leader_ips }}
+          (leader {{ etcd_defrag_leader_ips }}), but the inventory's masters are
+          {{ groups['masters'] | map('extract', hostvars, 'ip') | list }}.
+          Reconcile the two (make sync) before defragmenting.
+        quiet: true
+
+    - name: Report the order
+      ansible.builtin.debug:
+        msg: "Defragmenting in this order, leader last: {{ etcd_defrag_order | join(' -> ') }}"
+
+    - name: Snapshot etcd before defragmenting
+      when: etcd_defrag_snapshot | bool
+      block:
+        - name: Create the snapshot directory
+          ansible.builtin.file:
+            path: "{{ etcd_defrag_snapshot_dir }}"
+            state: directory
+            owner: root
+            group: root
+            mode: "0700"
+
+        - name: Save the snapshot
+          ansible.builtin.shell: |
+            set -euo pipefail
+            export ETCDCTL_API=3
+            dest="{{ etcd_defrag_snapshot_dir }}/etcd-$(date -u +%Y%m%dT%H%M%SZ).db"
+            etcdctl snapshot save "$dest" \
+              --endpoints=https://127.0.0.1:2379 \
+              --command-timeout=5m --dial-timeout=10s \
+              --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+              --cert=/etc/kubernetes/pki/etcd/server.crt \
+              --key=/etc/kubernetes/pki/etcd/server.key >&2
+            echo "$dest"
+          args:
+            executable: /bin/bash
+          register: etcd_defrag_snapshot_result
+          changed_when: true
+
+        - name: Prune all but the newest snapshots
+          ansible.builtin.shell: |
+            set -euo pipefail
+            ls -1t {{ etcd_defrag_snapshot_dir }}/etcd-*.db \
+              | tail -n +{{ (etcd_defrag_snapshot_keep | int) + 1 }} \
+              | xargs -r rm -v --
+          args:
+            executable: /bin/bash
+          register: etcd_defrag_pruned
+          changed_when: etcd_defrag_pruned.stdout | length > 0
+
+        - name: Report the snapshot
+          ansible.builtin.debug:
+            msg: "etcd snapshot saved on {{ inventory_hostname }} at {{ etcd_defrag_snapshot_result.stdout | trim }}"
+
+    # add_host keeps insertion order, and the next play reads the group in that order.
+    - name: Publish the defrag order as a group
+      ansible.builtin.add_host:
+        name: "{{ item }}"
+        groups: etcd_defrag_order
+      loop: "{{ etcd_defrag_order }}"
+      changed_when: false
+
+- name: Defragment etcd one member at a time
+  hosts: etcd_defrag_order
+  order: inventory
+  serial: 1
+  any_errors_fatal: true
+  become: true
+  tasks:
+    - name: Defragment the local etcd member
+      ansible.builtin.include_role:
+        name: master
+        tasks_from: defrag-etcd.yaml
+
+- name: Clear a NOSPACE alarm
+  hosts: orchestrator
+  become: true
+  tasks:
+    - name: List the etcd alarms
+      ansible.builtin.shell: |
+        export ETCDCTL_API=3
+        etcdctl alarm list \
+          --command-timeout=30s --dial-timeout=10s \
+          --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+          --cert=/etc/kubernetes/pki/etcd/server.crt \
+          --key=/etc/kubernetes/pki/etcd/server.key
+      register: etcd_defrag_alarms
+      changed_when: false
+
+    # `alarm disarm` clears every alarm, so it only runs for NOSPACE; anything else (CORRUPT) is
+    # left for an operator to look at.
+    - name: Disarm the NOSPACE alarm
+      ansible.builtin.shell: |
+        export ETCDCTL_API=3
+        etcdctl alarm disarm \
+          --command-timeout=30s --dial-timeout=10s \
+          --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+          --cert=/etc/kubernetes/pki/etcd/server.crt \
+          --key=/etc/kubernetes/pki/etcd/server.key
+      register: etcd_defrag_disarm
+      changed_when: etcd_defrag_disarm.rc == 0
+      when:
+        - "'NOSPACE' in etcd_defrag_alarms.stdout"
+        - "'CORRUPT' not in etcd_defrag_alarms.stdout"
+
+    - name: Report any alarm left in place
+      ansible.builtin.debug:
+        msg: "etcd alarms left in place, check them by hand: {{ etcd_defrag_alarms.stdout_lines }}"
+      when: "'CORRUPT' in etcd_defrag_alarms.stdout"
