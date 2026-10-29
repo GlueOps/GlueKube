@@ -1,0 +1,16 @@
+---
+# Molecule runs this; the bastion runs tests/test_nospace_recovered.yaml.
+#
+# No alarm, etcd and the apiserver take writes, and the live keys survived.
+- name: Check etcd recovered from NOSPACE from the bastion
+  hosts: bastion
+  gather_facts: false
+  vars_files:
+    - ../../common/bastion-vars.yml
+  tasks:
+    - name: Run tests/test_nospace_recovered.yaml on the bastion
+      ansible.builtin.include_tasks: ../../common/bastion-run.yml
+      vars:
+        bastion_run_name: test_nospace_recovered
+        bastion_run_playbook: tests/test_nospace_recovered.yaml
+        bastion_run_timeout: 900

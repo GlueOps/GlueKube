@@ -4,6 +4,7 @@
 # defrag-etcd.yaml runs this one host at a time, leader last.
 #
 # Inputs (roles/master/defaults/main.yaml): master_etcd_defrag_min_free_mb, master_etcd_defrag_force.
+# master_etcd_defrag_nospace (default false): a NOSPACE alarm is raised, so nothing is skipped.
 
 - name: Read the local etcd member's size before defragmenting
   ansible.builtin.shell: |
@@ -21,8 +22,9 @@
   delay: 10
   until: master_etcd_status_before.rc == 0
 
-# dbSizeInUse lags a compaction until the next write commits; on a live cluster the apiserver
-# writes every few seconds, so by the time this runs it is current.
+# dbSizeInUse lags a compaction until the next write commits. On a live cluster the apiserver
+# writes every few seconds, so it is current -- except under NOSPACE, which rejects those writes;
+# that is why master_etcd_defrag_nospace skips this check altogether.
 # dbSizeInUse only exists from etcdctl 3.4 on. Without it nothing says how much would be reclaimed,
 # so the member is defragmented rather than skipped.
 - name: Work out how much space defragmenting would reclaim
@@ -55,6 +57,7 @@
   ansible.builtin.set_fact:
     master_etcd_do_defrag: >-
       {{ master_etcd_defrag_force | bool
+         or master_etcd_defrag_nospace | default(false) | bool
          or 'dbSizeInUse' not in master_etcd_before
          or master_etcd_reclaimable_mb | int >= master_etcd_defrag_min_free_mb | int }}
 

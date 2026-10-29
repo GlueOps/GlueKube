@@ -389,6 +389,17 @@ snapshot turned off must skip every member and report `changed=0`, through
 `bastion_run_assert_no_changes`. The leader-last ordering is not asserted on the cluster: the run
 log prints it under *Report the order*.
 
+It then tests the case the target exists for: recovery from a `NOSPACE` alarm. The nodes' apt
+etcdctl is 3.4, which ignores alarms in `endpoint health`, so on it these steps would pass even
+with a NOSPACE health-gate bug. `tests/borrow_etcdctl.yaml` therefore copies the etcd pod's own
+3.5+ client into `/usr/local/bin` on every master first. `tests/raise_nospace.yaml` restarts each
+member, one at a time, with a quota 96MB above its current size. It then overwrites five keys until
+etcd raises `NOSPACE`, and asserts that the alarm is up, that `endpoint health` fails on it, and that
+`kubectl create` is rejected. `make defrag-etcd` then runs unchanged. `tests/test_nospace_recovered.yaml`
+asserts that no alarm is left, that etcd and the apiserver both take writes, and that the five live
+keys survived the compaction. `tests/restore_quota.yaml` puts the original manifests back and
+removes the test keys and the borrowed client before `verify`.
+
 ## DNS lifecycle
 
 `create.yml` creates the AutoGlue DNS domain named by `$domain_name`, then creates the `ctrp` A

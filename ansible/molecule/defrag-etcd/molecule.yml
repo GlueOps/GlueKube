@@ -19,7 +19,8 @@ provisioner:
 
 scenario:
   name: defrag-etcd
-  # `make defrag-etcd` end to end, against three masters so there is a leader to leave until last.
+  # `make defrag-etcd` end to end, against three masters so there is a leader to leave until last:
+  # first a routine defrag of free pages, then recovery from a NOSPACE alarm.
   # Every step past `create` runs on the bastion -- see the wrappers in remote/, and converge.yml
   # and verify.yml.
   test_sequence:
@@ -33,6 +34,14 @@ scenario:
     - side_effect remote/test_etcd_defragmented.yml
     # Every member under the skip threshold now, so a re-run must change nothing.
     - side_effect remote/defrag_etcd_again.yml
+    # The case the target exists for. noble's etcdctl 3.4 ignores alarms, which would let these
+    # steps pass with the health-gate bug present, so the etcd pod's 3.5+ client is borrowed first.
+    - side_effect remote/borrow_etcdctl.yml
+    # Each member restarted with a tiny quota, then filled with history until NOSPACE.
+    - side_effect remote/raise_nospace.yml
+    - side_effect remote/recover_nospace.yml
+    - side_effect remote/test_nospace_recovered.yml
+    - side_effect remote/restore_quota.yml
     # The cluster itself survived: every node Ready and the full etcd membership.
     - verify
     - destroy

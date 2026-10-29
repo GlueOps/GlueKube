@@ -1,0 +1,17 @@
+---
+# Molecule runs this; the bastion runs tests/restore_quota.yaml.
+#
+# Restores each member's 8GB quota and removes the test keys and the borrowed etcdctl, so verify
+# sees the cluster as setup left it.
+- name: Put the original etcd quota back from the bastion
+  hosts: bastion
+  gather_facts: false
+  vars_files:
+    - ../../common/bastion-vars.yml
+  tasks:
+    - name: Run tests/restore_quota.yaml on the bastion
+      ansible.builtin.include_tasks: ../../common/bastion-run.yml
+      vars:
+        bastion_run_name: restore_quota
+        bastion_run_playbook: tests/restore_quota.yaml
+        bastion_run_timeout: 2400

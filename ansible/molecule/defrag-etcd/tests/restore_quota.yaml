@@ -1,0 +1,66 @@
+---
+# Undoes raise_nospace.yaml and borrow_etcdctl.yaml, so `verify` checks the cluster as setup left
+# it: the original etcd manifest (8GB quota) back on every master, one at a time so quorum holds,
+# the test keys gone, and the apt etcdctl in use again.
+- name: Put the original etcd quota back
+  hosts: masters
+  serial: 1
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Read the original quota
+      ansible.builtin.command: grep -o -- '--quota-backend-bytes=[0-9]*' /root/etcd.yaml.molecule-orig
+      register: restore_quota_flag
+      changed_when: false
+
+    - name: Restore the original etcd manifest
+      ansible.builtin.copy:
+        src: /root/etcd.yaml.molecule-orig
+        dest: /etc/kubernetes/manifests/etcd.yaml
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Wait for the kubelet to restart etcd with it
+      ansible.builtin.shell: |
+        for pid in $(pgrep -x etcd); do tr '\0' ' ' < "/proc/$pid/cmdline"; echo; done
+      register: restore_etcd_cmdline
+      changed_when: false
+      retries: 36
+      delay: 5
+      until: (restore_quota_flag.stdout ~ " ") in restore_etcd_cmdline.stdout
+
+    - name: Wait for the whole cluster to be healthy again
+      ansible.builtin.include_role:
+        name: master
+        tasks_from: master-node-rotation/check-etcd-health.yaml
+      vars:
+        master_etcd_health_retries: 12
+
+    - name: Remove the saved manifest
+      ansible.builtin.file:
+        path: /root/etcd.yaml.molecule-orig
+        state: absent
+
+- name: Clean up the test keys and the borrowed etcdctl
+  hosts: masters
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Delete the keys raise_nospace.yaml left
+      ansible.builtin.shell: |
+        export ETCDCTL_API=3
+        etcdctl del --prefix /molecule-nospace/ \
+          --endpoints=https://127.0.0.1:2379 \
+          --command-timeout=30s --dial-timeout=10s \
+          --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+          --cert=/etc/kubernetes/pki/etcd/server.crt \
+          --key=/etc/kubernetes/pki/etcd/server.key
+      changed_when: true
+      run_once: true
+
+    - name: Remove the borrowed etcdctl
+      ansible.builtin.file:
+        path: /usr/local/bin/etcdctl
+        state: absent

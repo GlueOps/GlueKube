@@ -583,28 +583,35 @@ is still no restore playbook.)
 
 etcd's auto-compaction (`auto-compaction-retention: 1h`) frees space inside the db file but never
 shrinks the file, so `dbSize` keeps growing toward `quota-backend-bytes` (8GB). If it reaches that,
-etcd raises a `NOSPACE` alarm and the cluster turns read-only. `make defrag-etcd` gives the space
-back:
+etcd raises a `NOSPACE` alarm and the cluster turns read-only: the apiserver can serve reads but
+cannot write anything, not even node heartbeats. `make defrag-etcd` is the way back, following
+etcd's own recovery order (compact, defrag, disarm):
 
-1. checks that every member is healthy and that the etcd members match the inventory's masters
+1. checks that every member is reachable and that the etcd members match the inventory's masters.
+   a member whose only error is the `NOSPACE` alarm counts as healthy; a `CORRUPT` alarm stops
+   the run before anything is touched.
 2. saves a snapshot on the orchestrator to `/var/lib/etcd-backup/etcd-<UTC timestamp>.db` and keeps
    the newest 3
-3. defragments one member at a time, followers first and the leader last, pinned to that host's own
+3. with `NOSPACE` raised, compacts etcd to the current revision. that drops the history
+   auto-compaction has not reached yet, which is the space the defrag can give back.
+4. defragments one member at a time, followers first and the leader last, pinned to that host's own
    `127.0.0.1:2379` (never `--cluster`), and checks cluster health after each one
-4. clears a `NOSPACE` alarm if one is set. A `CORRUPT` alarm is left alone and reported.
+5. disarms `NOSPACE`, then writes a test key to prove etcd accepts writes again. if it doesn't, the
+   live data itself fills the quota, and the run fails saying so: no defrag can shrink live data.
+   raise `quota-backend-bytes` or find what is filling etcd. it also fails if a member is still
+   at 80% of the quota or more, since that would raise `NOSPACE` again soon.
 
-it is also the way out of a raised `NOSPACE` alarm: its health checks accept a member whose only
-error is that alarm, so the run goes ahead while etcd is read-only. any other error still stops it.
-
-a member blocks reads and writes while it defragments, so run it at a quiet time. a member with
-less than 100MB to reclaim (`dbSize - dbSizeInUse`) is skipped. to check how much would be
-reclaimed first, run `etcdctl endpoint status --cluster -w table` on a master.
+a member blocks reads and writes while it defragments. with no alarm raised it is a routine defrag:
+a member with less than 100MB to reclaim (`dbSize - dbSizeInUse`) is skipped. with `NOSPACE`
+raised no member is skipped, because `dbSizeInUse` only refreshes on a write and `NOSPACE` rejects
+writes. to see the sizes first, run `etcdctl endpoint status --cluster -w table` on a master.
 
 | override | default | |
 |---|---|---|
 | `-e master_etcd_defrag_force=true` | `false` | defragment every member, even ones under the threshold |
 | `-e master_etcd_defrag_min_free_mb=N` | `100` | the skip threshold |
 | `-e etcd_defrag_snapshot=false` | `true` | skip the snapshot |
+| `-e etcd_defrag_max_used_pct=N` | `80` | fail the run if a member is still at or above this share of the quota afterwards |
 | `-e etcd_defrag_snapshot_dir=PATH` / `-e etcd_defrag_snapshot_keep=N` | `/var/lib/etcd-backup` / `3` | where snapshots go and how many to keep |
 
 the make target takes no extra arguments, so to override any of these run the playbook directly:

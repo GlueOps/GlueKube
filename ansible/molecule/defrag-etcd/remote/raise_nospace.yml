@@ -1,0 +1,17 @@
+---
+# Molecule runs this; the bastion runs tests/raise_nospace.yaml.
+#
+# Restarts each member with a quota just above its size, then overwrites a few keys until etcd
+# raises NOSPACE and the cluster turns read-only.
+- name: Drive etcd into NOSPACE from the bastion
+  hosts: bastion
+  gather_facts: false
+  vars_files:
+    - ../../common/bastion-vars.yml
+  tasks:
+    - name: Run tests/raise_nospace.yaml on the bastion
+      ansible.builtin.include_tasks: ../../common/bastion-run.yml
+      vars:
+        bastion_run_name: raise_nospace
+        bastion_run_playbook: tests/raise_nospace.yaml
+        bastion_run_timeout: 2400
