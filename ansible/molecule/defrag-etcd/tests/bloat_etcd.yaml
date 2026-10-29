@@ -1,0 +1,89 @@
+---
+# Gives defrag-etcd.yaml something to reclaim. A fresh cluster's db has almost no free pages, so
+# defragmenting it would shrink nothing and the test after it could not tell a defrag from a skip.
+#
+# Writes ~1MB values under a prefix the apiserver never reads, deletes them, and compacts at the
+# current revision with --physical. That is exactly the state auto-compaction leaves a real
+# cluster in, only faster: the pages are free inside bbolt (dbSizeInUse drops) while the file
+# (dbSize) stays the same size on every member.
+- name: Fill etcd with garbage and compact it away
+  hosts: masters[0]
+  become: true
+  gather_facts: false
+  vars:
+    bloat_prefix: /molecule-defrag-etcd/
+    # 250 x ~1MB, comfortably above master_etcd_defrag_min_free_mb (100) so no member is skipped,
+    # and far under quota-backend-bytes (8GB).
+    bloat_keys: 250
+    bloat_min_reclaimable_mb: 150
+  tasks:
+    # The value goes in on stdin: a single argv string is capped at 128KB on Linux, so a 1MB value
+    # cannot be passed as an argument.
+    - name: Write, delete and compact ~1MB throwaway keys
+      ansible.builtin.shell: |
+        set -euo pipefail
+        export ETCDCTL_API=3
+        ectl() {
+          etcdctl --endpoints=https://127.0.0.1:2379 \
+            --command-timeout=60s --dial-timeout=10s \
+            --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+            --cert=/etc/kubernetes/pki/etcd/server.crt \
+            --key=/etc/kubernetes/pki/etcd/server.key "$@"
+        }
+        value=$(mktemp)
+        trap 'rm -f "$value"' EXIT
+        head -c 786432 /dev/urandom | base64 -w0 > "$value"
+        for i in $(seq 1 {{ bloat_keys }}); do
+          ectl put "{{ bloat_prefix }}$i" < "$value" > /dev/null
+        done
+        ectl del --prefix "{{ bloat_prefix }}"
+        rev=$(ectl endpoint status -w json | jq '.[0].Status.header.revision')
+        ectl compact "$rev" --physical
+        # bbolt only frees the compacted pages when the next write commits, and dbSizeInUse lags
+        # until then. The apiserver writes every few seconds anyway; this does not wait on it.
+        ectl put "{{ bloat_prefix }}tick" x > /dev/null
+        ectl del "{{ bloat_prefix }}tick" > /dev/null
+      args:
+        executable: /bin/bash
+      register: bloat_etcd
+      changed_when: true
+
+    # {endpoint: reclaimable MB}, worked out by jq: Jinja has no way to subtract inside a map.
+    - name: Read every member's reclaimable space
+      ansible.builtin.shell: |
+        set -o pipefail
+        export ETCDCTL_API=3
+        etcdctl endpoint status --cluster \
+          --command-timeout=30s --dial-timeout=10s \
+          --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+          --cert=/etc/kubernetes/pki/etcd/server.crt \
+          --key=/etc/kubernetes/pki/etcd/server.key \
+          --write-out=json \
+          | jq -c 'map({(.Endpoint): (((.Status.dbSize - .Status.dbSizeInUse) / 1048576) | floor)}) | add'
+      args:
+        executable: /bin/bash
+      register: bloat_status
+      changed_when: false
+      # Belt and braces for the lag above: retried until every member reports the space free,
+      # rather than trusting the first read.
+      retries: 6
+      delay: 10
+      until: >-
+        bloat_status.rc == 0 and
+        bloat_status.stdout | from_json | length == groups['masters'] | length and
+        bloat_status.stdout | from_json | dict2items | map(attribute='value') | min >= bloat_min_reclaimable_mb
+      # The assert below says why; a bare retry failure would not.
+      failed_when: false
+
+    # Every member, not just this one: compaction is replicated through raft, but each member frees
+    # its own pages, and the defrag test needs all three to have something to give back.
+    - name: Every member has enough free space to reclaim
+      ansible.builtin.assert:
+        that:
+          - bloat_status.rc == 0
+          - bloat_status.stdout | from_json | length == groups['masters'] | length
+          - bloat_status.stdout | from_json | dict2items | map(attribute='value') | min >= bloat_min_reclaimable_mb
+        fail_msg: >-
+          Not enough free space inside etcd for the defrag test to mean anything (MB per member):
+          {{ bloat_status.stdout | default('') }} {{ bloat_status.stderr | default('') }}
+        success_msg: "Reclaimable before defrag (MB per member): {{ bloat_status.stdout }}"

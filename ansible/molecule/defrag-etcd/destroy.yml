@@ -1,0 +1,20 @@
+---
+# Tears down what create.yml built. The Proxmox and AutoGlue halves are shared with the other two
+# scenarios; the node counts and vmid offset below must match create.yml's.
+- name: Destroy Proxmox VMs
+  hosts: localhost
+  gather_facts: true
+  vars_files:
+    - ../common/proxmox-vars.yml
+  vars:
+    num_master_nodes: 3
+    num_worker_nodes: 1
+    pve_vmid_offset: 400
+    snippet_prefix: molecule-defrag-etcd
+
+  tasks:
+    - name: Remove the nodes from Proxmox
+      ansible.builtin.import_tasks: ../common/proxmox-teardown.yml
+
+    - name: Remove the DNS domain and ctrp record
+      ansible.builtin.import_tasks: ../common/autoglue-destroy.yml

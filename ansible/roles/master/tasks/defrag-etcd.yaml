@@ -21,6 +21,8 @@
   delay: 10
   until: master_etcd_status_before.rc == 0
 
+# dbSizeInUse lags a compaction until the next write commits; on a live cluster the apiserver
+# writes every few seconds, so by the time this runs it is current.
 # dbSizeInUse only exists from etcdctl 3.4 on. Without it nothing says how much would be reclaimed,
 # so the member is defragmented rather than skipped.
 - name: Work out how much space defragmenting would reclaim

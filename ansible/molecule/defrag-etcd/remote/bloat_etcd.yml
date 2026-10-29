@@ -1,0 +1,17 @@
+---
+# Molecule runs this; the bastion runs tests/bloat_etcd.yaml.
+#
+# Writes ~250MB into etcd, deletes it and compacts, so the defrag that follows has something to
+# give back on every member.
+- name: Leave free pages inside etcd from the bastion
+  hosts: bastion
+  gather_facts: false
+  vars_files:
+    - ../../common/bastion-vars.yml
+  tasks:
+    - name: Run tests/bloat_etcd.yaml on the bastion
+      ansible.builtin.include_tasks: ../../common/bastion-run.yml
+      vars:
+        bastion_run_name: bloat_etcd
+        bastion_run_playbook: tests/bloat_etcd.yaml
+        bastion_run_timeout: 1800
