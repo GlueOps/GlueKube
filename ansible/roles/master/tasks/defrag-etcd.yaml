@@ -88,6 +88,8 @@
       vars:
         health_check_stage: "after defragmenting {{ inventory_hostname }}"
         master_etcd_health_retries: 10
+        # A NOSPACE alarm stays raised until the playbook's last play disarms it.
+        master_etcd_health_allow_nospace: true
 
     - name: Read the local etcd member's size after defragmenting
       ansible.builtin.shell: |

@@ -6,38 +6,66 @@
 # retried.
 #
 # Optional: master_etcd_health_endpoints (probe these instead of --cluster),
-# master_etcd_health_retries (default 5), execution_host (default: current host).
+# master_etcd_health_retries (default 5), execution_host (default: current host),
+# master_etcd_health_allow_nospace (default false).
+#
+# master_etcd_health_allow_nospace is for defrag-etcd.yaml, the way out of a NOSPACE alarm. From
+# etcdctl 3.5 on (resolute's apt client), `endpoint health` reports every member unhealthy and exits
+# 1 while any alarm is raised, which would stop that playbook before it fixed anything. With the
+# flag, a member whose only error is NOSPACE counts as healthy: it still serves reads, and defrag
+# plus `alarm disarm` is the documented recovery. Every other error still fails -- CORRUPT, NOSPACE
+# alongside another alarm, an unreachable member -- and so does everything for every other caller.
 
-- name: "Checking etcd health: {{ health_check_stage | default('routine check') }}"
-  ansible.builtin.shell: |
-    export ETCDCTL_API=3
-    etcdctl endpoint health \
-      {{ ('--endpoints=' ~ (master_etcd_health_endpoints | join(','))) if master_etcd_health_endpoints | default([]) | length > 0 else '--cluster' }} \
-      --command-timeout=30s --dial-timeout=10s \
-      --cacert=/etc/kubernetes/pki/etcd/ca.crt \
-      --cert=/etc/kubernetes/pki/etcd/server.crt \
-      --key=/etc/kubernetes/pki/etcd/server.key \
-      --write-out=json
-  delegate_to: "{{ execution_host | default(inventory_hostname) }}"
-  register: etcd_health
-  changed_when: false
-  retries: "{{ master_etcd_health_retries | default(5) }}"
-  delay: 10
-  until: >
-    etcd_health.rc == 0 and
-    (etcd_health.stdout | default('[]', true) | from_json | selectattr('health', 'equalto', false) | list | length) == 0
-  failed_when: false
+# The vars are lazy, so `until` re-reads them against each retry's result. rc is only waived with
+# the flag, because 3.5 exits 1 on an alarm; an unreachable member still fails, since its entry's
+# error is "context deadline exceeded", not NOSPACE.
+- name: Check etcd health
+  vars:
+    master_etcd_health_nospace_error: '^Active Alarm\(s\):(\s*NOSPACE)+\s*$'
+    master_etcd_health_allowing_nospace: "{{ master_etcd_health_allow_nospace | default(false) | bool }}"
+    master_etcd_health_results: >-
+      {{ etcd_health.stdout | from_json
+         if etcd_health.stdout | default('', true) is match('\s*\[') else [] }}
+    master_etcd_health_unhealthy: >-
+      {{ master_etcd_health_results | selectattr('health', 'equalto', false) | list }}
+    master_etcd_health_nospace_only: >-
+      {{ master_etcd_health_unhealthy | selectattr('error', 'defined')
+         | selectattr('error', 'match', master_etcd_health_nospace_error) | list }}
+    master_etcd_health_ok: >-
+      {{ (etcd_health.rc == 0
+          or (master_etcd_health_allowing_nospace and master_etcd_health_results | length > 0))
+         and (master_etcd_health_unhealthy | length)
+             - (master_etcd_health_nospace_only | length if master_etcd_health_allowing_nospace else 0)
+             == 0 }}
+  block:
+    - name: "Checking etcd health: {{ health_check_stage | default('routine check') }}"
+      ansible.builtin.shell: |
+        export ETCDCTL_API=3
+        etcdctl endpoint health \
+          {{ ('--endpoints=' ~ (master_etcd_health_endpoints | join(','))) if master_etcd_health_endpoints | default([]) | length > 0 else '--cluster' }} \
+          --command-timeout=30s --dial-timeout=10s \
+          --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+          --cert=/etc/kubernetes/pki/etcd/server.crt \
+          --key=/etc/kubernetes/pki/etcd/server.key \
+          --write-out=json
+      delegate_to: "{{ execution_host | default(inventory_hostname) }}"
+      register: etcd_health
+      changed_when: false
+      retries: "{{ master_etcd_health_retries | default(5) }}"
+      delay: 10
+      until: master_etcd_health_ok | bool
+      failed_when: false
 
-- name: Fail if etcd is unhealthy
-  fail:
-    msg: |
-      etcd health check failed {{ health_check_stage | default('') }}
-      Output: {{ etcd_health.stdout | default('no output') }}
-      Error: {{ etcd_health.stderr | default('no error') }}
-  when: >
-    etcd_health.rc != 0 or
-    (etcd_health.stdout | default('[]', true) | from_json | selectattr('health', 'equalto', false) | list | length) > 0
+    - name: Fail if etcd is unhealthy
+      fail:
+        msg: |
+          etcd health check failed {{ health_check_stage | default('') }}
+          Output: {{ etcd_health.stdout | default('no output') }}
+          Error: {{ etcd_health.stderr | default('no error') }}
+      when: not master_etcd_health_ok | bool
 
-- name: Display etcd health status
-  debug:
-    msg: "etcd is healthy {{ health_check_stage | default('') }}"
+    - name: Display etcd health status
+      debug:
+        msg: >-
+          etcd is healthy {{ health_check_stage | default('') }}{{ ' (NOSPACE alarm raised)'
+          if master_etcd_health_allowing_nospace and master_etcd_health_nospace_only | length > 0 else '' }}

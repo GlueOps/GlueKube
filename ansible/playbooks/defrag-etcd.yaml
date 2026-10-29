@@ -30,6 +30,9 @@
       ansible.builtin.include_role:
         name: master
         tasks_from: master-node-rotation/check-etcd-health.yaml
+      vars:
+        # NOSPACE is what this playbook clears, so it cannot be a reason not to start.
+        master_etcd_health_allow_nospace: true
 
     - name: Read the status of every etcd member
       ansible.builtin.shell: |

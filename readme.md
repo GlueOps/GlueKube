@@ -593,6 +593,9 @@ back:
    `127.0.0.1:2379` (never `--cluster`), and checks cluster health after each one
 4. clears a `NOSPACE` alarm if one is set. A `CORRUPT` alarm is left alone and reported.
 
+it is also the way out of a raised `NOSPACE` alarm: its health checks accept a member whose only
+error is that alarm, so the run goes ahead while etcd is read-only. any other error still stops it.
+
 a member blocks reads and writes while it defragments, so run it at a quiet time. a member with
 less than 100MB to reclaim (`dbSize - dbSizeInUse`) is skipped. to check how much would be
 reclaimed first, run `etcdctl endpoint status --cluster -w table` on a master.
