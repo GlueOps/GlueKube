@@ -18,9 +18,16 @@ installation:
           - "{{ calico_node_address_autodetection_v4 }}"
 {% endif %}
 
-  # Prefer the platform node for calico-kube-controllers, but stay schedulable anywhere.
+  # Prefer the platform node for calico-kube-controllers, but stay schedulable on any worker.
   # Scoped to this deployment rather than controlPlaneTolerations, which would also cover
-  # typha and calico-apiserver.
+  # typha. calico-apiserver, goldmane and whisker get the same placement through their own
+  # resources at the bottom of this file.
+  # The control-plane taint is deliberately NOT tolerated: none of these has to be on a master,
+  # and with no platform node the preferred affinity matches nothing, so the scheduler would
+  # otherwise pick one. Nothing in install-calico.yaml waits on them, so on a fresh cluster they
+  # sit Pending only until the workers join; apply-calico-firewall.yaml, which does wait for
+  # calico-apiserver, runs after that. A master whose control-plane taint is removed in the
+  # inventory still qualifies.
   # calico-node is deliberately untouched -- it is a DaemonSet and must cover every node.
   calicoKubeControllersDeployment:
     spec:
@@ -30,7 +37,7 @@ installation:
           # glueops.dev/role exists on no node yet at install time. A hard nodeSelector
           # or requiredDuringScheduling would deadlock the bootstrap.
           affinity:
-            nodeAffinity:
+            nodeAffinity: &platform_node_affinity
               preferredDuringSchedulingIgnoredDuringExecution:
               - weight: 100
                 preference:
@@ -39,11 +46,7 @@ installation:
                     operator: In
                     values:
                     - glueops-platform
-          tolerations:
-          - key: node-role.kubernetes.io/master
-            effect: NoSchedule
-          - key: node-role.kubernetes.io/control-plane
-            effect: NoSchedule
+          tolerations: &platform_tolerations
           - key: glueops.dev/role
             operator: Equal
             value: glueops-platform
@@ -86,8 +89,56 @@ installation:
                       - calico-typha
                   topologyKey: topology.kubernetes.io/zone
 
+# Same placement as calico-kube-controllers above. Setting tolerations here replaces the
+# operator's defaults, which are what tolerated the control-plane taint.
 apiServer:
   enabled: true
+  apiServerDeployment:
+    spec:
+      template:
+        spec:
+          affinity:
+            nodeAffinity: *platform_node_affinity
+            # setting affinity replaces the operator's own, so restate its apiserver spread
+            podAntiAffinity:
+              preferredDuringSchedulingIgnoredDuringExecution:
+              - weight: 100
+                podAffinityTerm:
+                  labelSelector:
+                    matchLabels:
+                      k8s-app: calico-apiserver
+                  namespaces:
+                  - calico-system
+                  topologyKey: kubernetes.io/hostname
+              - weight: 100
+                podAffinityTerm:
+                  labelSelector:
+                    matchLabels:
+                      k8s-app: calico-apiserver
+                  namespaces:
+                  - calico-system
+                  topologyKey: topology.kubernetes.io/zone
+          tolerations: *platform_tolerations
+
+goldmane:
+  enabled: true
+  goldmaneDeployment:
+    spec:
+      template:
+        spec:
+          affinity:
+            nodeAffinity: *platform_node_affinity
+          tolerations: *platform_tolerations
+
+whisker:
+  enabled: true
+  whiskerDeployment:
+    spec:
+      template:
+        spec:
+          affinity:
+            nodeAffinity: *platform_node_affinity
+          tolerations: *platform_tolerations
 
 # Resource requests and limits for the tigera/operator pod.
 resources: {}
