@@ -5,7 +5,7 @@
 # alarms. The bug the NOSPACE test exists for -- the health gates failing on "Active Alarm(s):
 # NOSPACE" -- only shows on 3.5+, the client resolute ships, so on 3.4 the test would pass with the
 # bug present. The etcd static pod's image carries a client of its server's own version: it is
-# copied out through /proc/<pid>/root and installed in /usr/local/bin, which sudo's secure_path
+# copied out through /proc/<etcd pid>/root and installed in /usr/local/bin, which sudo's secure_path
 # puts ahead of the apt one in /usr/bin. restore_quota.yaml removes it.
 - name: Borrow etcdctl from the etcd pod
   hosts: masters
@@ -15,10 +15,8 @@
     - name: Copy etcdctl out of the running etcd container
       ansible.builtin.shell: |
         set -euo pipefail
-        crictl() { command crictl --runtime-endpoint unix:///var/run/containerd/containerd.sock "$@"; }
-        id=$(crictl ps --name '^etcd$' --state running -q | head -n1)
-        test -n "$id"
-        pid=$(crictl inspect "$id" | jq -r '.info.pid')
+        # The etcd server process is the container's; no crictl on the nodes, and none needed.
+        pid=$(pgrep -xo etcd)
         install -m 0755 "/proc/$pid/root/usr/local/bin/etcdctl" /usr/local/bin/etcdctl
       args:
         executable: /bin/bash

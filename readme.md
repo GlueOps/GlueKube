@@ -683,7 +683,7 @@ file in one go**. restoring one member on its own leaves it disagreeing with the
    mkdir -p /root/manifests-stopped
    mv /etc/kubernetes/manifests/etcd.yaml /etc/kubernetes/manifests/kube-apiserver.yaml /root/manifests-stopped/
    ```
-   wait until `crictl ps --name 'etcd|kube-apiserver'` lists nothing.
+   wait until `pgrep -x 'etcd|kube-apiserver'` prints nothing.
 3. on every master, read its own member name and peer URL:
    `grep -E -- '--(name|initial-advertise-peer-urls)=' /root/manifests-stopped/etcd.yaml`.
    build the full member list from all of them, as
