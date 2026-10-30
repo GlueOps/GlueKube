@@ -595,7 +595,9 @@ etcd's own recovery order (compact, defrag, disarm):
 3. with `NOSPACE` raised, compacts etcd to the current revision. that drops the history
    auto-compaction has not reached yet, which is the space the defrag can give back.
 4. defragments one member at a time, followers first and the leader last, pinned to that host's own
-   `127.0.0.1:2379` (never `--cluster`), and checks cluster health after each one
+   `127.0.0.1:2379` (never `--cluster`), and checks cluster health after each one. before the
+   leader's turn it hands leadership to a member that is already done (`etcdctl move-leader`), so a
+   long defrag cannot start an unplanned election.
 5. disarms `NOSPACE`, then writes a test key to prove etcd accepts writes again. if it doesn't, the
    live data itself fills the quota, and the run fails saying so: no defrag can shrink live data.
    raise `quota-backend-bytes` or find what is filling etcd. it also fails if a member is still
@@ -651,7 +653,10 @@ run and run `make defrag-etcd` again. by hand, the same order:
    ectl compact "$rev" --physical
    ```
 2. defragment every member whose DB SIZE is still large, **one at a time, leader last**, each on
-   its own master: `ectl --endpoints=https://127.0.0.1:2379 --command-timeout=5m defrag`
+   its own master: `ectl --endpoints=https://127.0.0.1:2379 --command-timeout=5m defrag`. before
+   the leader's, hand leadership off from the leader's own master:
+   `ectl --endpoints=https://127.0.0.1:2379 move-leader <hex id of a done member>` (`ectl member list`
+   prints ids in hex).
 3. once every member's DB SIZE is well under the quota, disarm and prove a write gets through:
    ```sh
    ectl alarm disarm

@@ -87,3 +87,19 @@
           Not enough free space inside etcd for the defrag test to mean anything (MB per member):
           {{ bloat_status.stdout | default('') }} {{ bloat_status.stderr | default('') }}
         success_msg: "Reclaimable before defrag (MB per member): {{ bloat_status.stdout }}"
+
+    # test_etcd_defragmented.yaml checks the leader handed leadership off before its own defrag.
+    - name: Record which member leads before the defrag
+      ansible.builtin.shell: |
+        set -o pipefail
+        export ETCDCTL_API=3
+        etcdctl endpoint status \
+          --endpoints=https://127.0.0.1:2379 \
+          --command-timeout=30s --dial-timeout=10s \
+          --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+          --cert=/etc/kubernetes/pki/etcd/server.crt \
+          --key=/etc/kubernetes/pki/etcd/server.key \
+          --write-out=json | jq -r '.[0].Status.leader' > /root/molecule-etcd-leader-before
+      args:
+        executable: /bin/bash
+      changed_when: true

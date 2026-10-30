@@ -387,7 +387,8 @@ nothing to reclaim, so `tests/bloat_etcd.yaml` first writes ~250MB of throwaway 
 etcd is healthy with no alarms, and exactly one readable snapshot exists. A second run with the
 snapshot turned off must skip every member and report `changed=0`, through
 `bastion_run_assert_no_changes`. The leader-last ordering is not asserted on the cluster: the run
-log prints it under *Report the order*.
+log prints it under *Report the order*. What is asserted is that the member leading before the run
+no longer leads after it, since the leader hands leadership off before its own defrag.
 
 It then tests the case the target exists for: recovery from a `NOSPACE` alarm. The nodes' apt
 etcdctl is 3.4, which ignores alarms in `endpoint health`, so on it these steps would pass even

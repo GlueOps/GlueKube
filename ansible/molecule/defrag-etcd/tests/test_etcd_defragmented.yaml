@@ -40,6 +40,33 @@
           skipped or not defragmented (MB per member): {{ defrag_status.stdout }}
         success_msg: "Reclaimable after defrag (MB per member): {{ defrag_status.stdout }}"
 
+    # The leader is defragmented last and hands leadership off first, so it no longer leads.
+    # Compared as text, so a uint64 id never goes through a float.
+    - name: Read which member led before the defrag, and which leads now
+      ansible.builtin.shell: |
+        set -o pipefail
+        export ETCDCTL_API=3
+        cat /root/molecule-etcd-leader-before
+        etcdctl endpoint status \
+          --endpoints=https://127.0.0.1:2379 \
+          --command-timeout=30s --dial-timeout=10s \
+          --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+          --cert=/etc/kubernetes/pki/etcd/server.crt \
+          --key=/etc/kubernetes/pki/etcd/server.key \
+          --write-out=json | jq -r '.[0].Status.leader'
+      args:
+        executable: /bin/bash
+      register: defrag_leaders
+      changed_when: false
+
+    - name: Leadership moved off the old leader
+      ansible.builtin.assert:
+        that:
+          - defrag_leaders.stdout_lines | length == 2
+          - defrag_leaders.stdout_lines[0] != defrag_leaders.stdout_lines[1]
+        fail_msg: "etcd leader before and after the defrag: {{ defrag_leaders.stdout_lines }}"
+        success_msg: "etcd leader before and after the defrag: {{ defrag_leaders.stdout_lines }}"
+
     - name: Every member is healthy
       ansible.builtin.include_role:
         name: master

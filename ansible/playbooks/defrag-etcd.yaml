@@ -12,7 +12,8 @@
 #      auto-compaction has not reached yet is the space defrag can give back
 #   4. members are defragmented one at a time (serial: 1, never `defrag --cluster`), followers first
 #      and the leader last, with the health gate after each one. A member blocks reads and writes
-#      while it defragments, so this causes at most one leader election.
+#      while it defragments, so the leader first hands leadership to a member that is already done
+#      (etcdctl move-leader): a planned transfer, not an election from late heartbeats.
 #   5. NOSPACE is disarmed, and a test write proves etcd accepts writes again. If it does not, the
 #      live data itself is at the quota and the run fails saying so: defrag cannot fix that.
 #
