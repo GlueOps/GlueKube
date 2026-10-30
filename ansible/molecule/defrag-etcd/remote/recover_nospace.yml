@@ -1,0 +1,16 @@
+---
+# Molecule runs this; the bastion runs ../../playbooks/defrag-etcd.yaml.
+#
+# Exactly what `make defrag-etcd` runs, against a cluster in NOSPACE -- the case it exists for.
+- name: Recover from NOSPACE from the bastion
+  hosts: bastion
+  gather_facts: false
+  vars_files:
+    - ../../common/bastion-vars.yml
+  tasks:
+    - name: Run ../../playbooks/defrag-etcd.yaml on the bastion
+      ansible.builtin.include_tasks: ../../common/bastion-run.yml
+      vars:
+        bastion_run_name: recover_nospace
+        bastion_run_playbook: ../../playbooks/defrag-etcd.yaml
+        bastion_run_timeout: 3600

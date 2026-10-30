@@ -1,0 +1,21 @@
+---
+# Molecule runs this; the bastion runs ../../playbooks/defrag-etcd.yaml.
+#
+# The re-run an operator makes when unsure whether the first one went through. Nothing is left to
+# reclaim, so every member must be skipped and the run must change nothing. The snapshot is turned
+# off for it: it is the one task that always changes, and test_etcd_defragmented.yml has already
+# checked it.
+- name: Defragment etcd a second time from the bastion
+  hosts: bastion
+  gather_facts: false
+  vars_files:
+    - ../../common/bastion-vars.yml
+  tasks:
+    - name: Run ../../playbooks/defrag-etcd.yaml on the bastion
+      ansible.builtin.include_tasks: ../../common/bastion-run.yml
+      vars:
+        bastion_run_name: defrag_etcd_again
+        bastion_run_playbook: ../../playbooks/defrag-etcd.yaml
+        bastion_run_timeout: 1800
+        bastion_run_extra_args: "-e etcd_defrag_snapshot=false"
+        bastion_run_assert_no_changes: true

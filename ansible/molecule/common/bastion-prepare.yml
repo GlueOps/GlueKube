@@ -110,7 +110,8 @@
     mode: "0600"
   vars:
     other_scenarios: >-
-      {{ ['test-cluster', 'scale-cluster', 'rotate-master-nodes']
+      {{ ['test-cluster', 'scale-cluster', 'rotate-master-nodes', 'upgrade-control-plane',
+          'defrag-etcd']
          | reject('equalto', bastion_scenario_name)
          | map('regex_replace', '^(.*)$', '*/molecule/\\g<1>/*')
          | list }}

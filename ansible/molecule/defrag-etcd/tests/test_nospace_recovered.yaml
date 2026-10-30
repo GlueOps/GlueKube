@@ -1,0 +1,65 @@
+---
+# What `make defrag-etcd` must leave behind after a NOSPACE: no alarm, etcd and the apiserver both
+# taking writes, and the live keys raise_nospace.yaml wrote still there -- the compaction drops
+# history, never current values. Run with the borrowed etcdctl still in place, so the health gate
+# here is the 3.5+ one that fails on any raised alarm.
+- name: Check etcd recovered from NOSPACE
+  hosts: masters[0]
+  become: true
+  gather_facts: false
+  vars:
+    nospace_prefix: /molecule-nospace/
+    nospace_live_keys: 5
+  tasks:
+    - name: Every member is healthy, with no alarm raised
+      ansible.builtin.include_role:
+        name: master
+        tasks_from: master-node-rotation/check-etcd-health.yaml
+
+    - name: Read the alarms and the surviving keys, and write through etcd
+      ansible.builtin.shell: |
+        set -euo pipefail
+        export ETCDCTL_API=3
+        ectl() {
+          etcdctl --endpoints=https://127.0.0.1:2379 \
+            --command-timeout=30s --dial-timeout=10s \
+            --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+            --cert=/etc/kubernetes/pki/etcd/server.crt \
+            --key=/etc/kubernetes/pki/etcd/server.key "$@"
+        }
+        echo "alarms=[$(ectl alarm list | tr -d '\n')]"
+        echo "live_keys=$(ectl get --prefix '{{ nospace_prefix }}' --keys-only | grep -c . || true)"
+        ectl put /molecule-nospace-write-check x > /dev/null
+        ectl del /molecule-nospace-write-check > /dev/null
+        echo "etcd_write=ok"
+      args:
+        executable: /bin/bash
+      register: nospace_after
+      changed_when: false
+
+    # Retried: under NOSPACE the controllers lost their leases and are restarting, and the
+    # apiserver can take a moment to settle once etcd takes writes again.
+    - name: Write through the apiserver
+      ansible.builtin.shell: |
+        set -euo pipefail
+        export KUBECONFIG=/etc/kubernetes/admin.conf
+        # apply, not create, so a retry after a half-finished attempt does not hit AlreadyExists
+        kubectl -n default create configmap molecule-nospace-recovered --from-literal=recovered=true \
+          --dry-run=client -o yaml | kubectl apply -f -
+        kubectl -n default delete configmap molecule-nospace-recovered --ignore-not-found
+      args:
+        executable: /bin/bash
+      register: nospace_kubectl
+      changed_when: false
+      retries: 12
+      delay: 10
+      until: nospace_kubectl.rc == 0
+
+    - name: No alarm, writes accepted, live keys kept
+      ansible.builtin.assert:
+        that:
+          - "'alarms=[]' in nospace_after.stdout_lines"
+          - "'live_keys=' ~ nospace_live_keys in nospace_after.stdout_lines"
+          - "'etcd_write=ok' in nospace_after.stdout_lines"
+        fail_msg: "After recovery: {{ nospace_after.stdout_lines }}"
+        success_msg: "After recovery: {{ nospace_after.stdout_lines }}"

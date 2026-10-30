@@ -1,0 +1,324 @@
+---
+# Recovers etcd from a NOSPACE alarm, and gives back to the filesystem the space that compaction
+# freed inside the db. Compaction (auto-compaction-retention in kubeadm-stacked-config.yaml.j2) never
+# shrinks the file, so dbSize only grows toward quota-backend-bytes; at the quota etcd raises NOSPACE
+# and the cluster turns read-only. That alarm is the usual reason to run this.
+#
+# etcd's documented recovery is compact, defrag, disarm, and that is the order here:
+#   1. every member must be reachable (a NOSPACE-only alarm counts as healthy -- see
+#      check-etcd-health.yaml); a CORRUPT alarm stops the run before anything is touched
+#   2. a snapshot is taken on the orchestrator
+#   3. with NOSPACE raised, etcd is compacted to the current revision: the last hour of history that
+#      auto-compaction has not reached yet is the space defrag can give back
+#   4. members are defragmented one at a time (serial: 1, never `defrag --cluster`), followers first
+#      and the leader last, with the health gate after each one. A member blocks reads and writes
+#      while it defragments, so the leader first hands leadership to a member that is already done
+#      (etcdctl move-leader): a planned transfer, not an election from late heartbeats.
+#   5. NOSPACE is disarmed, and a test write proves etcd accepts writes again. If it does not, the
+#      live data itself is at the quota and the run fails saying so: defrag cannot fix that.
+#
+# Without an alarm it is a routine defrag: members with less than master_etcd_defrag_min_free_mb to
+# reclaim are skipped. With NOSPACE raised none are, because dbSizeInUse only refreshes on a write
+# and NOSPACE rejects writes, so the skip check cannot be trusted. Operator-triggered only.
+# Knobs, all -e overridable: master_etcd_defrag_force and master_etcd_defrag_min_free_mb
+# (roles/master/defaults/main.yaml), and the etcd_defrag_snapshot* play vars below.
+- name: Elect the orchestrator
+  ansible.builtin.import_playbook: elect-orchestrator.yaml
+
+- name: Check etcd, snapshot it, and order the members leader last
+  hosts: orchestrator
+  become: true
+  vars:
+    etcd_defrag_snapshot: true
+    etcd_defrag_snapshot_dir: /var/lib/etcd-backup
+    # a snapshot is as big as the db's in-use size, up to the 8GB quota, so only a few are kept
+    etcd_defrag_snapshot_keep: 3
+  tasks:
+    - name: Every etcd member is healthy before anything is defragmented
+      ansible.builtin.include_role:
+        name: master
+        tasks_from: master-node-rotation/check-etcd-health.yaml
+      vars:
+        # NOSPACE is what this playbook clears, so it cannot be a reason not to start.
+        master_etcd_health_allow_nospace: true
+
+    - name: List the etcd alarms
+      ansible.builtin.shell: |
+        export ETCDCTL_API=3
+        etcdctl alarm list \
+          --command-timeout=30s --dial-timeout=10s \
+          --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+          --cert=/etc/kubernetes/pki/etcd/server.crt \
+          --key=/etc/kubernetes/pki/etcd/server.key
+      register: etcd_defrag_alarms_before
+      changed_when: false
+
+    # Defragmenting rewrites the db from what it holds, so on a member whose data is suspect it
+    # would bake the corruption into a fresh file and the snapshot alike.
+    - name: No CORRUPT alarm is raised
+      ansible.builtin.assert:
+        that:
+          - "'CORRUPT' not in etcd_defrag_alarms_before.stdout"
+        fail_msg: >-
+          etcd has a CORRUPT alarm raised, so nothing was defragmented. A corrupt member has to be
+          removed and re-added (or the cluster restored from a snapshot) first:
+          {{ etcd_defrag_alarms_before.stdout_lines }}
+        quiet: true
+
+    - name: Note whether NOSPACE is raised
+      ansible.builtin.set_fact:
+        etcd_defrag_nospace: "{{ 'NOSPACE' in etcd_defrag_alarms_before.stdout }}"
+
+    - name: Read the status of every etcd member
+      ansible.builtin.shell: |
+        export ETCDCTL_API=3
+        etcdctl endpoint status --cluster \
+          --command-timeout=30s --dial-timeout=10s \
+          --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+          --cert=/etc/kubernetes/pki/etcd/server.crt \
+          --key=/etc/kubernetes/pki/etcd/server.key \
+          --write-out=json
+      register: etcd_defrag_status
+      changed_when: false
+
+    # Every member reports the same leader id; the leader is the member whose own id matches it.
+    - name: Find the leader and the followers
+      ansible.builtin.set_fact:
+        etcd_defrag_leader_ips: >-
+          {{ etcd_defrag_members
+             | selectattr('Status.header.member_id', 'equalto', etcd_defrag_leader_id)
+             | map(attribute='Endpoint') | map('urlsplit', 'hostname') | list }}
+        etcd_defrag_follower_ips: >-
+          {{ etcd_defrag_members
+             | rejectattr('Status.header.member_id', 'equalto', etcd_defrag_leader_id)
+             | map(attribute='Endpoint') | map('urlsplit', 'hostname') | list }}
+      vars:
+        etcd_defrag_members: "{{ etcd_defrag_status.stdout | from_json }}"
+        etcd_defrag_leader_id: "{{ (etcd_defrag_status.stdout | from_json | first).Status.leader }}"
+
+    # Members are matched back to inventory hosts by the `ip` their client URL carries, the same
+    # address etcd_initial_cluster is built from.
+    - name: Order the members, followers first and the leader last
+      ansible.builtin.set_fact:
+        etcd_defrag_order: >-
+          {{ (etcd_defrag_follower_ips | map('extract', etcd_defrag_hosts_by_ip) | sort)
+             + (etcd_defrag_leader_ips | map('extract', etcd_defrag_hosts_by_ip) | list) }}
+      vars:
+        etcd_defrag_hosts_by_ip: >-
+          {{ dict(groups['masters'] | map('extract', hostvars, 'ip') | zip(groups['masters'])) }}
+
+    - name: Every etcd member is an inventory master, and there is exactly one leader
+      ansible.builtin.assert:
+        that:
+          - etcd_defrag_leader_ips | length == 1
+          - (etcd_defrag_follower_ips + etcd_defrag_leader_ips) | length == groups['masters'] | length
+          - (etcd_defrag_follower_ips + etcd_defrag_leader_ips)
+            | difference(groups['masters'] | map('extract', hostvars, 'ip')) | length == 0
+        fail_msg: >-
+          etcd reports members {{ etcd_defrag_follower_ips + etcd_defrag_leader_ips }}
+          (leader {{ etcd_defrag_leader_ips }}), but the inventory's masters are
+          {{ groups['masters'] | map('extract', hostvars, 'ip') | list }}.
+          Reconcile the two (make sync) before defragmenting.
+        quiet: true
+
+    - name: Report the order
+      ansible.builtin.debug:
+        msg: "Defragmenting in this order, leader last: {{ etcd_defrag_order | join(' -> ') }}"
+
+    - name: Snapshot etcd before defragmenting
+      when: etcd_defrag_snapshot | bool
+      block:
+        - name: Create the snapshot directory
+          ansible.builtin.file:
+            path: "{{ etcd_defrag_snapshot_dir }}"
+            state: directory
+            owner: root
+            group: root
+            mode: "0700"
+
+        - name: Save the snapshot
+          ansible.builtin.shell: |
+            set -euo pipefail
+            export ETCDCTL_API=3
+            dest="{{ etcd_defrag_snapshot_dir }}/etcd-$(date -u +%Y%m%dT%H%M%SZ).db"
+            etcdctl snapshot save "$dest" \
+              --endpoints=https://127.0.0.1:2379 \
+              --command-timeout=5m --dial-timeout=10s \
+              --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+              --cert=/etc/kubernetes/pki/etcd/server.crt \
+              --key=/etc/kubernetes/pki/etcd/server.key >&2
+            echo "$dest"
+          args:
+            executable: /bin/bash
+          register: etcd_defrag_snapshot_result
+          changed_when: true
+
+        - name: Prune all but the newest snapshots
+          ansible.builtin.shell: |
+            set -euo pipefail
+            ls -1t {{ etcd_defrag_snapshot_dir }}/etcd-*.db \
+              | tail -n +{{ (etcd_defrag_snapshot_keep | int) + 1 }} \
+              | xargs -r rm -v --
+          args:
+            executable: /bin/bash
+          register: etcd_defrag_pruned
+          changed_when: etcd_defrag_pruned.stdout | length > 0
+
+        - name: Report the snapshot
+          ansible.builtin.debug:
+            msg: "etcd snapshot saved on {{ inventory_hostname }} at {{ etcd_defrag_snapshot_result.stdout | trim }}"
+
+    # Compaction drops every revision older than the current one. Revisions are history, not live
+    # keys, and nothing in Kubernetes reads them past a watch reconnect -- which resyncs with a
+    # fresh list. --physical waits until the space is actually free, so the defrag sees it.
+    - name: Compact etcd to the current revision
+      ansible.builtin.shell: |
+        set -euo pipefail
+        export ETCDCTL_API=3
+        etcdctl compact {{ etcd_defrag_revision }} --physical \
+          --endpoints=https://127.0.0.1:2379 \
+          --command-timeout=5m --dial-timeout=10s \
+          --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+          --cert=/etc/kubernetes/pki/etcd/server.crt \
+          --key=/etc/kubernetes/pki/etcd/server.key
+      args:
+        executable: /bin/bash
+      vars:
+        etcd_defrag_revision: >-
+          {{ etcd_defrag_status.stdout | from_json | map(attribute='Status.header.revision') | max }}
+      register: etcd_defrag_compact
+      changed_when: etcd_defrag_compact.rc == 0
+      # A compaction already at or past this revision (auto-compaction got there first) is fine.
+      failed_when:
+        - etcd_defrag_compact.rc != 0
+        - "'required revision has been compacted' not in etcd_defrag_compact.stderr"
+      when: etcd_defrag_nospace | bool
+
+    # add_host keeps insertion order, and the next play reads the group in that order.
+    - name: Publish the defrag order as a group
+      ansible.builtin.add_host:
+        name: "{{ item }}"
+        groups: etcd_defrag_order
+      loop: "{{ etcd_defrag_order }}"
+      changed_when: false
+
+- name: Defragment etcd one member at a time
+  hosts: etcd_defrag_order
+  order: inventory
+  serial: 1
+  any_errors_fatal: true
+  become: true
+  tasks:
+    - name: Defragment the local etcd member
+      ansible.builtin.include_role:
+        name: master
+        tasks_from: defrag-etcd.yaml
+      vars:
+        master_etcd_defrag_nospace: "{{ hostvars[groups['orchestrator'] | first].etcd_defrag_nospace }}"
+
+- name: Clear a NOSPACE alarm and prove etcd takes writes
+  hosts: orchestrator
+  become: true
+  vars:
+    # The run fails if a member is still at or above this share of quota-backend-bytes afterwards.
+    etcd_defrag_max_used_pct: 80
+  tasks:
+    - name: List the etcd alarms
+      ansible.builtin.shell: |
+        export ETCDCTL_API=3
+        etcdctl alarm list \
+          --command-timeout=30s --dial-timeout=10s \
+          --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+          --cert=/etc/kubernetes/pki/etcd/server.crt \
+          --key=/etc/kubernetes/pki/etcd/server.key
+      register: etcd_defrag_alarms
+      changed_when: false
+
+    # `alarm disarm` clears every alarm. The first play refused to run with CORRUPT raised, so the
+    # guard below only matters if one was raised during the run.
+    - name: Disarm the NOSPACE alarm
+      ansible.builtin.shell: |
+        export ETCDCTL_API=3
+        etcdctl alarm disarm \
+          --command-timeout=30s --dial-timeout=10s \
+          --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+          --cert=/etc/kubernetes/pki/etcd/server.crt \
+          --key=/etc/kubernetes/pki/etcd/server.key
+      register: etcd_defrag_disarm
+      changed_when: etcd_defrag_disarm.rc == 0
+      when:
+        - "'NOSPACE' in etcd_defrag_alarms.stdout"
+        - "'CORRUPT' not in etcd_defrag_alarms.stdout"
+
+    - name: Report any alarm left in place
+      ansible.builtin.debug:
+        msg: "etcd alarms left in place, check them by hand: {{ etcd_defrag_alarms.stdout_lines }}"
+      when: "'CORRUPT' in etcd_defrag_alarms.stdout"
+
+    # The disarm is only a request: if the db is still over the quota, etcd raises NOSPACE again on
+    # the first write, and the cluster is as read-only as before. One put proves it is not. Outside
+    # the /registry prefix, so the apiserver never sees the key.
+    - name: Etcd accepts writes
+      ansible.builtin.shell: |
+        set -euo pipefail
+        export ETCDCTL_API=3
+        ectl() {
+          etcdctl --endpoints=https://127.0.0.1:2379 \
+            --command-timeout=30s --dial-timeout=10s \
+            --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+            --cert=/etc/kubernetes/pki/etcd/server.crt \
+            --key=/etc/kubernetes/pki/etcd/server.key "$@"
+        }
+        ectl put /gluekube/defrag-etcd/write-check "$(date -u +%FT%TZ)" > /dev/null
+        ectl del /gluekube/defrag-etcd/write-check > /dev/null
+      args:
+        executable: /bin/bash
+      register: etcd_defrag_write_check
+      changed_when: false
+      retries: 3
+      delay: 5
+      until: etcd_defrag_write_check.rc == 0
+      failed_when: false
+
+    # A write that fits proves little on its own: a db left at 95% of the quota takes one small
+    # put and raises NOSPACE again minutes later. Each member's dbSize has to be well under it.
+    - name: Read the quota and every member's size
+      ansible.builtin.shell: |
+        set -euo pipefail
+        export ETCDCTL_API=3
+        quota=$(grep -o -- '--quota-backend-bytes=[0-9]*' /etc/kubernetes/manifests/etcd.yaml \
+                | cut -d= -f2 || true)
+        etcdctl endpoint status --cluster -w json \
+          --command-timeout=30s --dial-timeout=10s \
+          --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+          --cert=/etc/kubernetes/pki/etcd/server.crt \
+          --key=/etc/kubernetes/pki/etcd/server.key \
+          | jq -c --arg quota "${quota:-2147483648}" \
+              '{quota: ($quota | tonumber), dbSize: (map({(.Endpoint): .Status.dbSize}) | add)}'
+      args:
+        executable: /bin/bash
+      register: etcd_defrag_sizes
+      changed_when: false
+
+    - name: Etcd is writable again, with room to spare
+      ansible.builtin.assert:
+        that:
+          - etcd_defrag_write_check.rc == 0
+          - etcd_defrag_used_pct | int < etcd_defrag_max_used_pct | int
+        fail_msg: |
+          {% if etcd_defrag_write_check.rc != 0 %}
+          etcd still rejects writes after compacting, defragmenting and disarming:
+          {{ etcd_defrag_write_check.stderr | default('') }}
+          {% else %}
+          etcd takes writes again, but its largest member is still at {{ etcd_defrag_used_pct }}% of
+          quota-backend-bytes, so NOSPACE will be back as soon as it grows.
+          {% endif %}
+          That is live data, which no defrag can shrink. Raise quota-backend-bytes
+          (kubeadm-stacked-config.yaml.j2) or find what is filling etcd.
+          Quota and sizes: {{ etcd_defrag_sizes.stdout }}
+        success_msg: "etcd takes writes; largest member at {{ etcd_defrag_used_pct }}% of the quota"
+      vars:
+        # 2GB is etcd's own default, for a manifest without the flag.
+        etcd_defrag_used_pct: >-
+          {{ ((etcd_defrag_sizes.stdout | from_json).dbSize | dict2items | map(attribute='value') | max)
+             * 100 // (etcd_defrag_sizes.stdout | from_json).quota }}

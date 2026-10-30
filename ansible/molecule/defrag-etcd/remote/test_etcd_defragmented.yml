@@ -1,0 +1,16 @@
+---
+# Molecule runs this; the bastion runs tests/test_etcd_defragmented.yaml.
+#
+# Every member's free pages are gone, etcd is healthy with no alarms, and one snapshot exists.
+- name: Check etcd was defragmented from the bastion
+  hosts: bastion
+  gather_facts: false
+  vars_files:
+    - ../../common/bastion-vars.yml
+  tasks:
+    - name: Run tests/test_etcd_defragmented.yaml on the bastion
+      ansible.builtin.include_tasks: ../../common/bastion-run.yml
+      vars:
+        bastion_run_name: test_etcd_defragmented
+        bastion_run_playbook: tests/test_etcd_defragmented.yaml
+        bastion_run_timeout: 900

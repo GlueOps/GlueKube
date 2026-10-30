@@ -1,7 +1,7 @@
 ## Which scenario runs where
 
-All four scenarios — `test-cluster`, `scale-cluster`, `rotate-master-nodes` and
-`upgrade-control-plane` — build on
+All five scenarios — `test-cluster`, `scale-cluster`, `rotate-master-nodes`,
+`upgrade-control-plane` and `defrag-etcd` — build on
 **Proxmox**. They share one implementation in `molecule/common/`:
 
 | file | what it is |
@@ -89,6 +89,7 @@ plus a per-scenario offset, masters at `base+1..`, workers at `base+11..`:
 | `scale-cluster` | 100 | 9100 | 9101–9103 | 9111–9113 |
 | `rotate-master-nodes` | 200 | 9200 | 9201–9209 | 9211 |
 | `upgrade-control-plane` | 300 | 9300 | 9301–9303 | 9311–9312 |
+| `defrag-etcd` | 400 | 9400 | 9401–9403 | 9411 |
 
 The offsets keep the three scenarios from colliding with **each other**. They do nothing about a
 second run of the *same* scenario: create is idempotent on the vmid, so it does not fail, it
@@ -96,7 +97,7 @@ silently *adopts* the first run's VMs and writes their IPs into its own inventor
 reaches `destroy` first deletes the other's VMs, and its DNS teardown removes the domain the
 other run is still using.
 
-Pick a `PROXMOX_VMID_BASE` leaving 9000–9211 (at the default) free and reserved for molecule. The
+Pick a `PROXMOX_VMID_BASE` leaving 9000–9411 (at the default) free and reserved for molecule. The
 range starts at the base itself now — that is the bastion. `destroy` deletes those vmids outright,
 so a base that collides with a real VM destroys it. The offsets live in each scenario's
 `create.yml` *and* `destroy.yml` — change one, change both, or destroy will delete the wrong range.
@@ -248,7 +249,7 @@ export PROXMOX_SNIPPET_DIR="/var/lib/vz/snippets"
 export PROXMOX_TAGS="qa-gluekube-molecule"
 
 # the bottom of the vmid range. each scenario adds its own offset on top -- see the table under
-# "Do not run a scenario while CI is running one". everything from base to base+312 must be free,
+# "Do not run a scenario while CI is running one". everything from base to base+411 must be free,
 # and must not be VMs you care about: destroy.yml deletes them.
 export PROXMOX_VMID_BASE="9000"
 
@@ -377,6 +378,28 @@ apiserver and every master are on the pin while `worker-node-1` still runs the o
 Then `worker-node-2` joins through `sync` and must come up Ready on the pin. Finally
 `worker-node-1` is cordoned and removed through `sync` (scale-down drains and deletes an old-version
 node from the upgraded client), after which it must be gone and every remaining node on the pin.
+
+`defrag-etcd` tests `make defrag-etcd` end to end on three masters and one worker. A fresh db has
+nothing to reclaim, so `tests/bloat_etcd.yaml` first writes ~250MB of throwaway keys under
+`/molecule-defrag-etcd/`, deletes them and compacts, and asserts that every member has at least
+150MB free inside its db. Then `playbooks/defrag-etcd.yaml` runs, and
+`tests/test_etcd_defragmented.yaml` asserts that every member has at most 50MB left to reclaim,
+etcd is healthy with no alarms, and exactly one readable snapshot exists. A second run with the
+snapshot turned off must skip every member and report `changed=0`, through
+`bastion_run_assert_no_changes`. The leader-last ordering is not asserted on the cluster: the run
+log prints it under *Report the order*. What is asserted is that the member leading before the run
+no longer leads after it, since the leader hands leadership off before its own defrag.
+
+It then tests the case the target exists for: recovery from a `NOSPACE` alarm. The nodes' apt
+etcdctl is 3.4, which ignores alarms in `endpoint health`, so on it these steps would pass even
+with a NOSPACE health-gate bug. `tests/borrow_etcdctl.yaml` therefore copies the etcd pod's own
+3.5+ client into `/usr/local/bin` on every master first. `tests/raise_nospace.yaml` restarts each
+member, one at a time, with a quota 96MB above its current size. It then overwrites five keys until
+etcd raises `NOSPACE`, and asserts that the alarm is up, that `endpoint health` fails on it, and that
+`kubectl create` is rejected. `make defrag-etcd` then runs unchanged. `tests/test_nospace_recovered.yaml`
+asserts that no alarm is left, that etcd and the apiserver both take writes, and that the five live
+keys survived the compaction. `tests/restore_quota.yaml` puts the original manifests back and
+removes the test keys and the borrowed client before `verify`.
 
 ## DNS lifecycle
 

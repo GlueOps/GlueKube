@@ -1,0 +1,163 @@
+---
+# Puts the cluster into the state `make defrag-etcd` is run for: a NOSPACE alarm, and the cluster
+# read-only.
+#
+# The real quota is 8GB, so each member's etcd is restarted with a quota just above its current
+# size, one member at a time so quorum holds. Then a few keys are overwritten until etcd refuses:
+# the space is filled by their history, not by live data, which is how a real cluster gets there --
+# churn auto-compaction has not caught up with. The live keys stay, and test_nospace_recovered.yaml
+# checks they survive the recovery.
+#
+# restore_quota.yaml puts the 8GB back from the copy saved here.
+- name: Pick a quota just above the current db size
+  hosts: masters[0]
+  become: true
+  gather_facts: false
+  vars:
+    # Headroom above today's largest member, filled by the overwrites below.
+    nospace_headroom_mb: 96
+  tasks:
+    - name: Read every member's size
+      ansible.builtin.shell: |
+        set -o pipefail
+        export ETCDCTL_API=3
+        etcdctl endpoint status --cluster \
+          --command-timeout=30s --dial-timeout=10s \
+          --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+          --cert=/etc/kubernetes/pki/etcd/server.crt \
+          --key=/etc/kubernetes/pki/etcd/server.key \
+          --write-out=json | jq '[.[].Status.dbSize] | max'
+      args:
+        executable: /bin/bash
+      register: nospace_max_db
+      changed_when: false
+
+    - name: Set the quota for every master
+      ansible.builtin.set_fact:
+        nospace_quota: "{{ nospace_max_db.stdout | int + nospace_headroom_mb * 1048576 }}"
+      delegate_to: "{{ item }}"
+      delegate_facts: true
+      loop: "{{ groups['masters'] }}"
+
+- name: Restart etcd with the small quota
+  hosts: masters
+  serial: 1
+  become: true
+  gather_facts: false
+  tasks:
+    # Outside /etc/kubernetes/manifests: the kubelet runs every file in there as a static pod.
+    - name: Keep the original etcd manifest
+      ansible.builtin.copy:
+        src: /etc/kubernetes/manifests/etcd.yaml
+        dest: /root/etcd.yaml.molecule-orig
+        remote_src: true
+        force: false
+        mode: "0600"
+
+    - name: Lower quota-backend-bytes in the etcd manifest
+      ansible.builtin.replace:
+        path: /etc/kubernetes/manifests/etcd.yaml
+        regexp: '--quota-backend-bytes=\d+'
+        replace: "--quota-backend-bytes={{ nospace_quota }}"
+
+    - name: Wait for the kubelet to restart etcd with it
+      ansible.builtin.shell: |
+        for pid in $(pgrep -x etcd); do tr '\0' ' ' < "/proc/$pid/cmdline"; echo; done
+      register: nospace_etcd_cmdline
+      changed_when: false
+      retries: 36
+      delay: 5
+      until: ("--quota-backend-bytes=" ~ nospace_quota ~ " ") in nospace_etcd_cmdline.stdout
+
+    - name: Wait for the whole cluster to be healthy again
+      ansible.builtin.include_role:
+        name: master
+        tasks_from: master-node-rotation/check-etcd-health.yaml
+      vars:
+        master_etcd_health_retries: 12
+
+- name: Fill etcd until NOSPACE
+  hosts: masters[0]
+  become: true
+  gather_facts: false
+  vars:
+    nospace_prefix: /molecule-nospace/
+    nospace_live_keys: 5
+  tasks:
+    # The value goes in on stdin: a single argv string is capped at 128KB on Linux.
+    - name: Overwrite a few keys until etcd refuses the write
+      ansible.builtin.shell: |
+        set -uo pipefail
+        export ETCDCTL_API=3
+        ectl() {
+          etcdctl --endpoints=https://127.0.0.1:2379 \
+            --command-timeout=60s --dial-timeout=10s \
+            --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+            --cert=/etc/kubernetes/pki/etcd/server.crt \
+            --key=/etc/kubernetes/pki/etcd/server.key "$@"
+        }
+        value=$(mktemp)
+        trap 'rm -f "$value"' EXIT
+        head -c 393216 /dev/urandom | base64 -w0 > "$value"
+        for i in $(seq 0 2000); do
+          if ! ectl put "{{ nospace_prefix }}$((i % {{ nospace_live_keys }}))" < "$value" > /dev/null 2> /tmp/nospace-err; then
+            cat /tmp/nospace-err
+            exit 0
+          fi
+        done
+        echo "still accepting writes after 2000 puts" >&2
+        exit 1
+      args:
+        executable: /bin/bash
+      register: nospace_fill
+      changed_when: true
+      failed_when: >-
+        nospace_fill.rc != 0 or
+        'database space exceeded' not in nospace_fill.stdout
+
+    - name: List the etcd alarms
+      ansible.builtin.shell: |
+        export ETCDCTL_API=3
+        etcdctl alarm list \
+          --command-timeout=30s --dial-timeout=10s \
+          --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+          --cert=/etc/kubernetes/pki/etcd/server.crt \
+          --key=/etc/kubernetes/pki/etcd/server.key
+      register: nospace_alarms
+      changed_when: false
+
+    # The point of borrow_etcdctl.yaml: on this client a raised alarm fails `endpoint health`, so
+    # the playbook only gets past its first health gate because of the NOSPACE allowance.
+    - name: Read endpoint health with the alarm raised
+      ansible.builtin.shell: |
+        export ETCDCTL_API=3
+        etcdctl endpoint health --cluster \
+          --command-timeout=30s --dial-timeout=10s \
+          --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+          --cert=/etc/kubernetes/pki/etcd/server.crt \
+          --key=/etc/kubernetes/pki/etcd/server.key \
+          --write-out=json
+      register: nospace_health
+      changed_when: false
+      failed_when: false
+
+    - name: Try a write through the apiserver
+      ansible.builtin.command:
+        argv: [kubectl, --kubeconfig, /etc/kubernetes/admin.conf, -n, default,
+               create, configmap, molecule-nospace-probe]
+      register: nospace_kubectl
+      changed_when: false
+      failed_when: false
+
+    - name: Etcd is in NOSPACE, the cluster is read-only, and etcdctl reports the alarm
+      ansible.builtin.assert:
+        that:
+          - "'NOSPACE' in nospace_alarms.stdout"
+          - nospace_health.rc != 0
+          - "'Active Alarm' in nospace_health.stdout"
+          - nospace_kubectl.rc != 0
+        fail_msg: |
+          alarms: {{ nospace_alarms.stdout_lines }}
+          endpoint health (rc {{ nospace_health.rc }}): {{ nospace_health.stdout }}
+          kubectl create (rc {{ nospace_kubectl.rc }}): {{ nospace_kubectl.stderr | default('') }}
+        success_msg: "NOSPACE raised: {{ nospace_alarms.stdout_lines }}"

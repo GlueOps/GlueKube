@@ -570,12 +570,149 @@ first on the starred ones and stops the run if a variable or the inventory shape
 | re-apply labels and taints only | `playbooks/setup-cluster.yaml --tags label_nodes` | |
 | move local-path-provisioner to Helm — once per pre-existing cluster; until you do, `setup-cluster.yaml` skips the release and says so | `playbooks/migrate-local-path-provisioner.yaml` | |
 | move Calico to the mirrored registries — once per cluster installed before the switch | `playbooks/migrate-calico-registry.yaml` | |
+| reclaim etcd disk space (defragment) | `make defrag-etcd` — see [defragmenting etcd](#defragmenting-etcd) | |
 | check the network before any of the above | `playbooks/check-network-connectivity.yaml` | |
 
 **There is no etcd backup or restore path in this repository.** Nothing here snapshots etcd before
 an upgrade and there is no playbook to restore one, so an upgrade is not recoverable from within
 this tooling — take a snapshot yourself, or restore from the platform's own backups. Adding it is
-tracked separately.
+tracked separately. (`make defrag-etcd` does take a snapshot, but only for its own run, and there
+is still no restore playbook.)
+
+## defragmenting etcd
+
+etcd's auto-compaction (`auto-compaction-retention: 1h`) frees space inside the db file but never
+shrinks the file, so `dbSize` keeps growing toward `quota-backend-bytes` (8GB). If it reaches that,
+etcd raises a `NOSPACE` alarm and the cluster turns read-only: the apiserver can serve reads but
+cannot write anything, not even node heartbeats. `make defrag-etcd` is the way back, following
+etcd's own recovery order (compact, defrag, disarm):
+
+1. checks that every member is reachable and that the etcd members match the inventory's masters.
+   a member whose only error is the `NOSPACE` alarm counts as healthy; a `CORRUPT` alarm stops
+   the run before anything is touched.
+2. saves a snapshot on the orchestrator to `/var/lib/etcd-backup/etcd-<UTC timestamp>.db` and keeps
+   the newest 3
+3. with `NOSPACE` raised, compacts etcd to the current revision. that drops the history
+   auto-compaction has not reached yet, which is the space the defrag can give back.
+4. defragments one member at a time, followers first and the leader last, pinned to that host's own
+   `127.0.0.1:2379` (never `--cluster`), and checks cluster health after each one. before the
+   leader's turn it hands leadership to a member that is already done (`etcdctl move-leader`), so a
+   long defrag cannot start an unplanned election.
+5. disarms `NOSPACE`, then writes a test key to prove etcd accepts writes again. if it doesn't, the
+   live data itself fills the quota, and the run fails saying so: no defrag can shrink live data.
+   raise `quota-backend-bytes` or find what is filling etcd. it also fails if a member is still
+   at 80% of the quota or more, since that would raise `NOSPACE` again soon.
+
+a member blocks reads and writes while it defragments. with no alarm raised it is a routine defrag:
+a member with less than 100MB to reclaim (`dbSize - dbSizeInUse`) is skipped. with `NOSPACE`
+raised no member is skipped, because `dbSizeInUse` only refreshes on a write and `NOSPACE` rejects
+writes. to see the sizes first, run `etcdctl endpoint status --cluster -w table` on a master.
+
+| override | default | |
+|---|---|---|
+| `-e master_etcd_defrag_force=true` | `false` | defragment every member, even ones under the threshold |
+| `-e master_etcd_defrag_min_free_mb=N` | `100` | the skip threshold |
+| `-e etcd_defrag_snapshot=false` | `true` | skip the snapshot |
+| `-e etcd_defrag_max_used_pct=N` | `80` | fail the run if a member is still at or above this share of the quota afterwards |
+| `-e etcd_defrag_snapshot_dir=PATH` / `-e etcd_defrag_snapshot_keep=N` | `/var/lib/etcd-backup` / `3` | where snapshots go and how many to keep |
+
+the make target takes no extra arguments, so to override any of these run the playbook directly:
+`ansible-playbook -i ansible/inventory/hosts.yaml ansible/playbooks/defrag-etcd.yaml -e master_etcd_defrag_force=true`.
+
+### when a defrag run fails
+
+every command below runs as root on a master, with this helper:
+
+```sh
+sudo -i
+export ETCDCTL_API=3
+ectl() { etcdctl --cacert=/etc/kubernetes/pki/etcd/ca.crt --cert=/etc/kubernetes/pki/etcd/server.crt \
+                 --key=/etc/kubernetes/pki/etcd/server.key "$@"; }
+ectl endpoint status --cluster -w table   # DB SIZE, IS LEADER and ERRORS for every member
+ectl alarm list
+grep -o -- '--quota-backend-bytes=[0-9]*' /etc/kubernetes/manifests/etcd.yaml
+```
+
+**a defrag timed out.** *Defragment the etcd member on &lt;host&gt;* failed with `context deadline
+exceeded`. etcdctl gives up after 5 minutes, but the member keeps defragmenting. the run stops
+there, and the members after it are untouched. don't restart etcd. wait, and on that host watch
+`ectl --endpoints=https://127.0.0.1:2379 endpoint status -w table` until it answers again with a
+smaller DB SIZE, and `ectl endpoint health --cluster` until every member is healthy. then re-run
+with the snapshot off, since the first run already took one:
+`ansible-playbook -i ansible/inventory/hosts.yaml ansible/playbooks/defrag-etcd.yaml -e etcd_defrag_snapshot=false`.
+members already defragmented are skipped. if `NOSPACE` is still raised they are defragmented
+again, which is quick on a small db, and compacting a second time is harmless.
+
+**the run failed partway and `NOSPACE` is still raised.** the last play never ran, so the alarm is
+still up and the cluster is still read-only. the simplest fix is to deal with whatever stopped the
+run and run `make defrag-etcd` again. by hand, the same order:
+
+1. compact to the current revision. `required revision has been compacted` means it already was:
+   ```sh
+   rev=$(ectl endpoint status -w json | jq '.[0].Status.header.revision')
+   ectl compact "$rev" --physical
+   ```
+2. defragment every member whose DB SIZE is still large, **one at a time, leader last**, each on
+   its own master: `ectl --endpoints=https://127.0.0.1:2379 --command-timeout=5m defrag`. before
+   the leader's, hand leadership off from the leader's own master:
+   `ectl --endpoints=https://127.0.0.1:2379 move-leader <hex id of a done member>` (`ectl member list`
+   prints ids in hex).
+3. once every member's DB SIZE is well under the quota, disarm and prove a write gets through:
+   ```sh
+   ectl alarm disarm
+   ectl put /gluekube/defrag-etcd/write-check x && ectl del /gluekube/defrag-etcd/write-check
+   ```
+
+if the put fails, or `NOSPACE` comes straight back, the live data itself fills the quota (the run
+fails at *Etcd is writable again, with room to spare* for the same reason). no defrag can fix
+that: raise `quota-backend-bytes` in `kubeadm-stacked-config.yaml.j2` and roll it out, or find what
+is filling etcd. never `alarm disarm` with a `CORRUPT` alarm raised; that member has to be removed
+and re-added, or the cluster restored.
+
+### the defrag snapshot, and restoring from it
+
+**where it is.** the snapshot is taken on the orchestrator, which every run elects afresh: the first
+master whose apiserver answers. so it is not always the same master. the run prints it under
+*Report the snapshot* as `etcd snapshot saved on <host> at /var/lib/etcd-backup/etcd-<UTC>.db`.
+without the log, run `ls -lt /var/lib/etcd-backup/` on every master. each master keeps only its own
+newest 3, so older snapshots can be on other masters.
+
+**restoring is a last resort.** it rolls the whole cluster back to the moment of the snapshot, and
+everything written since is lost: deployments, secrets, leases, node registrations. a `NOSPACE` that
+the steps above can clear is never a reason to restore. every master is restored from **the same
+file in one go**. restoring one member on its own leaves it disagreeing with the other two.
+
+1. copy the snapshot to every master, e.g. to `/root/etcd-restore.db`.
+2. on every master, stop etcd and the apiserver by moving their static pod manifests out:
+   ```sh
+   mkdir -p /root/manifests-stopped
+   mv /etc/kubernetes/manifests/etcd.yaml /etc/kubernetes/manifests/kube-apiserver.yaml /root/manifests-stopped/
+   ```
+   wait until `pgrep -x 'etcd|kube-apiserver'` prints nothing.
+3. on every master, read its own member name and peer URL:
+   `grep -E -- '--(name|initial-advertise-peer-urls)=' /root/manifests-stopped/etcd.yaml`.
+   build the full member list from all of them, as
+   `<name1>=https://<ip1>:2380,<name2>=https://<ip2>:2380,<name3>=https://<ip3>:2380`. the
+   manifest's own `--initial-cluster` can list fewer masters than there are now.
+4. on every master, move the old data aside and restore into a fresh one:
+   ```sh
+   mv /var/lib/etcd /var/lib/etcd.before-restore
+   ETCDCTL_API=3 etcdctl snapshot restore /root/etcd-restore.db \
+     --name <this master's name> \
+     --initial-advertise-peer-urls https://<this master's ip>:2380 \
+     --initial-cluster '<the full list from step 3>' \
+     --data-dir /var/lib/etcd
+   ```
+   etcdctl 3.5+ prints `Deprecated: Use etcdutl snapshot restore instead`. the command still
+   works, and apt doesn't ship `etcdutl`.
+5. on every master, put etcd back first, then the apiserver once `ectl endpoint health --cluster`
+   reports every member healthy:
+   ```sh
+   mv /root/manifests-stopped/etcd.yaml /etc/kubernetes/manifests/
+   mv /root/manifests-stopped/kube-apiserver.yaml /etc/kubernetes/manifests/
+   ```
+6. check `ectl member list`, `ectl endpoint health --cluster` and `kubectl get nodes`. delete
+   `/var/lib/etcd.before-restore` only once the cluster has been fine for a while.
 
 # Apt sources
 

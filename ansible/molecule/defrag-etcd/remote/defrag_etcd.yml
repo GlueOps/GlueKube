@@ -1,0 +1,16 @@
+---
+# Molecule runs this; the bastion runs ../../playbooks/defrag-etcd.yaml.
+#
+# Exactly what `make defrag-etcd` runs.
+- name: Defragment etcd from the bastion
+  hosts: bastion
+  gather_facts: false
+  vars_files:
+    - ../../common/bastion-vars.yml
+  tasks:
+    - name: Run ../../playbooks/defrag-etcd.yaml on the bastion
+      ansible.builtin.include_tasks: ../../common/bastion-run.yml
+      vars:
+        bastion_run_name: defrag_etcd
+        bastion_run_playbook: ../../playbooks/defrag-etcd.yaml
+        bastion_run_timeout: 3600

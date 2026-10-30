@@ -14,6 +14,7 @@ on:
           - 'rotate-master-nodes'
           - 'scale-cluster'
           - 'upgrade-control-plane'
+          - 'defrag-etcd'
         default: 'all'
 
 env:
@@ -22,7 +23,7 @@ env:
 # Every scenario reuses fixed resource identities and PATCHes the same AUTOGLUE_RECORD_ID, and
 # create is idempotent on that identity -- so two concurrent runs adopt and then destroy each
 # other's VMs. That identity is the Proxmox vmid range each scenario owns: PROXMOX_VMID_BASE plus
-# the scenario's own offset (0 / 100 / 200 / 300), which keeps the four apart from each other but not
+# the scenario's own offset (0 / 100 / 200 / 300 / 400), which keeps the five apart from each other but not
 # from a second run of themselves. Queue them instead (#461).
 #
 # cancel-in-progress must stay false: cancelling a molecule run mid-flight skips `destroy` and
@@ -325,6 +326,15 @@ jobs:
           ssh-keygen -t rsa -b 4096 -f molecule/upgrade-control-plane/keys/vm_node -N "" -C "molecule-test-key"
           chmod 600 molecule/upgrade-control-plane/keys/vm_node
           molecule test -s upgrade-control-plane
+
+      - name: Run Molecule Test - defrag-etcd
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.scenario == 'all' || github.event.inputs.scenario == 'defrag-etcd'
+        working-directory: ansible
+        run: |
+          mkdir -p molecule/defrag-etcd/keys/
+          ssh-keygen -t rsa -b 4096 -f molecule/defrag-etcd/keys/vm_node -N "" -C "molecule-test-key"
+          chmod 600 molecule/defrag-etcd/keys/vm_node
+          molecule test -s defrag-etcd
 
       # The old globs collected nothing: `.molecule` has not been molecule's state directory for
       # years, and `tests` is unmodified source. ~/.cache/molecule is the real ephemeral

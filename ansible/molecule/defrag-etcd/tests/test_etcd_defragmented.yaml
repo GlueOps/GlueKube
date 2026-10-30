@@ -1,0 +1,130 @@
+---
+# What `make defrag-etcd` must leave behind: every member's free pages given back, etcd healthy
+# with its full membership and no alarms, and a usable snapshot on the orchestrator.
+#
+# bloat_etcd.yaml left at least 150MB reclaimable on every member, above the 100MB skip threshold,
+# so anything still over defrag_max_reclaimable_mb here is a member the playbook skipped or failed
+# to defragment.
+- name: Check etcd was defragmented
+  hosts: masters[0]
+  become: true
+  gather_facts: false
+  vars:
+    # Not 0: the cluster keeps writing between the defrag and this read, and some of those pages are
+    # already free again.
+    defrag_max_reclaimable_mb: 50
+  tasks:
+    - name: Read every member's reclaimable space
+      ansible.builtin.shell: |
+        set -o pipefail
+        export ETCDCTL_API=3
+        etcdctl endpoint status --cluster \
+          --command-timeout=30s --dial-timeout=10s \
+          --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+          --cert=/etc/kubernetes/pki/etcd/server.crt \
+          --key=/etc/kubernetes/pki/etcd/server.key \
+          --write-out=json \
+          | jq -c 'map({(.Endpoint): (((.Status.dbSize - .Status.dbSizeInUse) / 1048576) | floor)}) | add'
+      args:
+        executable: /bin/bash
+      register: defrag_status
+      changed_when: false
+
+    - name: Every member was defragmented
+      ansible.builtin.assert:
+        that:
+          - defrag_status.stdout | from_json | length == groups['masters'] | length
+          - defrag_status.stdout | from_json | dict2items | map(attribute='value') | max <= defrag_max_reclaimable_mb
+        fail_msg: >-
+          A member still has more than {{ defrag_max_reclaimable_mb }}MB reclaimable, so it was
+          skipped or not defragmented (MB per member): {{ defrag_status.stdout }}
+        success_msg: "Reclaimable after defrag (MB per member): {{ defrag_status.stdout }}"
+
+    # The leader is defragmented last and hands leadership off first, so it no longer leads.
+    # Compared as text, so a uint64 id never goes through a float.
+    - name: Read which member led before the defrag, and which leads now
+      ansible.builtin.shell: |
+        set -o pipefail
+        export ETCDCTL_API=3
+        cat /root/molecule-etcd-leader-before
+        etcdctl endpoint status \
+          --endpoints=https://127.0.0.1:2379 \
+          --command-timeout=30s --dial-timeout=10s \
+          --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+          --cert=/etc/kubernetes/pki/etcd/server.crt \
+          --key=/etc/kubernetes/pki/etcd/server.key \
+          --write-out=json | jq -r '.[0].Status.leader'
+      args:
+        executable: /bin/bash
+      register: defrag_leaders
+      changed_when: false
+
+    - name: Leadership moved off the old leader
+      ansible.builtin.assert:
+        that:
+          - defrag_leaders.stdout_lines | length == 2
+          - defrag_leaders.stdout_lines[0] != defrag_leaders.stdout_lines[1]
+        fail_msg: "etcd leader before and after the defrag: {{ defrag_leaders.stdout_lines }}"
+        success_msg: "etcd leader before and after the defrag: {{ defrag_leaders.stdout_lines }}"
+
+    - name: Every member is healthy
+      ansible.builtin.include_role:
+        name: master
+        tasks_from: master-node-rotation/check-etcd-health.yaml
+
+    - name: List the etcd alarms
+      ansible.builtin.shell: |
+        export ETCDCTL_API=3
+        etcdctl alarm list \
+          --command-timeout=30s --dial-timeout=10s \
+          --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+          --cert=/etc/kubernetes/pki/etcd/server.crt \
+          --key=/etc/kubernetes/pki/etcd/server.key
+      register: defrag_alarms
+      changed_when: false
+
+    - name: No alarm is raised
+      ansible.builtin.assert:
+        that:
+          - defrag_alarms.stdout | trim | length == 0
+        fail_msg: "etcd has alarms raised: {{ defrag_alarms.stdout_lines }}"
+        quiet: true
+
+# The orchestrator is whichever master answered first, so the snapshot is looked for on all of them.
+- name: Check the snapshot was taken
+  hosts: masters
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Find the snapshots
+      ansible.builtin.find:
+        paths: /var/lib/etcd-backup
+        patterns: "etcd-*.db"
+      register: defrag_snapshots
+
+    - name: Exactly one master holds exactly one snapshot
+      ansible.builtin.assert:
+        that:
+          - defrag_snapshot_counts | select('gt', 0) | list | length == 1
+          - defrag_snapshot_counts | sum == 1
+        fail_msg: >-
+          Expected one snapshot on one master after a single defrag run, found
+          {{ dict(ansible_play_hosts | zip(defrag_snapshot_counts)) }}
+        quiet: true
+      vars:
+        defrag_snapshot_counts: >-
+          {{ ansible_play_hosts | map('extract', hostvars, ['defrag_snapshots', 'matched']) | list }}
+      run_once: true
+
+    # `snapshot status` reads the whole file and checks its hash, so a truncated or corrupt file
+    # fails here rather than at a restore. Not `revision`: it is 0 on a db with no live keys.
+    - name: The snapshot is a readable etcd snapshot
+      ansible.builtin.shell: |
+        export ETCDCTL_API=3
+        etcdctl snapshot status {{ defrag_snapshots.files[0].path }} --write-out=json
+      register: defrag_snapshot_status
+      changed_when: false
+      failed_when: >-
+        defrag_snapshot_status.rc != 0 or
+        (defrag_snapshot_status.stdout | from_json).totalSize | int <= 0
+      when: defrag_snapshots.matched > 0

@@ -25,7 +25,7 @@ export
 .PHONY: ping-servers check-connectivity setup sync rotate-master-nodes label-taint-nodes \
         rotate-certs-with-config upgrade-cluster upgrade-control-plane \
         migrate-local-path-provisioner \
-        migrate-calico-registry
+        migrate-calico-registry defrag-etcd
 
 ping-servers: .env
 	ansible all -i ansible/inventory/hosts.yaml -m ping
@@ -76,3 +76,10 @@ migrate-local-path-provisioner: .env
 migrate-calico-registry: .env
 	@echo "Moving Calico to the mirrored registries..."
 	ansible-playbook -i ansible/inventory/hosts.yaml ansible/playbooks/migrate-calico-registry.yaml
+
+# Gives back the disk space etcd's compaction freed, before the db reaches quota-backend-bytes and
+# etcd goes read-only. Snapshots first, then one member at a time, leader last. Run it at a quiet
+# time; it is not part of any other target.
+defrag-etcd: .env
+	@echo "Defragmenting etcd one member at a time, leader last..."
+	ansible-playbook -i ansible/inventory/hosts.yaml ansible/playbooks/defrag-etcd.yaml

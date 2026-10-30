@@ -1,0 +1,17 @@
+---
+# Molecule runs this; the bastion runs tests/borrow_etcdctl.yaml.
+#
+# Swaps noble's etcdctl 3.4 for the etcd pod's own 3.5+ client, which fails `endpoint health` on
+# an active alarm -- the client the NOSPACE steps have to run against.
+- name: Install an etcdctl that reports alarms from the bastion
+  hosts: bastion
+  gather_facts: false
+  vars_files:
+    - ../../common/bastion-vars.yml
+  tasks:
+    - name: Run tests/borrow_etcdctl.yaml on the bastion
+      ansible.builtin.include_tasks: ../../common/bastion-run.yml
+      vars:
+        bastion_run_name: borrow_etcdctl
+        bastion_run_playbook: tests/borrow_etcdctl.yaml
+        bastion_run_timeout: 900
