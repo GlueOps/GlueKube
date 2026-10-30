@@ -15,7 +15,7 @@
     - name: Copy etcdctl out of the running etcd container
       ansible.builtin.shell: |
         set -euo pipefail
-        # The etcd server process is the container's; no crictl on the nodes, and none needed.
+        # The etcd server process belongs to the container, so no crictl is needed (the nodes have none).
         pid=$(pgrep -xo etcd)
         install -m 0755 "/proc/$pid/root/usr/local/bin/etcdctl" /usr/local/bin/etcdctl
       args:
