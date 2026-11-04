@@ -1,0 +1,108 @@
+---
+# Node side of pod live migration (checkpoint/restore of pods through containerd and CRIU).
+# Imported by prepare-node.yaml only with live_migration_enabled, after containerd is installed
+# and before its config is written and it is (re)started. prepare-node.yaml then turns on
+# enable_experimental_restore_via_create and the CRI registry config_path, and restarts containerd
+# when anything here changed.
+
+# containerd 2.4 removed the restore-via-create path, so a cluster that migrates pods has to stay
+# below it. Pinned and held like kubeadm/kubelet: without the hold the dist-upgrade in
+# prepare-node.yaml moves it on the next run. The version is a full Docker repo version, e.g.
+# 2.3.6-1~ubuntu.24.04~noble (apt-cache madison containerd.io).
+- name: Install the pinned containerd.io version
+  ansible.builtin.apt:
+    name: containerd.io={{ containerd_package_version }}
+    state: present
+    allow_change_held_packages: true
+    allow_downgrade: true
+  register: common_containerd_pinned_package
+  retries: 5
+  delay: 60
+  until: common_containerd_pinned_package is succeeded
+  when: containerd_package_version | default('') | length > 0
+
+- name: Hold containerd.io at the pinned version
+  ansible.builtin.dpkg_selections:
+    name: containerd.io
+    selection: hold
+  when: containerd_package_version | default('') | length > 0
+
+- name: Read the installed containerd.io version
+  ansible.builtin.command: dpkg-query -W -f=${Version} containerd.io
+  register: common_containerd_installed_version
+  changed_when: false
+
+# Fails here rather than at the first restore, which on 2.4+ is a pod that silently starts fresh.
+- name: Refuse containerd 2.4 or newer
+  ansible.builtin.assert:
+    that:
+      - common_containerd_installed_version.stdout | regex_replace('-.*$', '') is version('2.4', '<')
+    fail_msg: >-
+      containerd.io {{ common_containerd_installed_version.stdout }} is installed, and live migration
+      needs containerd below 2.4 (restore via CreateContainer is gone in 2.4). Set
+      containerd_package_version to a 2.3 build, e.g. 2.3.6-1~ubuntu.24.04~noble.
+
+# Launchpad's criu/ppa directly, NOT through the repo.gpkg.io mirror like every other repo: the
+# nodes need egress to ppa.launchpadcontent.net. criu_apt_repo can point it at a mirror later.
+# The PPA publishes jammy, noble and resolute, so the node's own codename is used.
+- name: Add the CRIU repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [signed-by=/etc/apt/keyrings/criu.gpg]
+      {{ criu_apt_repo | default('https://ppa.launchpadcontent.net/criu/ppa/ubuntu', true) }} {{ ansible_distribution_release }} main
+    filename: criu
+    state: present
+    update_cache: false
+
+- name: Update the apt package lists
+  ansible.builtin.import_tasks: apt-update.yaml
+
+# Installed before containerd is (re)started below: containerd caches a missing criu binary.
+- name: Install CRIU
+  ansible.builtin.apt:
+    name: criu
+    state: present
+  register: common_criu_package
+  retries: 5
+  delay: 60
+  until: common_criu_package is succeeded
+
+- name: Create the CRIU configuration directory
+  ansible.builtin.file:
+    path: /etc/criu
+    state: directory
+    mode: "0755"
+
+# Options runc passes to every CRIU dump and restore. tcp-established checkpoints open TCP
+# connections and restores them open (the pod keeps its IP); skip-in-flight drops half-open ones
+# rather than failing the dump; file-locks carries flock/fcntl locks across.
+- name: Write the runc CRIU options
+  ansible.builtin.copy:
+    content: |
+      tcp-established
+      skip-in-flight
+      file-locks
+    dest: /etc/criu/runc.conf
+    mode: "0644"
+  register: common_criu_runc_conf
+
+- name: Create the containerd registry hosts directories
+  ansible.builtin.file:
+    path: /etc/containerd/certs.d/{{ item }}
+    state: directory
+    mode: "0755"
+  loop: "{{ live_migration_insecure_registries | default([]) }}"
+
+# Plain-HTTP registries (host:port) the migration images are pushed to. containerd reads certs.d
+# on every pull, so these need no restart.
+- name: Allow pulls from the plain-HTTP registries
+  ansible.builtin.copy:
+    content: |
+      server = "http://{{ item }}"
+
+      [host."http://{{ item }}"]
+        capabilities = ["pull", "resolve"]
+        skip_verify = true
+    dest: /etc/containerd/certs.d/{{ item }}/hosts.toml
+    mode: "0644"
+  loop: "{{ live_migration_insecure_registries | default([]) }}"

@@ -75,6 +75,13 @@ autoglue_record_id = require(platform_data, 'control_plane_record_set', 'id')
 autoglue_base_url = require(platform_data, 'base_url')
 # genuinely optional: calico falls back to firstFound, which is the documented behaviour.
 calico_node_address_autodetection_v4 = metadata.get('calico_node_address_autodetection_v4', None)
+# Optional, off when absent: pod live migration node prep (roles/common/tasks/live-migration.yaml).
+# insecure registries may arrive as a list or as an already comma-separated string.
+live_migration_enabled = metadata.get('live_migration_enabled', False)
+live_migration_insecure_registries = metadata.get('live_migration_insecure_registries') or []
+if isinstance(live_migration_insecure_registries, str):
+    live_migration_insecure_registries = live_migration_insecure_registries.split(',')
+live_migration_insecure_registries = [r.strip() for r in live_migration_insecure_registries if r.strip()]
 
 masters = {}
 workers = {}
@@ -149,6 +156,15 @@ with open(env_output_path, 'w') as f:
         value = metadata.get(field)
         if value:
             f.write(f"{field}={value}\n")
+
+    if str(live_migration_enabled).lower() == 'true':
+        f.write("live_migration_enabled=true\n")
+        for field in ('containerd_package_version', 'criu_apt_repo'):
+            value = metadata.get(field)
+            if value:
+                f.write(f"{field}={value}\n")
+        if live_migration_insecure_registries:
+            f.write(f"live_migration_insecure_registries={','.join(live_migration_insecure_registries)}\n")
 
     f.write(f"AUTOGLUE_ORG_KEY={autoglue_org_key}\n")
     f.write(f"AUTOGLUE_ORG_SECRET={autoglue_org_secret}\n")
