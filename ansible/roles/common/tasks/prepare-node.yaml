@@ -32,6 +32,8 @@
   loop:
     - overlay
     - br_netfilter
+    # net.netfilter.nf_conntrack_max below only exists once nf_conntrack is loaded.
+    - nf_conntrack
 
 - name: Apply Kubernetes sysctl settings
   ansible.posix.sysctl:
@@ -46,6 +48,26 @@
     # only ends up set today as a side effect of installing docker-ce
     - { name: net.ipv4.ip_forward, value: "1" }
     - { name: vm.swappiness, value: "0" }
+    - { name: fs.inotify.max_user_instances, value: "8192" }
+    # Doubled on nodes with more than 64 GB RAM. Facts are read through hostvars for the same
+    # master-rotation delegation reason as the swap task above.
+    - name: fs.inotify.max_user_watches
+      value: "{{ '1048576' if (hostvars[node_to_add | default(inventory_hostname)]['ansible_memtotal_mb'] | default(0) | int) > 65536 else '524288' }}"
+    - { name: net.ipv4.neigh.default.gc_thresh1, value: "8192" }
+    - { name: net.ipv4.neigh.default.gc_thresh2, value: "32768" }
+    - { name: net.ipv4.neigh.default.gc_thresh3, value: "65536" }
+    - { name: vm.max_map_count, value: "1048576" }
+    - { name: kernel.pid_max, value: "4194304" }
+    # kube-proxy only raises nf_conntrack_max (to max(32768 * cores, 131072)), so this holds
+    # unless a node has more than 32 cores.
+    - { name: net.netfilter.nf_conntrack_max, value: "1048576" }
+    # The values kubelet expects when protectKernelDefaults is enabled.
+    - { name: kernel.panic, value: "10" }
+    - { name: kernel.panic_on_oops, value: "1" }
+    - { name: vm.overcommit_memory, value: "1" }
+    - { name: net.core.somaxconn, value: "4096" }
+    - { name: net.core.netdev_max_backlog, value: "1000" }
+    - { name: fs.aio-max-nr, value: "1048576" }
 
 # these used to be written to /etc/sysctl.conf. drop them there so the values are not defined
 # in two files with no ordering guarantee between them.
