@@ -17,6 +17,10 @@
 #
 # any_errors_fatal stops the whole run on the first bad host rather than letting the other
 # hosts march on into a half-built cluster.
+
+- name: Wait for cloud-init
+  ansible.builtin.import_playbook: wait-for-cloud-init.yaml
+
 - name: Preflight
   hosts: all
   gather_facts: true

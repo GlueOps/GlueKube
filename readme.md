@@ -155,6 +155,13 @@ much later as a broken cluster rather than an error:
 ```bash
 export kubernetes_version=v1.34.11
 export kubernetes_package_version=1.34.11-1.1
+export containerd_package_version='2.4.2-4~*'    # glob over the per-distro suffix
+export docker_package_version='5:29.10.0-1~*'    # docker-ce and docker-ce-cli, epoch included
+export docker_buildx_plugin_version='0.39.0-1~*'
+export docker_compose_plugin_version='5.7.2-1~*'
+                                                 # all optional (empty = newest); the packages
+                                                 # are held after install, so change these to
+                                                 # move them
 export loadbalancer_apiserver=ctrp.example.com   # the apiserver DNS record
 export domain_name=example.com                   # kube-api.$domain_name goes in the certSANs,
                                                  # and the dex issuer is built from it

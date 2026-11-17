@@ -1,4 +1,10 @@
 ---
+# The incoming masters are fresh out of tofu, so wait for their cloud-init (and its reboot)
+# before touching them. Only the cloud-init half of preflight: the odd-master-count assertion
+# would reject a rotation inventory by design (see preflight.yaml).
+- name: Wait for cloud-init
+  ansible.builtin.import_playbook: wait-for-cloud-init.yaml
+
 - name: Rotate Master Nodes
   hosts:
     - masters

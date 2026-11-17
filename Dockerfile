@@ -4,6 +4,10 @@ FROM python:3.15-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87
 ENV DEBIAN_FRONTEND=noninteractive
 ENV kubernetes_version="v1.35.9"
 ENV kubernetes_package_version="1.35.9-1.1"
+ENV containerd_package_version="2.4.2-4~*"
+ENV docker_package_version="5:29.10.0-1~*"
+ENV docker_buildx_plugin_version="0.39.0-1~*"
+ENV docker_compose_plugin_version="5.7.2-1~*"
 ENV calico_tigera_operator_version="v1.40.7"
 ENV calico_chart_version="v3.31.4"
 ENV ANSIBLE_ROLES_PATH=/opt/gluekube/ansible/roles
