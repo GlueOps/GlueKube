@@ -357,6 +357,11 @@
     type: qemu
     vmid: "{{ item.vmid }}"
     network: true
+    # Required by community.proxmox 2.1.0, not just harmless: its proxmox_vm_info only fetches
+    # `network` inside the `config != "none"` branch, and config defaults to "none". Without this
+    # the result never carries a network key, so the until below can never pass however healthy
+    # the guest agent is -- every scenario then times out here. 2.0.0 fetched it either way.
+    config: current
   register: vm_net
   ignore_errors: true
   changed_when: false
