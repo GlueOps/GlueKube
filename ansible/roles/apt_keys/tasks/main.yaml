@@ -24,3 +24,15 @@
     - { name: helm, dest: /etc/apt/keyrings/helm-apt-keyring.gpg }
   loop_control:
     label: "{{ item.name }}"
+
+# The CRIU PPA's key, for roles/common/tasks/live-migration.yaml. Separate and gated so that a
+# controller whose /opt/gluekube/apt-keys predates this key still prepares every cluster that
+# does not opt in.
+- name: Install the CRIU PPA signing key
+  ansible.builtin.copy:
+    src: /opt/gluekube/apt-keys/criu.gpg
+    dest: /etc/apt/keyrings/criu.gpg
+    owner: root
+    group: root
+    mode: "0644"
+  when: live_migration_enabled | default(false) | bool

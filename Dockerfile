@@ -48,12 +48,15 @@ COPY . /opt/gluekube
 
 # Apt signing keys for the nodes, checked against pinned fingerprints (also in
 # molecule/common/bastion-prepare.yml). APT_KEYS_CACHE_BUST makes each build refetch them.
+# criu is the Launchpad criu/ppa key, which Launchpad serves only through its keyserver; nodes
+# get it only with live_migration_enabled.
 ARG APT_KEYS_CACHE_BUST=
 RUN mkdir -p /opt/gluekube/apt-keys && cd /opt/gluekube/apt-keys && \
     for k in \
       "kubernetes https://pkgs.k8s.io/core:/stable:/${kubernetes_version%.*}/deb/Release.key DE15B14486CD377B9E876E1A234654DA9A296436" \
       "docker https://download.docker.com/linux/ubuntu/gpg 9DC858229FC7DD38854AE2D88D81803C0EBFCD88" \
       "helm https://packages.buildkite.com/helm-linux/helm-debian/gpgkey DDF78C3E6EBB2D2CC223C95C62BA89D07698DBC6" \
+      "criu https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x4E2A48715C45AEEC077B48169B29EEC9246B6CE2 4E2A48715C45AEEC077B48169B29EEC9246B6CE2" \
     ; do \
       set -- $k && \
       curl -fsSL --proto '=https' --retry 5 -o "$1.asc" "$2" && \

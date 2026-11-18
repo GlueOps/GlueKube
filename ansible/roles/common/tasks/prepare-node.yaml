@@ -123,6 +123,12 @@
   delay: 60
   until: common_containerd_packages is succeeded
 
+# Opt-in. Needs containerd.io installed (it may pin it) and has to land CRIU before the restart
+# below; the config edits it needs are in the containerd config task.
+- name: Prepare the node for pod live migration
+  ansible.builtin.import_tasks: live-migration.yaml
+  when: live_migration_enabled | default(false) | bool
+
 - name: Add Docker group
   ansible.builtin.group:
     name: docker
@@ -155,11 +161,23 @@
   changed_when: false          # reading defaults changes nothing
 
 
+# With live_migration_enabled, two more edits: restore via CreateContainer, and the CRI registry's
+# config_path so live-migration.yaml's certs.d hosts apply to kubelet pulls. The config_path match
+# is anchored on the CRI registry table because `containerd config default` (2.3) also emits an
+# empty config_path under io.containerd.transfer.v1.local, which the CRI pull path does not read --
+# it hands the transfer service its own registry config_path.
 - name: Write containerd config with SystemdCgroup enabled
   ansible.builtin.copy:
-    content: "{{ common_containerd_config.stdout | regex_replace('SystemdCgroup = false', 'SystemdCgroup = true') | regex_replace('registry\\.k8s\\.io/pause', 'k8s.repo.gpkg.io/pause') }}"
+    content: >-
+      {{ common_containerd_config_base if not (live_migration_enabled | default(false) | bool) else
+         common_containerd_config_base
+         | regex_replace('enable_experimental_restore_via_create = false', 'enable_experimental_restore_via_create = true')
+         | regex_replace("(\[plugins\.'io\.containerd\.cri\.v1\.images'\.registry\]\n\s*config_path = )''",
+                         "\g<1>'/etc/containerd/certs.d'") }}
     dest: /etc/containerd/config.toml
     mode: "0644"
+  vars:
+    common_containerd_config_base: "{{ common_containerd_config.stdout | regex_replace('SystemdCgroup = false', 'SystemdCgroup = true') | regex_replace('registry\\.k8s\\.io/pause', 'k8s.repo.gpkg.io/pause') }}"
   register: common_containerd_config_file
 
 # Restarted inline rather than through a notified handler. The master rotation path includes
@@ -171,11 +189,18 @@
 #
 # This is also why the worker copy's notify + flush_handlers pair did not survive the merge:
 # it works for a plain worker play and silently does the wrong thing under delegation.
+#
+# live-migration.yaml's CRIU install and runc.conf count too: containerd has to come up after
+# criu exists. Without live_migration_enabled those tasks are skipped and never "changed".
 - name: Reload systemd and enable containerd
   ansible.builtin.systemd:
     name: containerd
     enabled: true
-    state: "{{ 'restarted' if common_containerd_config_file is changed else 'started' }}"
+    state: >-
+      {{ 'restarted' if (common_containerd_config_file is changed
+                         or (common_criu_package is defined and common_criu_package is changed)
+                         or (common_criu_runc_conf is defined and common_criu_runc_conf is changed))
+         else 'started' }}
     daemon_reload: true
 
 - name: Add Kubernetes repository via Nexus
