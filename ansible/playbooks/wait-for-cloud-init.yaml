@@ -44,42 +44,32 @@
       fi
       status=$(cloud-init status --long 2>&1 | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')
       printf '{"rc": %s, "managed": %s, "reboot_pending": %s, "status": %s}\n' "$rc" "$managed" "$pending" "$status"
+    # Each attempt waits up to 20 minutes for SSH and 20 for cloud-init, but a retry only happens
+    # around a reboot, so a handful is plenty; the cap only stops a node that keeps dropping the
+    # connection from looping forever.
+    cloud_init_max_attempts: 10
   tasks:
     # Fresh nodes open SSH while cloud-init is still upgrading packages, and then reboot. Nothing
     # below may run until cloud-init has finished, succeeded, and the reboot is behind us. A
     # node whose cloud-init failed stops the whole run here (any_errors_fatal) rather than being
     # built on top of a half-provisioned OS.
-    - name: Node is reachable
-      ansible.builtin.wait_for_connection:
-        timeout: 1200
+    #
+    # The connection dropping while the node reboots is expected and retried (see the tasks
+    # file); only the final attempt's result is judged below.
+    - name: Wait for cloud-init and its reboot
+      ansible.builtin.include_tasks: tasks/wait-for-cloud-init-attempt.yaml
 
-    - name: Wait for cloud-init to finish
-      ansible.builtin.shell: "{{ cloud_init_check_script }}"
-      args:
-        executable: /bin/bash
-      become: true
-      register: cloud_init_first
-      changed_when: false
-      timeout: 1200
-
-    # A reboot whose command is a no-op: the module records boot_id, runs `true`, then waits for
-    # boot_id to change -- i.e. for cloud-init's own power_state reboot -- reconnecting as needed.
-    - name: Wait for the post-upgrade reboot cloud-init scheduled
-      ansible.builtin.reboot:
-        reboot_command: "true"
-        reboot_timeout: 900
-      become: true
-      when: (cloud_init_first.stdout | from_json).reboot_pending
-
-    - name: Wait for cloud-init to finish after the reboot
-      ansible.builtin.shell: "{{ cloud_init_check_script }}"
-      args:
-        executable: /bin/bash
-      become: true
-      register: cloud_init_second
-      changed_when: false
-      timeout: 1200
-      when: (cloud_init_first.stdout | from_json).reboot_pending
+    - name: The cloud-init check completed
+      ansible.builtin.assert:
+        that:
+          - not (cloud_init_check.unreachable | default(false))
+          - cloud_init_check is not failed
+        fail_msg: >-
+          {{ inventory_hostname }}: the cloud-init check did not complete after
+          {{ cloud_init_attempt }} attempt(s) --
+          {{ 'still unreachable while waiting out its reboot' if cloud_init_check.unreachable | default(false) else 'it failed' }}:
+          {{ cloud_init_check.msg | default('') }}
+        quiet: true
 
     # rc 2 is "done, with recoverable errors" (deprecation warnings and the like), the same line
     # molecule/common/bastion-prepare.yml draws. rc 1 means a module failed -- package_upgrade,
@@ -103,7 +93,7 @@
           Status: {{ cloud_init.status }}
         quiet: true
       vars:
-        cloud_init: "{{ (cloud_init_second if cloud_init_second is not skipped else cloud_init_first).stdout | from_json }}"
+        cloud_init: "{{ cloud_init_check.stdout | from_json }}"
 
     - name: Warn about older nodes whose cloud-init reported errors
       ansible.builtin.debug:
@@ -113,4 +103,4 @@
           era are known to carry cloud-init errors. Status: {{ cloud_init.status }}
       when: not cloud_init.managed and cloud_init.rc not in [0, 2]
       vars:
-        cloud_init: "{{ cloud_init_first.stdout | from_json }}"
+        cloud_init: "{{ cloud_init_check.stdout | from_json }}"

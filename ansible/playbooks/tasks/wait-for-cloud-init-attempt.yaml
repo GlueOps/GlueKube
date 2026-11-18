@@ -1,0 +1,43 @@
+---
+# One attempt of wait-for-cloud-init.yaml's per-node loop. Includes itself again while the node is
+# rebooting -- the connection dropped mid-check, or cloud-init is done but its power_state reboot
+# has not happened yet -- up to cloud_init_max_attempts.
+#
+# A recursive include rather than `until:` because `until` does not retry an unreachable host,
+# and an unreachable host is exactly what a reboot produces: power_state reboots the node the
+# moment cloud-init finishes, which is the moment a `cloud-init status --wait` still connected to
+# it returns -- "Shared connection to <ip> closed".
+
+- name: Count the attempt
+  ansible.builtin.set_fact:
+    cloud_init_attempt: "{{ (cloud_init_attempt | default(0) | int) + 1 }}"
+
+# The pause on retries gives a node that is about to reboot time to go down, so the next check
+# does not land on it again in the seconds before the reboot. wait_for_connection resets the
+# connection between its own attempts, so the stale ControlPersist socket left by the reboot is
+# not reused.
+- name: Node is reachable (attempt {{ cloud_init_attempt }})
+  ansible.builtin.wait_for_connection:
+    delay: "{{ 0 if cloud_init_attempt | int == 1 else 10 }}"
+    timeout: 1200
+
+- name: Wait for cloud-init to finish (attempt {{ cloud_init_attempt }})
+  ansible.builtin.shell: "{{ cloud_init_check_script }}"
+  args:
+    executable: /bin/bash
+  become: true
+  register: cloud_init_check
+  changed_when: false
+  # Both are needed: under the play's any_errors_fatal an unreachable result still ends the play
+  # unless ignore_errors is also set. A real failure (the timeout) is not retried; the play
+  # reports it right after this loop.
+  ignore_unreachable: true
+  ignore_errors: true
+  timeout: 1200
+
+- name: Try again while the node is rebooting
+  ansible.builtin.include_tasks: wait-for-cloud-init-attempt.yaml
+  when:
+    - cloud_init_check is not failed
+    - (cloud_init_check.unreachable | default(false)) or (cloud_init_check.stdout | from_json).reboot_pending
+    - cloud_init_attempt | int < cloud_init_max_attempts | int
