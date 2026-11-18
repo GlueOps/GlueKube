@@ -30,8 +30,6 @@ users:
       - "{{ public_key }}"
     sudo: ALL=(ALL) NOPASSWD:ALL
     shell: /bin/bash
-mounts:
-  - [ swap, null ]
 # No sysctls here: roles/common/tasks/prepare-node.yaml owns them (/etc/sysctl.d/99-kubernetes.conf).
 runcmd:
   - sudo passwd -d root
