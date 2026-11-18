@@ -21,65 +21,9 @@
     regexp: '^(\s*[^#\s]\S*\s+\S+\s+swap\s+.*)$'
     replace: '# \1'
 
-# persistent: present writes /etc/modules-load.d/ so the modules survive a reboot. This has
-# to stay ahead of the sysctl task below: with br_netfilter unloaded the net.bridge.* keys do
-# not exist, and systemd-sysctl fails to apply them at boot in a way that looks like a CNI bug.
-- name: Load required kernel modules persistently
-  community.general.modprobe:
-    name: "{{ item }}"
-    state: present
-    persistent: present
-  loop:
-    - overlay
-    - br_netfilter
-    # net.netfilter.nf_conntrack_max below only exists once nf_conntrack is loaded.
-    - nf_conntrack
-
-- name: Apply Kubernetes sysctl settings
-  ansible.posix.sysctl:
-    name: "{{ item.name }}"
-    value: "{{ item.value }}"
-    sysctl_file: /etc/sysctl.d/99-kubernetes.conf
-    sysctl_set: true
-    reload: true
-  loop:
-    - { name: net.bridge.bridge-nf-call-iptables, value: "1" }
-    - { name: net.bridge.bridge-nf-call-ip6tables, value: "1" }
-    # only ends up set today as a side effect of installing docker-ce
-    - { name: net.ipv4.ip_forward, value: "1" }
-    - { name: vm.swappiness, value: "0" }
-    - { name: fs.inotify.max_user_instances, value: "8192" }
-    # Doubled on nodes with more than 64 GB RAM. Facts are read through hostvars for the same
-    # master-rotation delegation reason as the swap task above.
-    - name: fs.inotify.max_user_watches
-      value: "{{ '1048576' if (hostvars[node_to_add | default(inventory_hostname)]['ansible_memtotal_mb'] | default(0) | int) > 65536 else '524288' }}"
-    - { name: net.ipv4.neigh.default.gc_thresh1, value: "8192" }
-    - { name: net.ipv4.neigh.default.gc_thresh2, value: "32768" }
-    - { name: net.ipv4.neigh.default.gc_thresh3, value: "65536" }
-    - { name: vm.max_map_count, value: "1048576" }
-    - { name: kernel.pid_max, value: "4194304" }
-    # kube-proxy only raises nf_conntrack_max (to max(32768 * cores, 131072)), so this holds
-    # unless a node has more than 32 cores.
-    - { name: net.netfilter.nf_conntrack_max, value: "1048576" }
-    # The values kubelet expects when protectKernelDefaults is enabled.
-    - { name: kernel.panic, value: "10" }
-    - { name: kernel.panic_on_oops, value: "1" }
-    - { name: vm.overcommit_memory, value: "1" }
-    - { name: net.core.somaxconn, value: "4096" }
-    - { name: net.core.netdev_max_backlog, value: "1000" }
-    - { name: fs.aio-max-nr, value: "1048576" }
-
-# these used to be written to /etc/sysctl.conf. drop them there so the values are not defined
-# in two files with no ordering guarantee between them.
-- name: Remove the superseded sysctl entries from /etc/sysctl.conf
-  ansible.posix.sysctl:
-    name: "{{ item }}"
-    sysctl_file: /etc/sysctl.conf
-    state: absent
-    reload: false
-  loop:
-    - net.bridge.bridge-nf-call-iptables
-    - vm.swappiness
+# Modules and sysctls -- shared with upgrade-cluster.yaml so they also reach existing nodes.
+- name: Load kernel modules and apply sysctls
+  ansible.builtin.import_tasks: kernel-tuning.yaml
 
 # Before the cache update, which a bad key would fail.
 - name: Install the apt signing keys
@@ -131,43 +75,10 @@
 - name: Update the apt package lists
   ansible.builtin.import_tasks: apt-update.yaml
 
-# containerd_package_version pins containerd.io, docker_package_version pins docker-ce and
-# docker-ce-cli (they ship in lockstep), and docker_buildx_plugin_version /
-# docker_compose_plugin_version pin the two plugins. All default in the Dockerfile; empty
-# installs the newest the mirror serves. The Docker repo's release suffix is per-distro (e.g.
-# 2.4.2-4~ubuntu.24.04~noble), so the pins glob over it ("2.4.2-4~*"), and docker-ce carries a
-# "5:" epoch that the pin must include. The packages are held below, so
-# allow_change_held_packages lets a changed pin apply and allow_downgrade lets it move backwards.
-- name: Install containerd
-  ansible.builtin.apt:
-    name:
-      - "docker-ce{{ ('=' ~ docker_package_version) if docker_package_version | default('', true) | length > 0 else '' }}"
-      - "docker-ce-cli{{ ('=' ~ docker_package_version) if docker_package_version | default('', true) | length > 0 else '' }}"
-      - "containerd.io{{ ('=' ~ containerd_package_version) if containerd_package_version | default('', true) | length > 0 else '' }}"
-      - "docker-buildx-plugin{{ ('=' ~ docker_buildx_plugin_version) if docker_buildx_plugin_version | default('', true) | length > 0 else '' }}"
-      - "docker-compose-plugin{{ ('=' ~ docker_compose_plugin_version) if docker_compose_plugin_version | default('', true) | length > 0 else '' }}"
-    state: present
-    allow_change_held_packages: true
-    allow_downgrade: true
-  register: common_containerd_packages
-  retries: 5
-  delay: 60
-  until: common_containerd_packages is succeeded
-
-# Held for the same reason as kubeadm/kubelet below: without a hold, the dist-upgrade at the top
-# of this file and unattended-upgrades move containerd (and dockerd with it) to whatever the
-# Docker repo serves next, restarting the runtime under running pods. To move them, change
-# containerd_package_version / docker_package_version and re-run this play.
-- name: Hold containerd and Docker packages at the installed version
-  ansible.builtin.dpkg_selections:
-    name: "{{ item }}"
-    selection: hold
-  loop:
-    - docker-ce
-    - docker-ce-cli
-    - containerd.io
-    - docker-buildx-plugin
-    - docker-compose-plugin
+# Pinned and held -- see install-container-runtime.yaml for how the pins work and how a changed
+# pin reaches nodes that already exist.
+- name: Install and hold containerd and Docker
+  ansible.builtin.import_tasks: install-container-runtime.yaml
 
 - name: Add Docker group
   ansible.builtin.group:

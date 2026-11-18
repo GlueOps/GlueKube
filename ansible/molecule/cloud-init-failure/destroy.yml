@@ -1,0 +1,16 @@
+---
+# Tears down what create.yml built. The node counts and vmid offset must match create.yml's.
+- name: Destroy Proxmox VMs
+  hosts: localhost
+  gather_facts: true
+  vars_files:
+    - ../common/proxmox-vars.yml
+  vars:
+    num_master_nodes: 1
+    num_worker_nodes: 0
+    pve_vmid_offset: 500
+    snippet_prefix: molecule-cloud-init-failure
+
+  tasks:
+    - name: Remove the nodes from Proxmox
+      ansible.builtin.import_tasks: ../common/proxmox-teardown.yml

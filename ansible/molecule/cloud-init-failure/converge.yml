@@ -1,0 +1,18 @@
+---
+# Runs ../../playbooks/wait-for-cloud-init.yaml on the bastion and passes only if it fails on the
+# node's first-boot error. The node's own `cloud-init status` says "done" by then (it only covers
+# the boot after power_state's reboot), so this proves the wait reads the first-boot marker.
+- name: The cloud-init wait stops on a failed first boot
+  hosts: bastion
+  gather_facts: false
+  vars_files:
+    - ../common/bastion-vars.yml
+  tasks:
+    - name: Run ../../playbooks/wait-for-cloud-init.yaml on the bastion
+      ansible.builtin.include_tasks: ../common/bastion-run.yml
+      vars:
+        bastion_run_name: converge
+        bastion_run_playbook: ../../playbooks/wait-for-cloud-init.yaml
+        bastion_run_timeout: 3600
+        bastion_run_expect_failure: true
+        bastion_run_expect_output: "first boot FAILED"

@@ -113,3 +113,12 @@ evictionSoftGracePeriod:                    # Period to wait to evict
 evictionHard:                               # Immediately evict pods
   memory.available: "500Mi"                 # Evict pods when available memory drops below 200 MiB
   nodefs.available: "10%"                    # Evict pods when node disk space drops below 5%
+---
+apiVersion: kubeproxy.config.k8s.io/v1alpha1
+kind: KubeProxyConfiguration
+conntrack:
+  # 0 = leave net.netfilter.nf_conntrack_max alone. Without it kube-proxy writes
+  # max(32768 * cores, 131072) on every start -- lowering, not just raising -- and overrides the
+  # 1048576 roles/common/tasks/prepare-node.yaml sets. Existing clusters get the same through
+  # roles/master/tasks/configure-kube-proxy.yaml during upgrade-cluster.
+  maxPerCore: 0

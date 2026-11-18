@@ -28,6 +28,13 @@
         name: common
         tasks_from: upgrade-kubelet.yaml
 
+    # After `kubeadm upgrade apply`, which carries the existing kube-proxy ConfigMap forward
+    # unchanged.
+    - name: Stop kube-proxy from resetting nf_conntrack_max
+      ansible.builtin.include_role:
+        name: master
+        tasks_from: configure-kube-proxy.yaml
+
 
 - name: Upgrade Master Nodes Sequentially
   hosts: masters
@@ -52,6 +59,14 @@
       tags: upgrade
       when: inventory_hostname != orchestrator_node
       
+    # Before the drain: a node whose containerd/Docker no longer match their pins is drained for
+    # the runtime move even if nothing else on it changes (the orchestrator, whose kubelet moved
+    # in the play above).
+    - name: Compare the container runtime with its pins
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: check-container-runtime.yaml
+
     - name: "Drain '{{ inventory_hostname }}' from the master"
       delegate_to: "{{ orchestrator_node }}"
       become: true
@@ -65,11 +80,25 @@
       delay: 10
       until: drain_result.rc == 0
       changed_when: "'drained' in drain_result.stdout"
-      when: inventory_hostname != orchestrator_node
+      when: inventory_hostname != orchestrator_node or common_container_runtime_drift | bool
     
     - name: "Perform maintenance on '{{ inventory_hostname }}'"
       ansible.builtin.debug:
         msg: "Node {{ inventory_hostname }} is drained. Performing maintenance now."
+
+    # Every node, not only drifted ones: this also holds the packages on nodes built before they
+    # were held. Where nothing differs, apt changes nothing and the runtime is not restarted.
+    - name: Move containerd and Docker onto their pins
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: upgrade-container-runtime.yaml
+
+    # The same modules and sysctls new nodes get from prepare-node.yaml, so a change to them
+    # reaches nodes that already exist.
+    - name: Apply the node kernel tuning
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: kernel-tuning.yaml
 
     - name: Upgrade kubelet and kubectl on this control-plane node
       ansible.builtin.include_role:
@@ -89,7 +118,7 @@
       delay: 10
       until: upgraded_apiserver_ready.rc == 0 and ('ok' in upgraded_apiserver_ready.stdout)
       changed_when: false
-      when: inventory_hostname != orchestrator_node
+      when: inventory_hostname != orchestrator_node or common_container_runtime_drift | bool
     
     - name: "Uncordon '{{ inventory_hostname }}' from the master"
       delegate_to: "{{ orchestrator_node }}"
@@ -102,7 +131,7 @@
       delay: 10
       until: uncordon_result.rc == 0
       changed_when: "'uncordoned' in uncordon_result.stdout"
-      when: inventory_hostname != orchestrator_node
+      when: inventory_hostname != orchestrator_node or common_container_runtime_drift | bool
 
     - name: "Pause for 60 seconds to allow pods to reschedule"
       ansible.builtin.pause:
@@ -136,6 +165,12 @@
         tasks_from: upgrade.yaml
       tags: upgrade
 
+    # Reported only: workers are drained regardless, so the move below always runs drained.
+    - name: Compare the container runtime with its pins
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: check-container-runtime.yaml
+
     - name: "Drain '{{ inventory_hostname }}' from the master"
       delegate_to: "{{ orchestrator_node }}"
       become: true
@@ -153,6 +188,20 @@
     - name: "Perform maintenance on '{{ inventory_hostname }}'"
       ansible.builtin.debug:
         msg: "Node {{ inventory_hostname }} is drained. Performing maintenance now."
+
+    # Every node, not only drifted ones: this also holds the packages on nodes built before they
+    # were held. Where nothing differs, apt changes nothing and the runtime is not restarted.
+    - name: Move containerd and Docker onto their pins
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: upgrade-container-runtime.yaml
+
+    # The same modules and sysctls new nodes get from prepare-node.yaml, so a change to them
+    # reaches nodes that already exist.
+    - name: Apply the node kernel tuning
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: kernel-tuning.yaml
 
     - name: Upgrade kubelet and kubectl on this worker
       ansible.builtin.include_role:

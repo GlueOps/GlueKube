@@ -159,9 +159,10 @@ export containerd_package_version='2.4.2-4~*'    # glob over the per-distro suff
 export docker_package_version='5:29.10.0-1~*'    # docker-ce and docker-ce-cli, epoch included
 export docker_buildx_plugin_version='0.39.0-1~*'
 export docker_compose_plugin_version='5.7.2-1~*'
-                                                 # all optional (empty = newest); the packages
-                                                 # are held after install, so change these to
-                                                 # move them
+                                                 # all optional (empty = newest). the packages
+                                                 # are held. new nodes get these at setup/sync;
+                                                 # existing nodes only move on `make upgrade`
+                                                 # -- see running `upgrade-cluster`
 export loadbalancer_apiserver=ctrp.example.com   # the apiserver DNS record
 export domain_name=example.com                   # kube-api.$domain_name goes in the certSANs,
                                                  # and the dex issuer is built from it
@@ -178,8 +179,8 @@ export AUTOGLUE_ORG_ID= AUTOGLUE_RECORD_ID= AUTOGLUE_CLUSTER_ID=empty
 ```
 
 
-in the container these come from `.env`, which `parser.py` writes from `platform.json`. the four
-version variables above are the exception: `parser.py` only writes them when `platform.json`
+in the container these come from `.env`, which `parser.py` writes from `platform.json`. the eight
+version variables above (kubernetes, the four containerd/Docker pins, and calico) are the exception: `parser.py` only writes them when `platform.json`
 carries them, and otherwise the pinned `ENV` defaults in the `Dockerfile` apply.
 
 `playbooks/preflight.yaml` runs first on every `setup-cluster`, `sync-resources` and
@@ -409,6 +410,32 @@ passes. an `.env` hand-written before this release may not.
 
 `rotate-certs-with-config.yaml` does **not** import preflight — it runs straight into the plays.
 
+## waiting for cloud-init
+
+`playbooks/wait-for-cloud-init.yaml` runs first in `make ping-servers` and is imported by
+`preflight.yaml` and `rotate-master-nodes.yaml`, so any entry point that can meet a brand-new node
+waits for it. On a settled node it takes a few seconds.
+
+Nodes built from `opentofu-module-GlueKube-cloudinit` run `package_upgrade` and then always reboot
+(`power_state`). After the reboot, `cloud-init status` only covers the new boot. It reports `done`
+even when the first boot failed. So the module's `power_state.condition` saves the first boot's
+`cloud-init status --format json`, together with that boot's `boot_id`, to
+`/var/lib/cloud/instance/first-boot.json` before the reboot. `playbooks/files/cloud_init_state.py`
+reads the marker and puts each node in one of these states:
+
+| state | meaning | the wait |
+| --- | --- | --- |
+| `legacy` | the cloud-config doesn't mention the marker (built before it existed) | warns if cloud-init reported errors, never stops |
+| `provisioning` | cloud-init still running | waits |
+| `pending` | no marker yet, or the marker is from the current boot | waits for the reboot; fails if it never comes |
+| `failed` | new boot, and the marker records errors, a first boot still `running` at reboot, or is unparsable | **stops the run** and prints the saved errors |
+| `ready` | new boot, clean marker, current boot rc 0 or 2 | passes |
+
+Warnings (`cloud-init status` rc 2: `WARNING`/`DEPRECATED`, usually a skipped key) don't stop a
+node, but they are printed per node. A `failed` node can't be repaired in place. Inspect
+`first-boot.json` and `/var/log/cloud-init-output.log`, then replace the node. The wait works
+under `--check` too.
+
 ## running `sync`
 
 the risk here is the node diff, and it is worth two minutes before every run.
@@ -456,6 +483,15 @@ masters. adding a worker silently did nothing. that is fixed — the election no
   cluster's `kubeadm-config` ConfigMap, and nothing on this path updates that ConfigMap. see
   [Etcd metrics](#etcd-metrics) and
   [running `rotate-certs-with-config`](#running-rotate-certs-with-config) below.
+- **it moves containerd/Docker onto their pins and applies the node sysctls.** each node's
+  installed `containerd.io`/`docker-ce*` versions are compared with the four pins in `.env`. a node
+  that differs is drained (the orchestrator included), upgraded and re-held. this is the only path
+  by which a pin change, including a containerd/runc security fix, reaches nodes that already exist:
+  `prepare-node` runs only for nodes being added. nodes from before the packages were held get the
+  hold here. the kernel modules and sysctls from `roles/common/tasks/kernel-tuning.yaml` are
+  reapplied on every node, and the kube-proxy ConfigMap gets `conntrack.maxPerCore: 0`, so
+  kube-proxy stops lowering `nf_conntrack_max`. under `upgrade-control-plane` the workers are
+  skipped and pick these up only when they are replaced.
 - **it switches the Ubuntu apt sources to the mirror.** every node's `ubuntu.sources` is replaced
   and `sources.list` emptied (see [Apt sources](#apt-sources)), so any custom mirror or backports
   line in them is dropped.

@@ -1,12 +1,24 @@
 ---
-# Waits until cloud-init on every node has finished, succeeded, and -- on nodes built from the
-# current opentofu-module-GlueKube-{AWS,Proxmox} templates -- the reboot it schedules after the
-# apt upgrade is behind us.
+# Waits until cloud-init on every node has finished, succeeded, and -- on nodes built from
+# opentofu-module-GlueKube-cloudinit -- the reboot it schedules after the apt upgrade is behind us.
 #
 # This replaced the fixed `sleep`s the module e2e workflows carried between `tofu apply` and the
 # AutoGlue invocation. Run first by `make ping-servers` (the first thing AutoGlue does against a
 # fresh node), and imported by preflight.yaml and rotate-master-nodes.yaml, so every entry point
 # that can meet a brand-new node waits for it. On a settled node it costs a few seconds.
+#
+# Why a marker: power_state reboots the node whether or not the first boot succeeded, and after
+# the reboot `cloud-init status` only covers the new boot -- it says "done", rc 0, no errors, on
+# exactly the nodes this wait is meant to stop. So the module's power_state.condition saves boot
+# 1's `cloud-init status --format json`, with that boot's boot_id, to
+# /var/lib/cloud/instance/first-boot.json just before the reboot. files/cloud_init_state.py reads
+# it and prints one state per node:
+#
+#   legacy        cloud-config does not mention the marker (nodes built before it): warn only
+#   provisioning  cloud-init still running -- retried
+#   pending       no marker yet, or it is from this boot: the reboot is still coming -- retried
+#   failed        new boot, and the marker records errors / a timed-out first boot / is garbage
+#   ready         new boot, clean marker, and this boot's status rc is 0 or 2
 #
 # Facts are not gathered: a node fresh out of tofu may still be upgrading or rebooting, and
 # gather_facts would fail on it as unreachable. any_errors_fatal stops the whole run on the first
@@ -16,91 +28,81 @@
   gather_facts: false
   any_errors_fatal: true
   vars:
-    # Prints {"rc": <cloud-init status rc>, "managed": bool, "reboot_pending": bool,
-    #         "status": "<status --long>"}.
-    #
-    # The node cloud-init in opentofu-module-GlueKube-{AWS,Proxmox} ends with a power_state
-    # reboot, and cloud-init reports "done" in the few seconds between finishing and that reboot.
-    # reboot_pending covers that window: power_state is configured and its per-instance semaphore
-    # was written during the current boot, so the reboot has not happened yet. Nodes built
-    # before power_state was added have no power_state in their cloud-config and never count as
-    # pending.
-    #
-    # managed is the same power_state test on its own: it is what tells a node built from the
-    # current templates apart from an older one. Only managed nodes are held to a clean
-    # cloud-init -- see "Cloud-init succeeded" below.
-    cloud_init_check_script: |
-      cloud-init status --wait >/dev/null 2>&1
-      rc=$?
-      managed=false
-      pending=false
-      sem=/var/lib/cloud/instance/sem/config_power_state_change
-      if grep -Eqs '^"?power_state"?:' /var/lib/cloud/instance/cloud-config.txt; then
-        managed=true
-        if [ -e "$sem" ]; then
-          btime=$(awk '/^btime/ {print $2}' /proc/stat)
-          [ "$(stat -c %Y "$sem")" -ge "$btime" ] && pending=true
-        fi
-      fi
-      status=$(cloud-init status --long 2>&1 | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')
-      printf '{"rc": %s, "managed": %s, "reboot_pending": %s, "status": %s}\n' "$rc" "$managed" "$pending" "$status"
-    # Each attempt waits up to 20 minutes for SSH and 20 for cloud-init, but a retry only happens
-    # around a reboot, so a handful is plenty; the cap only stops a node that keeps dropping the
-    # connection from looping forever.
-    cloud_init_max_attempts: 10
+    # Retries (10s apart) while a node is pending or provisioning within a pass. A reboot normally
+    # follows the marker within a second or two, so this only bounds a reboot that never comes.
+    cloud_init_pending_retries: 30
+    cloud_init_inspect: >-
+      Inspect: /var/lib/cloud/instance/first-boot.json, /var/log/cloud-init-output.log.
   tasks:
-    # Fresh nodes open SSH while cloud-init is still upgrading packages, and then reboot. Nothing
-    # below may run until cloud-init has finished, succeeded, and the reboot is behind us. A
-    # node whose cloud-init failed stops the whole run here (any_errors_fatal) rather than being
-    # built on top of a half-provisioned OS.
-    #
-    # The connection dropping while the node reboots is expected and retried (see the tasks
-    # file); only the final attempt's result is judged below.
-    - name: Wait for cloud-init and its reboot
-      ansible.builtin.include_tasks: tasks/wait-for-cloud-init-attempt.yaml
-
-    - name: The cloud-init check completed
-      ansible.builtin.assert:
-        that:
-          - not (cloud_init_check.unreachable | default(false))
-          - cloud_init_check is not failed
-        fail_msg: >-
-          {{ inventory_hostname }}: the cloud-init check did not complete after
-          {{ cloud_init_attempt }} attempt(s) --
-          {{ 'still unreachable while waiting out its reboot' if cloud_init_check.unreachable | default(false) else 'it failed' }}:
-          {{ cloud_init_check.msg | default('') }}
-        quiet: true
-
-    # rc 2 is "done, with recoverable errors" (deprecation warnings and the like), the same line
-    # molecule/common/bastion-prepare.yml draws. rc 1 means a module failed -- package_upgrade,
-    # write_files, users -- and nothing after this can trust the node.
-    #
-    # Older nodes (no power_state in their cloud-config) are let through regardless. Their
-    # templates had known cloud-init errors -- the AWS one ended in a runcmd that disabled a
-    # nonexistent `apt` unit, so every AWS node of that era reports status: error -- and they
-    # have been running in the cluster since. Failing them here would block sync and upgrade on
-    # every existing cluster. They get a warning below instead.
-    - name: Cloud-init succeeded
-      ansible.builtin.assert:
-        that:
-          - (not cloud_init.managed) or cloud_init.rc in [0, 2]
-          - not cloud_init.reboot_pending
-        fail_msg: >-
-          cloud-init did not finish successfully on {{ inventory_hostname }}
-          (cloud-init status rc={{ cloud_init.rc }}{{ ', reboot still pending' if cloud_init.reboot_pending else '' }}).
-          Stopping before anything on the cluster is touched. Inspect the node with
-          `sudo cloud-init status --long` and /var/log/cloud-init-output.log, then replace it.
-          Status: {{ cloud_init.status }}
-        quiet: true
+    - name: Wait for cloud-init (first pass)
+      ansible.builtin.include_tasks: tasks/wait-for-cloud-init-pass.yaml
       vars:
+        cloud_init_pass: 1
+
+    # Only when the first pass ended unreachable: that is the power_state reboot landing.
+    - name: Wait for cloud-init after the reboot (second pass)
+      ansible.builtin.include_tasks: tasks/wait-for-cloud-init-pass.yaml
+      vars:
+        cloud_init_pass: 2
+      when: cloud_init_check.unreachable | default(false)
+
+    - name: The node came back after its reboot
+      ansible.builtin.fail:
+        msg: >-
+          {{ inventory_hostname }}: still unreachable after waiting out its cloud-init reboot:
+          {{ cloud_init_check.msg | default('') }}
+      when: cloud_init_check.unreachable | default(false)
+
+    - name: The cloud-init check ran
+      ansible.builtin.fail:
+        msg: >-
+          {{ inventory_hostname }}: the cloud-init check did not complete (rc={{ cloud_init_check.rc | default('?') }}):
+          {{ cloud_init_check.msg | default('') }} {{ cloud_init_check.stderr | default('') }}
+      when: cloud_init_check.stdout | default('', true) | trim | length == 0
+
+    - name: Read the cloud-init state
+      ansible.builtin.set_fact:
         cloud_init: "{{ cloud_init_check.stdout | from_json }}"
 
+    - name: Cloud-init succeeded on the first boot
+      ansible.builtin.fail:
+        msg: |-
+          {{ inventory_hostname }}: first boot FAILED ({{ cloud_init.reason }}).
+          Stopping before anything on the cluster is touched.
+          {% for e in cloud_init.errors %}
+            error: {{ e }}
+          {% endfor %}
+          Note: `cloud-init status` on the node now says "done"; it only covers the current boot.
+          {{ cloud_init_inspect }}
+          Fix: replace the node.
+      when: cloud_init.state == 'failed'
+
+    - name: The cloud-init reboot happened
+      ansible.builtin.fail:
+        msg: >-
+          {{ inventory_hostname }}: cloud-init is {{ cloud_init.state }} ({{ cloud_init.reason }})
+          after {{ cloud_init_pending_retries }} retries -- the power_state reboot never happened
+          or the first-boot marker was never written. {{ cloud_init_inspect }}
+      when: cloud_init.state in ['pending', 'provisioning']
+
+    # rc 2 is "done, with recoverable errors" -- WARNING/DEPRECATED, usually a removed or
+    # misspelled key that cloud-init skipped. Not a failure (the AWS template's
+    # `mounts: [["swap", null]]` logs a schema warning on every node), but this is the only early
+    # signal that a key stopped working, so it is printed per node.
+    - name: Report cloud-init warnings
+      ansible.builtin.debug:
+        msg: "{{ ['WARNING: ' ~ inventory_hostname ~ ': cloud-init reported warnings:'] + cloud_init.warnings }}"
+      when: cloud_init.warnings | length > 0
+
+    # Nodes built before the first-boot marker existed are let through regardless. Some of their
+    # templates had known cloud-init errors (the old AWS one ended in a runcmd that disabled a
+    # nonexistent `apt` unit), and they have been running in the cluster since; failing them would
+    # block sync and upgrade on every existing cluster. The rc shown is the current boot's only --
+    # on a node that has rebooted since, an old first-boot error is no longer visible at all.
     - name: Warn about older nodes whose cloud-init reported errors
       ansible.builtin.debug:
         msg: >-
-          WARNING: {{ inventory_hostname }} predates the power_state cloud-init templates and its
-          cloud-init reported rc={{ cloud_init.rc }}. Not stopping for it, since nodes of that
-          era are known to carry cloud-init errors. Status: {{ cloud_init.status }}
-      when: not cloud_init.managed and cloud_init.rc not in [0, 2]
-      vars:
-        cloud_init: "{{ cloud_init_check.stdout | from_json }}"
+          WARNING: {{ inventory_hostname }} predates the cloud-init first-boot marker and its
+          current cloud-init reported rc={{ cloud_init.rc }}. Not stopping for it.
+          Errors: {{ cloud_init.errors }}
+      when: cloud_init.state == 'legacy' and cloud_init.rc not in [0, 2]

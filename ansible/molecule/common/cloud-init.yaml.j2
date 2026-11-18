@@ -14,7 +14,6 @@
 # Proxmox and must NOT be repeated here.
 hostname: {{ node_name }}
 manage_etc_hosts: true
-package_reboot_if_required: true
 package_update: true
 package_upgrade: true
 packages:
@@ -31,6 +30,29 @@ users:
     sudo: ALL=(ALL) NOPASSWD:ALL
     shell: /bin/bash
 # No sysctls here: roles/common/tasks/prepare-node.yaml owns them (/etc/sysctl.d/99-kubernetes.conf).
+#
+# The first-boot marker and power_state below mirror opentofu-module-GlueKube-cloudinit (main.tf)
+# so molecule nodes go through the same path production nodes do: playbooks/wait-for-cloud-init.yaml
+# sees the marker path, waits for the reboot and judges boot 1 from the marker. Without them every
+# molecule node was a "legacy" node and the reboot and success checks never ran in CI. Keep the
+# script and the condition in step with the module.
+write_files:
+  - path: /usr/local/sbin/gluekube-first-boot-marker
+    permissions: "0755"
+    content: |
+      #!/bin/sh
+      out=/var/lib/cloud/instance/first-boot.json
+      tmp="$out.tmp.$$"
+      status=$(cloud-init status --format json 2>/dev/null)
+      [ -n "$status" ] || status=null
+      printf '{"boot_id": "%s", "cloud_init": %s}\n' \
+        "$(cat /proc/sys/kernel/random/boot_id)" "$status" > "$tmp" && mv -f "$tmp" "$out"
+      exit 0
+power_state:
+  mode: reboot
+  message: cloud-init finished, rebooting after package upgrade
+  timeout: 30
+  condition: /usr/local/sbin/gluekube-first-boot-marker
 runcmd:
   - sudo passwd -d root
   - sudo systemctl enable --now qemu-guest-agent
@@ -58,3 +80,8 @@ runcmd:
   - ip route show default | awk '{print $5}' | head -n1 > /etc/glueops/public-interface
   - chmod 0644 /etc/glueops/public-interface
   - sudo systemctl disable --now unattended-upgrades.service apt-daily.timer apt-daily-upgrade.timer apt-daily.service apt-news.service
+  # Scenario-supplied extra commands -- the cloud-init-failure scenario adds a failing one here to
+  # prove wait-for-cloud-init.yaml stops on a node whose first boot failed.
+{% for cmd in cloudinit_extra_runcmd | default([]) %}
+  - {{ cmd | to_json }}
+{% endfor %}

@@ -1,7 +1,7 @@
 ## Which scenario runs where
 
-All five scenarios — `test-cluster`, `scale-cluster`, `rotate-master-nodes`,
-`upgrade-control-plane` and `defrag-etcd` — build on
+All six scenarios — `test-cluster`, `scale-cluster`, `rotate-master-nodes`,
+`upgrade-control-plane`, `defrag-etcd` and `cloud-init-failure` — build on
 **Proxmox**. They share one implementation in `molecule/common/`:
 
 | file | what it is |
@@ -90,6 +90,7 @@ plus a per-scenario offset, masters at `base+1..`, workers at `base+11..`:
 | `rotate-master-nodes` | 200 | 9200 | 9201–9209 | 9211 |
 | `upgrade-control-plane` | 300 | 9300 | 9301–9303 | 9311–9312 |
 | `defrag-etcd` | 400 | 9400 | 9401–9403 | 9411 |
+| `cloud-init-failure` | 500 | 9500 | 9501 | — |
 
 The offsets keep the three scenarios from colliding with **each other**. They do nothing about a
 second run of the *same* scenario: create is idempotent on the vmid, so it does not fail, it
@@ -97,7 +98,7 @@ silently *adopts* the first run's VMs and writes their IPs into its own inventor
 reaches `destroy` first deletes the other's VMs, and its DNS teardown removes the domain the
 other run is still using.
 
-Pick a `PROXMOX_VMID_BASE` leaving 9000–9411 (at the default) free and reserved for molecule. The
+Pick a `PROXMOX_VMID_BASE` leaving 9000–9501 (at the default) free and reserved for molecule. The
 range starts at the base itself now — that is the bastion. `destroy` deletes those vmids outright,
 so a base that collides with a real VM destroys it. The offsets live in each scenario's
 `create.yml` *and* `destroy.yml` — change one, change both, or destroy will delete the wrong range.
@@ -436,3 +437,17 @@ Two things worth knowing:
   `destroy`, the next run's `POST /dns/domains` will hit the leftover. Delete it in AutoGlue
   before re-running.
 
+## `cloud-init-failure`
+
+The negative test for `playbooks/wait-for-cloud-init.yaml`. It builds the bastion and one node
+whose cloud-init gets an extra `runcmd: ["false"]` (`cloudinit_extra_runcmd` in `create.yml`), so
+the first boot ends in `status: error`. `power_state` reboots the node anyway, and afterwards
+`cloud-init status` on the node reports `done`. `converge` runs the wait on the bastion with
+`bastion_run_expect_failure`. The scenario passes only if the wait exits non-zero and prints
+`first boot FAILED`, which proves the result comes from the first-boot marker and not from the
+current boot's status. No DNS record is made and no cluster is built.
+
+The node cloud-config (`common/cloud-init.yaml.j2`) mirrors the `power_state` and first-boot marker
+of `opentofu-module-GlueKube-cloudinit`. As a result every scenario's nodes take the same
+wait-for-reboot path as production nodes, and `test-cluster`'s verify asserts each node's marker
+recorded a clean first boot.

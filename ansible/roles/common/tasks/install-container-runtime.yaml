@@ -1,0 +1,46 @@
+---
+# Install containerd and Docker at their pinned versions and hold them there. Imported by
+# prepare-node.yaml (new nodes) and by upgrade-container-runtime.yaml (existing nodes, from
+# upgrade-cluster.yaml). The caller refreshes the apt lists first.
+#
+# containerd_package_version pins containerd.io, docker_package_version pins docker-ce and
+# docker-ce-cli (they ship in lockstep), and docker_buildx_plugin_version /
+# docker_compose_plugin_version pin the two plugins. All default in the Dockerfile; empty
+# installs the newest the mirror serves. The Docker repo's release suffix is per-distro (e.g.
+# 2.4.2-4~ubuntu.24.04~noble), so the pins glob over it ("2.4.2-4~*"), and docker-ce carries a
+# "5:" epoch that the pin must include. The packages are held below, so
+# allow_change_held_packages lets a changed pin apply and allow_downgrade lets it move backwards.
+- name: Install containerd
+  ansible.builtin.apt:
+    name:
+      - "docker-ce{{ ('=' ~ docker_package_version) if docker_package_version | default('', true) | length > 0 else '' }}"
+      - "docker-ce-cli{{ ('=' ~ docker_package_version) if docker_package_version | default('', true) | length > 0 else '' }}"
+      - "containerd.io{{ ('=' ~ containerd_package_version) if containerd_package_version | default('', true) | length > 0 else '' }}"
+      - "docker-buildx-plugin{{ ('=' ~ docker_buildx_plugin_version) if docker_buildx_plugin_version | default('', true) | length > 0 else '' }}"
+      - "docker-compose-plugin{{ ('=' ~ docker_compose_plugin_version) if docker_compose_plugin_version | default('', true) | length > 0 else '' }}"
+    state: present
+    allow_change_held_packages: true
+    allow_downgrade: true
+  register: common_containerd_packages
+  retries: 5
+  delay: 60
+  until: common_containerd_packages is succeeded
+
+# Held for the same reason as kubeadm/kubelet: without a hold, the dist-upgrade in
+# prepare-node.yaml and unattended-upgrades move containerd (and dockerd with it) to whatever the
+# Docker repo serves next, restarting the runtime under running pods.
+#
+# Moving a pin: prepare-node.yaml only runs on nodes being added, so a changed pin reaches existing
+# nodes through `make upgrade` (upgrade-cluster.yaml -> upgrade-container-runtime.yaml), which
+# drains each node whose installed version no longer matches. That is also the path for a
+# containerd/runc security fix: bump the pin, then upgrade.
+- name: Hold containerd and Docker packages at the installed version
+  ansible.builtin.dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop:
+    - docker-ce
+    - docker-ce-cli
+    - containerd.io
+    - docker-buildx-plugin
+    - docker-compose-plugin

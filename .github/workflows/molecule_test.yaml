@@ -15,6 +15,7 @@ on:
           - 'scale-cluster'
           - 'upgrade-control-plane'
           - 'defrag-etcd'
+          - 'cloud-init-failure'
         default: 'all'
 
 env:
@@ -23,7 +24,7 @@ env:
 # Every scenario reuses fixed resource identities and PATCHes the same AUTOGLUE_RECORD_ID, and
 # create is idempotent on that identity -- so two concurrent runs adopt and then destroy each
 # other's VMs. That identity is the Proxmox vmid range each scenario owns: PROXMOX_VMID_BASE plus
-# the scenario's own offset (0 / 100 / 200 / 300 / 400), which keeps the five apart from each other but not
+# the scenario's own offset (0 / 100 / 200 / 300 / 400 / 500), which keeps the six apart from each other but not
 # from a second run of themselves. Queue them instead (#461).
 #
 # cancel-in-progress must stay false: cancelling a molecule run mid-flight skips `destroy` and
@@ -66,6 +67,12 @@ jobs:
 
       - name: yamllint
         run: yamllint ansible/
+
+      # playbooks/files/cloud_init_state.py decides whether wait-for-cloud-init.yaml lets a node
+      # through; its states are tested against fixtures here, since molecule only covers the
+      # happy path and one failure.
+      - name: Unit tests
+        run: python -m unittest discover -s ansible/tests -v
 
       # Runs from the repo root on purpose: ansible-lint resolves .ansible-lint-ignore against
       # the project root it detects (the git root), so running from ansible/ silently ignores
@@ -343,6 +350,17 @@ jobs:
           ssh-keygen -t rsa -b 4096 -f molecule/defrag-etcd/keys/vm_node -N "" -C "molecule-test-key"
           chmod 600 molecule/defrag-etcd/keys/vm_node
           molecule test -s defrag-etcd
+
+      # The negative test for playbooks/wait-for-cloud-init.yaml: one node whose first boot fails.
+      # Passes only when the wait stops on it (see molecule/cloud-init-failure/molecule.yml).
+      - name: Run Molecule Test - cloud-init-failure
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.scenario == 'all' || github.event.inputs.scenario == 'cloud-init-failure'
+        working-directory: ansible
+        run: |
+          mkdir -p molecule/cloud-init-failure/keys/
+          ssh-keygen -t rsa -b 4096 -f molecule/cloud-init-failure/keys/vm_node -N "" -C "molecule-test-key"
+          chmod 600 molecule/cloud-init-failure/keys/vm_node
+          molecule test -s cloud-init-failure
 
       # The old globs collected nothing: `.molecule` has not been molecule's state directory for
       # years, and `tests` is unmodified source. ~/.cache/molecule is the real ephemeral

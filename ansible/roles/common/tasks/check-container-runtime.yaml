@@ -1,0 +1,39 @@
+---
+# Compare the installed containerd/Docker packages with their pins (glob-matched, the same way
+# apt reads "2.4.2-4~*"). Sets common_container_runtime_drift, which upgrade-cluster.yaml uses
+# to decide whether a node has to be drained for upgrade-container-runtime.yaml. An unset or
+# empty pin never counts as drift. Read-only, so it also runs under --check.
+- name: Compare the installed container runtime with its pins
+  ansible.builtin.shell: |
+    drift=""
+    check() {
+      [ -n "$2" ] || return 0
+      v=$(dpkg-query -W -f='${Version}' "$1" 2>/dev/null)
+      # $2 unquoted on purpose: it is a glob pattern.
+      case "$v" in $2) ;; *) drift="$drift $1=${v:-not-installed} (pin $2)";; esac
+    }
+    check containerd.io "$CONTAINERD_PIN"
+    check docker-ce "$DOCKER_PIN"
+    check docker-ce-cli "$DOCKER_PIN"
+    check docker-buildx-plugin "$BUILDX_PIN"
+    check docker-compose-plugin "$COMPOSE_PIN"
+    echo "${drift# }"
+  args:
+    executable: /bin/bash
+  environment:
+    CONTAINERD_PIN: "{{ containerd_package_version | default('', true) }}"
+    DOCKER_PIN: "{{ docker_package_version | default('', true) }}"
+    BUILDX_PIN: "{{ docker_buildx_plugin_version | default('', true) }}"
+    COMPOSE_PIN: "{{ docker_compose_plugin_version | default('', true) }}"
+  register: common_container_runtime_check
+  changed_when: false
+  check_mode: false
+
+- name: Record whether the container runtime has to move
+  ansible.builtin.set_fact:
+    common_container_runtime_drift: "{{ common_container_runtime_check.stdout | trim | length > 0 }}"
+
+- name: Report container runtime drift
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: container runtime differs from its pins: {{ common_container_runtime_check.stdout | trim }}"
+  when: common_container_runtime_drift | bool
