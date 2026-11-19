@@ -3,7 +3,9 @@
 # (conntrack.maxPerCore: 0), the same as kubeadm-stacked-config.yaml.j2's KubeProxyConfiguration
 # does for new clusters. kubeadm only writes the kube-proxy ConfigMap at init, and
 # `kubeadm upgrade apply` carries the existing one forward, so clusters built before this setting
-# never get it otherwise. Run on the orchestrator from upgrade-cluster.yaml, after the upgrade.
+# never get it otherwise. Run on the orchestrator from upgrade-cluster.yaml (after the upgrade),
+# and from sync-resources.yaml and rotate-master-nodes.yaml (before new nodes join), so a
+# rotation-only rollout fixes existing clusters too.
 #
 # Idempotent: when maxPerCore is already 0 nothing is written and kube-proxy is not restarted.
 - name: Set conntrack.maxPerCore to 0 in the kube-proxy ConfigMap

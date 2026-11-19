@@ -36,6 +36,13 @@
   run_once: true
   delegate_to: localhost
 
+# Before any new master joins, so its kube-proxy starts with conntrack.maxPerCore: 0 and leaves
+# the nf_conntrack_max that kernel-tuning.yaml set alone.
+- name: Stop kube-proxy from resetting nf_conntrack_max
+  ansible.builtin.import_tasks: configure-kube-proxy.yaml
+  run_once: true
+  delegate_to: "{{ orchestrator_node }}"
+
 # Run 3-4-3 master rotation from orchestrator
 # Note: Runs on orchestrator by default, but can switch via delegation_host during orchestrator rotation
 - name: Rotate master nodes using 3-4-3 strategy

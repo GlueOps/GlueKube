@@ -9,6 +9,18 @@
 - name: Elect the orchestrator
   ansible.builtin.import_playbook: elect-orchestrator.yaml
 
+# Before any node joins: kubeadm writes the kube-proxy ConfigMap only at init, so a cluster built
+# before conntrack.maxPerCore: 0 still has kube-proxy lowering nf_conntrack_max on every new node.
+# A no-op when the ConfigMap already has it.
+- name: Stop kube-proxy from resetting nf_conntrack_max
+  hosts: orchestrator
+  become: true
+  tasks:
+    - name: Set conntrack.maxPerCore to 0 in the kube-proxy ConfigMap
+      ansible.builtin.include_role:
+        name: master
+        tasks_from: configure-kube-proxy.yaml
+
 - name: Sync cluster node resources
   hosts:
     - masters

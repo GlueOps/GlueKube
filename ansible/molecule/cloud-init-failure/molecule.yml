@@ -2,7 +2,7 @@
 # The negative test for playbooks/wait-for-cloud-init.yaml: one node whose first-boot runcmd
 # fails (`false`), behind the usual bastion. cloud-init reports the error, power_state still
 # reboots it, and after the reboot `cloud-init status` says "done" -- the exact case the old wait
-# let through. converge runs the wait and passes only if it STOPS with "first boot FAILED".
+# let through. converge runs the wait and passes only if it STOPS with "error(s) before its reboot".
 driver:
   name: default
 

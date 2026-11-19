@@ -15,4 +15,7 @@
         bastion_run_playbook: ../../playbooks/wait-for-cloud-init.yaml
         bastion_run_timeout: 3600
         bastion_run_expect_failure: true
-        bastion_run_expect_output: "first boot FAILED"
+        # The reason cloud_init_state.py gives only for errors recorded in the marker. "first boot
+        # FAILED" alone also matches an unparsable or empty marker, so it would not prove the
+        # marker was read.
+        bastion_run_expect_output: "error(s) before its reboot"

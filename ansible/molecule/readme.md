@@ -444,10 +444,16 @@ whose cloud-init gets an extra `runcmd: ["false"]` (`cloudinit_extra_runcmd` in 
 the first boot ends in `status: error`. `power_state` reboots the node anyway, and afterwards
 `cloud-init status` on the node reports `done`. `converge` runs the wait on the bastion with
 `bastion_run_expect_failure`. The scenario passes only if the wait exits non-zero and prints
-`first boot FAILED`, which proves the result comes from the first-boot marker and not from the
+`error(s) before its reboot`, which proves the result comes from the first-boot marker and not from the
 current boot's status. No DNS record is made and no cluster is built.
 
 The node cloud-config (`common/cloud-init.yaml.j2`) mirrors the `power_state` and first-boot marker
-of `opentofu-module-GlueKube-cloudinit`. As a result every scenario's nodes take the same
-wait-for-reboot path as production nodes, and `test-cluster`'s verify asserts each node's marker
+of `opentofu-module-GlueKube-cloudinit`. As a result every scenario's nodes are judged from the
+first-boot marker, as production nodes are, and `test-cluster`'s verify asserts each node's marker
 recorded a clean first boot.
+
+What molecule does **not** cover is the wait-for-reboot path. Each `create.yml` has already waited
+out the node's reboot before the wait runs, so the wait only ever sees a node that has rebooted.
+The `pending` retries, the check killed by the shutdown, the unreachable first pass, the second
+pass and the "reboot never happened" failure are untested in CI. Run an AWS or Proxmox apply with an
+image built from the branch when changing `wait-for-cloud-init.yaml` or the marker.

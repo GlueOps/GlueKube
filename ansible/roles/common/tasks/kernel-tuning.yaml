@@ -1,7 +1,7 @@
 ---
 # Kernel modules and sysctls every GlueKube node needs. Imported by prepare-node.yaml (new nodes)
 # and run by upgrade-cluster.yaml on every node it upgrades, so a change here reaches existing
-# nodes through `make upgrade` as well as new ones through setup/sync. Live sysctl changes are
+# nodes through `make upgrade-cluster` as well as new ones through setup/sync. Live sysctl changes are
 # safe on a running node; nothing here restarts a service.
 #
 # Facts are read through hostvars[node_to_add | default(inventory_hostname)] -- see the note at the

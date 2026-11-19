@@ -161,7 +161,7 @@ export docker_buildx_plugin_version='0.39.0-1~*'
 export docker_compose_plugin_version='5.7.2-1~*'
                                                  # all optional (empty = newest). the packages
                                                  # are held. new nodes get these at setup/sync;
-                                                 # existing nodes only move on `make upgrade`
+                                                 # existing nodes only move on `make upgrade-cluster`
                                                  # -- see running `upgrade-cluster`
 export loadbalancer_apiserver=ctrp.example.com   # the apiserver DNS record
 export domain_name=example.com                   # kube-api.$domain_name goes in the certSANs,
@@ -490,7 +490,9 @@ masters. adding a worker silently did nothing. that is fixed — the election no
   `prepare-node` runs only for nodes being added. nodes from before the packages were held get the
   hold here. the kernel modules and sysctls from `roles/common/tasks/kernel-tuning.yaml` are
   reapplied on every node, and the kube-proxy ConfigMap gets `conntrack.maxPerCore: 0`, so
-  kube-proxy stops lowering `nf_conntrack_max`. under `upgrade-control-plane` the workers are
+  kube-proxy stops lowering `nf_conntrack_max`. `sync` and `rotate-master-nodes` set the same
+  ConfigMap value before any new node joins, so the nodes they add keep 1048576. nodes they don't
+  replace keep their current value until replaced or upgraded. under `upgrade-control-plane` the workers are
   skipped and pick these up only when they are replaced.
 - **it switches the Ubuntu apt sources to the mirror.** every node's `ubuntu.sources` is replaced
   and `sources.list` emptied (see [Apt sources](#apt-sources)), so any custom mirror or backports
