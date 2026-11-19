@@ -1,5 +1,9 @@
 ---
 kubernetes_version: "{{ lookup('env', 'kubernetes_version') }}"
 kubernetes_package_version: "{{ lookup('env', 'kubernetes_package_version') }}" #"1.34.11-1.1" -- matches the Dockerfile and CI pin; the floor is 1.31 (see playbooks/preflight.yaml)
+containerd_package_version: "{{ lookup('env', 'containerd_package_version') }}" #"2.4.2-4~*" -- matches the Dockerfile and CI pin; glob over the per-distro suffix. empty installs the newest containerd.io
+docker_package_version: "{{ lookup('env', 'docker_package_version') }}" #"5:29.10.0-1~*" -- docker-ce and docker-ce-cli; matches the Dockerfile and CI pin, epoch included. empty installs the newest
+docker_buildx_plugin_version: "{{ lookup('env', 'docker_buildx_plugin_version') }}" #"0.39.0-1~*" -- matches the Dockerfile and CI pin. empty installs the newest
+docker_compose_plugin_version: "{{ lookup('env', 'docker_compose_plugin_version') }}" #"5.7.2-1~*" -- matches the Dockerfile and CI pin. empty installs the newest
 loadbalancer_apiserver: "{{ lookup('env', 'loadbalancer_apiserver') }}"
 domain_name: "{{ lookup('env', 'domain_name') }}"

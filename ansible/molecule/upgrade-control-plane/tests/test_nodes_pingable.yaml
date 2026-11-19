@@ -1,3 +1,8 @@
 ---
+# Same order as `make ping-servers`: molecule nodes now reboot once after cloud-init (the
+# first-boot marker in common/cloud-init.yaml.j2), so wait that out before probing them.
+- name: Wait for cloud-init and its reboot
+  ansible.builtin.import_playbook: ../../../playbooks/wait-for-cloud-init.yaml
+
 - name: Pingable Check Between All Nodes
   ansible.builtin.import_playbook: ../../../playbooks/check-network-connectivity.yaml

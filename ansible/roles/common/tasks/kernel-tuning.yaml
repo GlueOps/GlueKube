@@ -1,0 +1,77 @@
+---
+# Kernel modules and sysctls every GlueKube node needs. Imported by prepare-node.yaml (new nodes)
+# and run by upgrade-cluster.yaml on every node it upgrades, so a change here reaches existing
+# nodes through `make upgrade-cluster` as well as new ones through setup/sync. Live sysctl changes are
+# safe on a running node; nothing here restarts a service.
+#
+# Facts are read through hostvars[node_to_add | default(inventory_hostname)] -- see the note at the
+# top of prepare-node.yaml (master rotation delegates these tasks to the incoming node).
+
+# persistent: present writes /etc/modules-load.d/ so the modules survive a reboot. This has
+# to stay ahead of the sysctl task below: with br_netfilter unloaded the net.bridge.* keys do
+# not exist, and systemd-sysctl fails to apply them at boot in a way that looks like a CNI bug.
+- name: Load required kernel modules persistently
+  community.general.modprobe:
+    name: "{{ item }}"
+    state: present
+    persistent: present
+  loop:
+    - overlay
+    - br_netfilter
+    # net.netfilter.nf_conntrack_max below only exists once nf_conntrack is loaded.
+    - nf_conntrack
+
+- name: Apply Kubernetes sysctl settings
+  ansible.posix.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/99-kubernetes.conf
+    sysctl_set: true
+    reload: true
+  loop:
+    - { name: net.bridge.bridge-nf-call-iptables, value: "1" }
+    - { name: net.bridge.bridge-nf-call-ip6tables, value: "1" }
+    # only ends up set today as a side effect of installing docker-ce
+    - { name: net.ipv4.ip_forward, value: "1" }
+    - { name: vm.swappiness, value: "0" }
+    - { name: fs.inotify.max_user_instances, value: "8192" }
+    # Doubled on nodes with more than 64 GB RAM. Facts are read through hostvars for the same
+    # master-rotation delegation reason as the swap task in prepare-node.yaml.
+    - name: fs.inotify.max_user_watches
+      value: "{{ '1048576' if (hostvars[node_to_add | default(inventory_hostname)]['ansible_memtotal_mb'] | default(0) | int) > 65536 else '524288' }}"
+    - { name: net.ipv4.neigh.default.gc_thresh1, value: "8192" }
+    - { name: net.ipv4.neigh.default.gc_thresh2, value: "32768" }
+    - { name: net.ipv4.neigh.default.gc_thresh3, value: "65536" }
+    - { name: vm.max_map_count, value: "1048576" }
+    - { name: kernel.pid_max, value: "4194304" }
+    # Only sticks because kube-proxy is told to leave it alone: its default
+    # (maxPerCore 32768, min 131072) is written on every start, lowering it as well as raising it.
+    # The KubeProxyConfiguration in roles/master/templates/kubeadm-stacked-config.yaml.j2 sets
+    # conntrack.maxPerCore: 0 for new clusters; roles/master/tasks/configure-kube-proxy.yaml does
+    # the same to an existing cluster's kube-proxy ConfigMap during upgrade-cluster.
+    - { name: net.netfilter.nf_conntrack_max, value: "1048576" }
+    # The complete set kubelet checks when protectKernelDefaults is enabled
+    # (pkg/kubelet/cm/container_manager_linux.go, setupKernelTunables). It refuses to start if any
+    # differs, so keep all six together.
+    - { name: vm.overcommit_memory, value: "1" }
+    - { name: vm.panic_on_oom, value: "0" }
+    - { name: kernel.panic, value: "10" }
+    - { name: kernel.panic_on_oops, value: "1" }
+    - { name: kernel.keys.root_maxkeys, value: "1000000" }
+    - { name: kernel.keys.root_maxbytes, value: "25000000" }
+    # General network and AIO headroom for busy nodes; nothing kubelet checks.
+    - { name: net.core.somaxconn, value: "4096" }
+    - { name: net.core.netdev_max_backlog, value: "1000" }
+    - { name: fs.aio-max-nr, value: "1048576" }
+
+# these used to be written to /etc/sysctl.conf. drop them there so the values are not defined
+# in two files with no ordering guarantee between them.
+- name: Remove the superseded sysctl entries from /etc/sysctl.conf
+  ansible.posix.sysctl:
+    name: "{{ item }}"
+    sysctl_file: /etc/sysctl.conf
+    state: absent
+    reload: false
+  loop:
+    - net.bridge.bridge-nf-call-iptables
+    - vm.swappiness

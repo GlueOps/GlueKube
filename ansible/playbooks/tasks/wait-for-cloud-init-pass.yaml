@@ -1,0 +1,41 @@
+---
+# One pass of wait-for-cloud-init.yaml. Included at most twice per node: power_state reboots a
+# node once (it is per-instance), so the first pass can end unreachable mid-reboot and the second
+# only has to pick the node up on its new boot.
+#
+# Inside a pass, `until` retries on the printed state. That covers the seconds between cloud-init
+# finishing and the reboot ("pending"), and a check that the shutdown killed (rc 143, empty
+# stdout). `until` does not retry an unreachable host -- which is what ends the first pass when
+# the reboot lands, and is why there is a second pass at all.
+#
+# check_mode: false on both tasks: they only read, and without it `--check` runs of sync, setup
+# and upgrade skipped the check and then failed parsing its empty stdout.
+
+# wait_for_connection resets the connection between its own attempts, so the stale ControlPersist
+# socket left by a reboot is not reused. The delay on the second pass gives the node time to go
+# down before the first probe.
+- name: Node is reachable (pass {{ cloud_init_pass }})
+  ansible.builtin.wait_for_connection:
+    delay: "{{ 0 if cloud_init_pass | int == 1 else 10 }}"
+    timeout: 1200
+  check_mode: false
+
+- name: Check cloud-init (pass {{ cloud_init_pass }})
+  ansible.builtin.script: cloud_init_state.py
+  args:
+    executable: python3
+  become: true
+  register: cloud_init_check
+  changed_when: false
+  check_mode: false
+  # `cloud-init status --wait` inside the script blocks while cloud-init runs, up to this.
+  timeout: 1800
+  retries: "{{ cloud_init_pending_retries }}"
+  delay: 10
+  until: >-
+    (cloud_init_check.stdout | default('', true) | trim | length > 0)
+    and ((cloud_init_check.stdout | from_json).state not in ['pending', 'provisioning'])
+  # Both are needed: under the play's any_errors_fatal an unreachable result still ends the play
+  # unless ignore_errors is also set. The play judges the result after the passes.
+  ignore_unreachable: true
+  ignore_errors: true

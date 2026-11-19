@@ -8,6 +8,10 @@
 #   bastion_run_name       short label; names the log file on both sides
 #   bastion_run_timeout    seconds before the remote run is killed. Default 2h.
 #   bastion_run_assert_no_changes  fail unless the remote PLAY RECAP reports changed=0 everywhere
+#   bastion_run_expect_failure  invert the result: the step passes only if the remote run exits
+#                          non-zero AND its output contains bastion_run_expect_output. For negative
+#                          scenarios such as cloud-init-failure.
+#   bastion_run_expect_output  fixed string the failing run must print
 #   bastion_run_extra_args  appended to the ansible-playbook command line as-is, e.g.
 #                          "-e upgrade_workers=false". Literals only: it lands in a shell command,
 #                          and anything secret belongs in the root-only .env instead.
@@ -94,7 +98,28 @@
           {{ bastion_run_playbook }} exited {{ bastion_run_rc.content | b64decode | trim }} on the
           bastion. The full output is above and in
           {{ bastion_scenario_name }}/logs/{{ bastion_run_id }}.log.
-      when: (bastion_run_rc.content | b64decode | trim | int) != 0
+      when:
+        - (bastion_run_rc.content | b64decode | trim | int) != 0
+        - not (bastion_run_expect_failure | default(false) | bool)
+
+    - name: The remote run failed the way it was expected to
+      when: bastion_run_expect_failure | default(false) | bool
+      block:
+        - name: The remote run exited non-zero
+          ansible.builtin.assert:
+            that:
+              - (bastion_run_rc.content | b64decode | trim | int) != 0
+            fail_msg: >-
+              {{ bastion_run_playbook }} was expected to fail on the bastion but exited 0. The full
+              output is above and in {{ bastion_scenario_name }}/logs/{{ bastion_run_id }}.log.
+            quiet: true
+
+        - name: The remote run printed the expected failure
+          ansible.builtin.command:
+            argv: [grep, -qF, --, "{{ bastion_run_expect_output }}", "{{ bastion_run_log }}"]
+          register: bastion_run_expected_output
+          changed_when: false
+          failed_when: bastion_run_expected_output.rc != 0
 
     # Molecule's own `idempotence` step counts changes in the LOCAL run, and the launcher task
     # above is always changed, so that step can never see the remote cluster. This reads the

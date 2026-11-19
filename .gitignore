@@ -77,3 +77,7 @@ hosts.ini
 /ansible/molecule/*/autoglue-record-id
 
 /platform.json
+
+# Python bytecode
+__pycache__/
+*.py[cod]

@@ -21,43 +21,9 @@
     regexp: '^(\s*[^#\s]\S*\s+\S+\s+swap\s+.*)$'
     replace: '# \1'
 
-# persistent: present writes /etc/modules-load.d/ so the modules survive a reboot. This has
-# to stay ahead of the sysctl task below: with br_netfilter unloaded the net.bridge.* keys do
-# not exist, and systemd-sysctl fails to apply them at boot in a way that looks like a CNI bug.
-- name: Load required kernel modules persistently
-  community.general.modprobe:
-    name: "{{ item }}"
-    state: present
-    persistent: present
-  loop:
-    - overlay
-    - br_netfilter
-
-- name: Apply Kubernetes sysctl settings
-  ansible.posix.sysctl:
-    name: "{{ item.name }}"
-    value: "{{ item.value }}"
-    sysctl_file: /etc/sysctl.d/99-kubernetes.conf
-    sysctl_set: true
-    reload: true
-  loop:
-    - { name: net.bridge.bridge-nf-call-iptables, value: "1" }
-    - { name: net.bridge.bridge-nf-call-ip6tables, value: "1" }
-    # only ends up set today as a side effect of installing docker-ce
-    - { name: net.ipv4.ip_forward, value: "1" }
-    - { name: vm.swappiness, value: "0" }
-
-# these used to be written to /etc/sysctl.conf. drop them there so the values are not defined
-# in two files with no ordering guarantee between them.
-- name: Remove the superseded sysctl entries from /etc/sysctl.conf
-  ansible.posix.sysctl:
-    name: "{{ item }}"
-    sysctl_file: /etc/sysctl.conf
-    state: absent
-    reload: false
-  loop:
-    - net.bridge.bridge-nf-call-iptables
-    - vm.swappiness
+# Modules and sysctls -- shared with upgrade-cluster.yaml so they also reach existing nodes.
+- name: Load kernel modules and apply sysctls
+  ansible.builtin.import_tasks: kernel-tuning.yaml
 
 # Before the cache update, which a bad key would fail.
 - name: Install the apt signing keys
@@ -109,19 +75,10 @@
 - name: Update the apt package lists
   ansible.builtin.import_tasks: apt-update.yaml
 
-- name: Install containerd
-  ansible.builtin.apt:
-    name:
-      - docker-ce
-      - docker-ce-cli
-      - containerd.io
-      - docker-buildx-plugin
-      - docker-compose-plugin
-    state: present
-  register: common_containerd_packages
-  retries: 5
-  delay: 60
-  until: common_containerd_packages is succeeded
+# Pinned and held -- see install-container-runtime.yaml for how the pins work and how a changed
+# pin reaches nodes that already exist.
+- name: Install and hold containerd and Docker
+  ansible.builtin.import_tasks: install-container-runtime.yaml
 
 - name: Add Docker group
   ansible.builtin.group:

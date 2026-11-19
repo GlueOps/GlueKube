@@ -95,3 +95,70 @@
         fail_msg: >-
           Expected {{ groups['masters'] | length }} etcd members,
           found {{ etcd_members.stdout }}
+# The node tuning and pins prepare-node.yaml applies, checked on every node: the live sysctl
+# values (kube-proxy must not have lowered nf_conntrack_max), the containerd/Docker holds, and the
+# cloud-init first-boot marker the wait read.
+- name: Verify the node tuning, holds and first-boot marker
+  hosts: masters:workers
+  become: true
+  gather_facts: false
+  vars:
+    expected_sysctls:
+      net.netfilter.nf_conntrack_max: "1048576"
+      fs.inotify.max_user_instances: "8192"
+      vm.max_map_count: "1048576"
+      kernel.pid_max: "4194304"
+      net.ipv4.neigh.default.gc_thresh3: "65536"
+      vm.overcommit_memory: "1"
+      vm.panic_on_oom: "0"
+      kernel.panic: "10"
+      kernel.panic_on_oops: "1"
+      kernel.keys.root_maxkeys: "1000000"
+      kernel.keys.root_maxbytes: "25000000"
+      net.core.somaxconn: "4096"
+    held_packages:
+      - containerd.io
+      - docker-ce
+      - docker-ce-cli
+      - docker-buildx-plugin
+      - docker-compose-plugin
+  tasks:
+    - name: Read the live sysctl values
+      ansible.builtin.command: sysctl -n {{ expected_sysctls.keys() | join(' ') }}
+      register: node_sysctls
+      changed_when: false
+
+    - name: Every tuned sysctl holds its value
+      ansible.builtin.assert:
+        that: node_sysctls.stdout_lines == expected_sysctls.values() | list
+        fail_msg: >-
+          {{ inventory_hostname }}: expected
+          {{ dict(expected_sysctls.keys() | zip(expected_sysctls.values())) }}, got
+          {{ dict(expected_sysctls.keys() | zip(node_sysctls.stdout_lines)) }}
+        quiet: true
+
+    - name: Read the held packages
+      ansible.builtin.command: apt-mark showhold
+      register: node_holds
+      changed_when: false
+
+    - name: Containerd and Docker are held
+      ansible.builtin.assert:
+        that: held_packages | difference(node_holds.stdout_lines) | length == 0
+        fail_msg: >-
+          {{ inventory_hostname }}: not held:
+          {{ held_packages | difference(node_holds.stdout_lines) }}
+        quiet: true
+
+    - name: Read the cloud-init first-boot marker
+      ansible.builtin.slurp:
+        src: /var/lib/cloud/instance/first-boot.json
+      register: node_first_boot
+
+    - name: The first boot recorded a clean cloud-init
+      ansible.builtin.assert:
+        that:
+          - (node_first_boot.content | b64decode | from_json).cloud_init.status == 'done'
+          - (node_first_boot.content | b64decode | from_json).cloud_init.errors | length == 0
+        fail_msg: "{{ inventory_hostname }}: {{ node_first_boot.content | b64decode }}"
+        quiet: true

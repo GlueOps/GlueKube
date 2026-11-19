@@ -1,0 +1,53 @@
+---
+# One node with a failing first-boot runcmd, plus the bastion that reaches it. Built by the same
+# ../common/proxmox-provision.yml as every scenario; no DNS record, because nothing here builds a
+# cluster. vmids base+500 (bastion) and base+501 -- destroy.yml must carry the same offset.
+- name: Create Proxmox VMs
+  hosts: localhost
+  gather_facts: true
+  vars_files:
+    - ../common/proxmox-vars.yml
+    - ../common/bastion-vars.yml
+  vars:
+    num_master_nodes: 1
+    num_worker_nodes: 0
+    public_key: "{{ lookup('file', 'keys/vm_node.pub') }}"
+    pve_vmid_offset: 500
+    snippet_prefix: molecule-cloud-init-failure
+    # Appended to the node's runcmd by ../common/cloud-init.yaml.j2. scripts_user fails, so
+    # cloud-init's first boot ends in status: error -- and power_state reboots it anyway.
+    cloudinit_extra_runcmd:
+      - "false"
+
+  tasks:
+    - name: Build the node on Proxmox
+      ansible.builtin.import_tasks: ../common/proxmox-provision.yml
+
+    - name: Store the bastion inventory
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../common/bastion-hosts.yaml.j2"
+        dest: "./inventory/hosts.yaml"
+        mode: "0644"
+
+    - name: Pick up the bastion
+      ansible.builtin.meta: refresh_inventory
+
+- name: Make the bastion a GlueKube controller
+  hosts: bastion
+  gather_facts: true
+  vars_files:
+    - ../common/bastion-vars.yml
+  tasks:
+    - name: Install the toolchain and ship the code
+      ansible.builtin.import_tasks: ../common/bastion-prepare.yml
+
+    - name: Store the node inventory on the bastion
+      ansible.builtin.template:
+        src: "{{ bastion_local_ansible_root }}/molecule/common/hosts.yaml.j2"
+        dest: "{{ bastion_scenario_dir }}/inventory/hosts.yaml"
+        owner: cluster
+        group: cluster
+        mode: "0644"
+      vars:
+        inv_masters: "{{ master_nodes_list }}"
+        inv_workers: []

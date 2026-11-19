@@ -130,6 +130,10 @@ with open(ansible_output_path, 'w') as yaml_file:
 version_fields = (
     'kubernetes_version',
     'kubernetes_package_version',
+    'containerd_package_version',
+    'docker_package_version',
+    'docker_buildx_plugin_version',
+    'docker_compose_plugin_version',
     'calico_chart_version',
     'calico_tigera_operator_version',
 )
