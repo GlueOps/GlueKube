@@ -37,15 +37,9 @@
 - name: Update the apt package lists
   ansible.builtin.import_tasks: apt-update.yaml
 
+# No package upgrade here: cloud-init upgrades on first boot and always reboots afterwards. An
+# upgrade from Ansible could install a kernel or libc/openssl update that no reboot ever loads.
 # apt gives up on the first HTTP error for a file (e.g. one lagging upstream address), so downloads retry.
-- name: Upgrade all installed packages
-  ansible.builtin.apt:
-    upgrade: dist
-  register: common_dist_upgrade
-  retries: 5
-  delay: 60
-  until: common_dist_upgrade is succeeded
-
 - name: Install dependencies for containerd
   ansible.builtin.apt:
     name:
@@ -177,10 +171,8 @@
   tags: kubernetes_component_kubeadm
 
 # Held immediately after the pinned install, not only in the upgrade path. Without this,
-# the dist-upgrade above bumps kubelet to the newest version in the repo and the pinned
-# install downgrades it back -- two package swaps per run on a live node -- and
-# unattended-upgrades can move kubelet underneath the cluster between runs. apt honours
-# dpkg holds, so the hold is what actually stops both. The installs above set
+# unattended-upgrades or a manual apt upgrade can move kubelet underneath the cluster between
+# runs. apt honours dpkg holds, so the hold is what stops that. The installs above set
 # allow_change_held_packages, so a deliberate version change still applies.
 - name: Hold kubeadm at the pinned version
   ansible.builtin.dpkg_selections:

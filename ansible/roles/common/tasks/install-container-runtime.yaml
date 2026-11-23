@@ -26,9 +26,9 @@
   delay: 60
   until: common_containerd_packages is succeeded
 
-# Held for the same reason as kubeadm/kubelet: without a hold, the dist-upgrade in
-# prepare-node.yaml and unattended-upgrades move containerd (and dockerd with it) to whatever the
-# Docker repo serves next, restarting the runtime under running pods.
+# Held for the same reason as kubeadm/kubelet: without a hold, unattended-upgrades or a manual apt
+# upgrade move containerd (and dockerd with it) to whatever the Docker repo serves next, restarting
+# the runtime under running pods.
 #
 # Moving a pin: prepare-node.yaml only runs on nodes being added, so a changed pin reaches existing
 # nodes through `make upgrade-cluster` (upgrade-cluster.yaml -> upgrade-container-runtime.yaml), which
@@ -44,3 +44,30 @@
     - containerd.io
     - docker-buildx-plugin
     - docker-compose-plugin
+
+# The containerd.io unit sets no LimitNOFILE, so containers would inherit systemd's 1024 soft limit
+# and busy log shippers, databases and proxies fail with "too many open files". This sets both the
+# soft and hard limit. Containers already running keep their old limit until they are recreated.
+- name: Create the containerd systemd drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/containerd.service.d
+    state: directory
+    mode: "0755"
+
+- name: Raise the containerd open-file limit
+  ansible.builtin.copy:
+    content: |
+      [Service]
+      LimitNOFILE=1048576
+    dest: /etc/systemd/system/containerd.service.d/limits.conf
+    mode: "0644"
+  register: common_containerd_limits
+
+# Inline rather than a handler: the master rotation reaches this file under delegate_to, and a
+# handler would restart the play host instead of the new node (see prepare-node.yaml).
+- name: Restart containerd with the new open-file limit # noqa: no-handler
+  ansible.builtin.systemd:
+    name: containerd
+    state: restarted
+    daemon_reload: true
+  when: common_containerd_limits is changed

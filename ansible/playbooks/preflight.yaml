@@ -2,7 +2,7 @@
 # Preflight (#466). Runs before anything on a node is touched.
 #
 # Every check here exists because its absence produced a confusing failure partway through a
-# build, after a dist-upgrade had already run on the node:
+# build, after packages had already been installed on the node:
 #
 #   unset kubernetes_version -> "list object has no element 1" at prepare-nodes.yaml, from
 #                               kubernetes_version.split('.')[1] in the apt repo URL

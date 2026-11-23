@@ -150,6 +150,29 @@
           {{ held_packages | difference(node_holds.stdout_lines) }}
         quiet: true
 
+    # The pause process is in every pod sandbox and never changes its own limits, so it shows what
+    # containers inherit from containerd. Prints "<soft> <hard>" per process.
+    - name: Read the open-file limits of running containers
+      ansible.builtin.shell: |
+        set -eu
+        for pid in $(pgrep -x pause); do
+          awk '/^Max open files/ {print $4, $5}' "/proc/$pid/limits"
+        done
+      args:
+        executable: /bin/bash
+      register: node_container_nofile
+      changed_when: false
+
+    - name: Containers inherit the raised open-file limit
+      ansible.builtin.assert:
+        that:
+          - node_container_nofile.stdout_lines | length > 0
+          - node_container_nofile.stdout_lines | unique == ['1048576 1048576']
+        fail_msg: >-
+          {{ inventory_hostname }}: expected soft and hard 1048576, got
+          {{ node_container_nofile.stdout_lines | unique }}
+        quiet: true
+
     - name: Read the cloud-init first-boot marker
       ansible.builtin.slurp:
         src: /var/lib/cloud/instance/first-boot.json

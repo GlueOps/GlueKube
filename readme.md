@@ -390,11 +390,11 @@ three targets that do run against a live cluster are **`sync`**, **`upgrade-clus
 **`rotate-certs-with-config`**, and this release changes something in each of them. what follows is
 only about those three.
 
-worth stating up front, because it is the difference that makes this list short: `install-addons`,
-`install-calico` and the `apt upgrade: dist` in `prepare-node.yaml` are reached only through the
-`master` role's `main.yaml`, which only `setup-cluster.yaml` triggers. **none of the three targets
-below dist-upgrades an existing node, upgrades the Calico release, or touches the addons.** `sync`
-runs `prepare-nodes` only on a node it is adding.
+worth stating up front, because it is the difference that makes this list short: `install-addons`
+and `install-calico` are reached only through the `master` role's `main.yaml`, which only
+`setup-cluster.yaml` triggers. **none of the three targets below upgrades the Calico release or
+touches the addons.** Ansible never runs a full package upgrade: that happens only in cloud-init on
+first boot, which reboots afterwards. `sync` runs `prepare-nodes` only on a node it is adding.
 
 ## before `sync` or `upgrade-cluster`: regenerate `.env`
 
@@ -459,8 +459,7 @@ kubectl get nodes -o jsonpath='{.items[*].metadata.name}' | tr ' ' '\n' | sort
 
 what is *not* a risk: an existing node is never re-joined or reset — both `join-nodes.yaml` files
 gate every task on the node not already appearing in `kubectl get nodes` — and `prepare-nodes` is
-gated on `inventory_hostname in nodes_to_add`, so only a genuinely new node is prepared and
-dist-upgraded.
+gated on `inventory_hostname in nodes_to_add`, so only a genuinely new node is prepared.
 
 one fix in this release matters here: `sync` used to abort on every worker with an
 `AnsibleUndefinedVariable`, because the orchestrator election published its result only to the
