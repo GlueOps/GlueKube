@@ -28,6 +28,7 @@ export
         migrate-calico-registry defrag-etcd
 
 ping-servers: .env
+	ansible-playbook -i ansible/inventory/hosts.yaml ansible/playbooks/wait-for-cloud-init.yaml
 	ansible all -i ansible/inventory/hosts.yaml -m ping
 	@echo "Checking network connectivity between all nodes..."
 	ansible-playbook -i ansible/inventory/hosts.yaml ansible/playbooks/check-network-connectivity.yaml

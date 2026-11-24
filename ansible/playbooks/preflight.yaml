@@ -2,7 +2,7 @@
 # Preflight (#466). Runs before anything on a node is touched.
 #
 # Every check here exists because its absence produced a confusing failure partway through a
-# build, after a dist-upgrade had already run on the node:
+# build, after packages had already been installed on the node:
 #
 #   unset kubernetes_version -> "list object has no element 1" at prepare-nodes.yaml, from
 #                               kubernetes_version.split('.')[1] in the apt repo URL
@@ -17,6 +17,10 @@
 #
 # any_errors_fatal stops the whole run on the first bad host rather than letting the other
 # hosts march on into a half-built cluster.
+
+- name: Wait for cloud-init
+  ansible.builtin.import_playbook: wait-for-cloud-init.yaml
+
 - name: Preflight
   hosts: all
   gather_facts: true

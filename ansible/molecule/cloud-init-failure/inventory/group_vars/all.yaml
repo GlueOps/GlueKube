@@ -1,0 +1,3 @@
+---
+# Nothing here on purpose: this scenario only runs playbooks/wait-for-cloud-init.yaml, which
+# reads no inventory variables. The directory exists because molecule.yml links it.

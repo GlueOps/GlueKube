@@ -1,9 +1,21 @@
-FROM python:3.15-slim@sha256:1c670c3568107e243bfd05457ad9ca0b11c35a855c985af73e4452db9a714e70
+FROM python:3.14-slim@sha256:9aaa474097d094040649f2162a627c0049b408f52138d980916788d80f04802f
+
+
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
 ENV kubernetes_version="v1.35.9"
 ENV kubernetes_package_version="1.35.9-1.1"
+# containerd/Docker pins (roles/common/tasks/install-container-runtime.yaml). Tracked by the
+# regex manager in renovate.json; a bump reaches existing nodes through `make upgrade`.
+# renovate: datasource=deb depName=containerd.io registryUrl=https://download.docker.com/linux/ubuntu?suite=noble&components=stable&binaryArch=amd64
+ENV containerd_package_version="2.4.2-4~*"
+# renovate: datasource=deb depName=docker-ce registryUrl=https://download.docker.com/linux/ubuntu?suite=noble&components=stable&binaryArch=amd64
+ENV docker_package_version="5:29.10.0-1~*"
+# renovate: datasource=deb depName=docker-buildx-plugin registryUrl=https://download.docker.com/linux/ubuntu?suite=noble&components=stable&binaryArch=amd64
+ENV docker_buildx_plugin_version="0.39.0-1~*"
+# renovate: datasource=deb depName=docker-compose-plugin registryUrl=https://download.docker.com/linux/ubuntu?suite=noble&components=stable&binaryArch=amd64
+ENV docker_compose_plugin_version="5.7.2-1~*"
 ENV calico_tigera_operator_version="v1.40.7"
 ENV calico_chart_version="v3.31.4"
 ENV ANSIBLE_ROLES_PATH=/opt/gluekube/ansible/roles

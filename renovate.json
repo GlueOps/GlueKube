@@ -1,0 +1,29 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "packageRules": [
+    {
+      "description": "Hold the controller image below Python 3.15: ansible-core 2.21 crashes on it (dataclasses._is_type), so the image stops building. #259 already took it to 3.15 once. Lift this once ansible-core supports 3.15.",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["python"],
+      "allowedVersions": "<3.15"
+    },
+    {
+      "description": "containerd/Docker pins. Bumping one only reaches existing nodes through `make upgrade`, which drains each node whose runtime moves, so these are never automerged.",
+      "matchDatasources": ["deb"],
+      "matchFileNames": ["Dockerfile"],
+      "automerge": false
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "containerd.io / docker-ce / plugin pins in the Dockerfile. Each ENV is annotated with the deb package it tracks. The pins glob over the Docker repo's per-distro suffix ('2.4.2-4~*'), so only the part before '~' is compared and rewritten.",
+      "managerFilePatterns": ["/(^|/)Dockerfile$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+) registryUrl=(?<registryUrl>\\S+)\\s*\\nENV \\w+=\"(?<currentValue>[^~\"]+)~\\*\""
+      ],
+      "versioningTemplate": "deb",
+      "extractVersionTemplate": "^(?<version>[^~]+)"
+    }
+  ]
+}

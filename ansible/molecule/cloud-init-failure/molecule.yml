@@ -1,0 +1,26 @@
+---
+# The negative test for playbooks/wait-for-cloud-init.yaml: one node whose first-boot runcmd
+# fails (`false`), behind the usual bastion. cloud-init reports the error, power_state still
+# reboots it, and after the reboot `cloud-init status` says "done" -- the exact case the old wait
+# let through. converge runs the wait and passes only if it STOPS with "error(s) before its reboot".
+driver:
+  name: default
+
+provisioner:
+  name: ansible
+  log: true
+  inventory:
+    links:
+      # The bastion only; the one-node inventory is written onto the bastion by create.yml.
+      hosts: inventory/hosts.yaml
+      group_vars: inventory/group_vars
+
+scenario:
+  name: cloud-init-failure
+  test_sequence:
+    - create
+    - converge
+    - destroy
+
+verifier:
+  name: ansible

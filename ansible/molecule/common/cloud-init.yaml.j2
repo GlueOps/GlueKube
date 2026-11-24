@@ -14,7 +14,6 @@
 # Proxmox and must NOT be repeated here.
 hostname: {{ node_name }}
 manage_etc_hosts: true
-package_reboot_if_required: true
 package_update: true
 package_upgrade: true
 packages:
@@ -30,16 +29,33 @@ users:
       - "{{ public_key }}"
     sudo: ALL=(ALL) NOPASSWD:ALL
     shell: /bin/bash
+# No sysctls here: roles/common/tasks/prepare-node.yaml owns them (/etc/sysctl.d/99-kubernetes.conf).
+#
+# The first-boot marker and power_state below mirror opentofu-module-GlueKube-cloudinit (main.tf)
+# so playbooks/wait-for-cloud-init.yaml sees the marker path and judges boot 1 from the marker.
+# Without them every molecule node was a "legacy" node and the marker checks never ran in CI.
+# This does NOT exercise the wait-for-reboot path: create.yml has already waited out the reboot
+# before the wait runs, so the pending retries, the shutdown-killed check, the unreachable first
+# pass and the second pass are untested here. Only an apply on real AWS/Proxmox nodes covers them.
+# Keep the script and the condition in step with the module.
 write_files:
-  - content: |
-      net.bridge.bridge-nf-call-iptables   = 1
-      net.bridge.bridge-nf-call-ip6tables  = 1
-      net.ipv4.ip_forward                  = 1
-    path: /etc/sysctl.d/k8s.conf
-mounts:
-  - [ swap, null ]
+  - path: /usr/local/sbin/gluekube-first-boot-marker
+    permissions: "0755"
+    content: |
+      #!/bin/sh
+      out=/var/lib/cloud/instance/first-boot.json
+      tmp="$out.tmp.$$"
+      status=$(cloud-init status --format json 2>/dev/null)
+      [ -n "$status" ] || status=null
+      printf '{"boot_id": "%s", "cloud_init": %s}\n' \
+        "$(cat /proc/sys/kernel/random/boot_id)" "$status" > "$tmp" && mv -f "$tmp" "$out"
+      exit 0
+power_state:
+  mode: reboot
+  message: cloud-init finished, rebooting after package upgrade
+  timeout: 30
+  condition: /usr/local/sbin/gluekube-first-boot-marker
 runcmd:
-  - sudo sysctl --system
   - sudo passwd -d root
   - sudo systemctl enable --now qemu-guest-agent
   # roles/master/tasks/apply-calico-firewall.yaml reads this to build the Calico HostEndpoint's
@@ -66,3 +82,8 @@ runcmd:
   - ip route show default | awk '{print $5}' | head -n1 > /etc/glueops/public-interface
   - chmod 0644 /etc/glueops/public-interface
   - sudo systemctl disable --now unattended-upgrades.service apt-daily.timer apt-daily-upgrade.timer apt-daily.service apt-news.service
+  # Scenario-supplied extra commands -- the cloud-init-failure scenario adds a failing one here to
+  # prove wait-for-cloud-init.yaml stops on a node whose first boot failed.
+{% for cmd in cloudinit_extra_runcmd | default([]) %}
+  - {{ cmd | to_json }}
+{% endfor %}

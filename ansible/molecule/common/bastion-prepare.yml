@@ -17,6 +17,10 @@
     bastion_env_passthrough:
       - kubernetes_version
       - kubernetes_package_version
+      - containerd_package_version
+      - docker_package_version
+      - docker_buildx_plugin_version
+      - docker_compose_plugin_version
       - loadbalancer_apiserver
       - domain_name
       - CERTIFICATE_KEY

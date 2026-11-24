@@ -1,0 +1,14 @@
+---
+# Move containerd/Docker on an existing node onto the current pins and hold them. Run by
+# upgrade-cluster.yaml inside each node's drain window; check-container-runtime.yaml decides
+# whether that window is needed. Also places the hold on nodes built before the packages were
+# held. When nothing differs the apt task is a no-op and nothing restarts.
+#
+# The containerd.io package restarts containerd itself. Running containers survive that (their
+# shims are separate processes), and the node is drained anyway; dpkg keeps the GlueKube-written
+# /etc/containerd/config.toml (apt's default --force-confold).
+- name: Update the apt package lists
+  ansible.builtin.import_tasks: apt-update.yaml
+
+- name: Install and hold containerd and Docker at their pins
+  ansible.builtin.import_tasks: install-container-runtime.yaml
