@@ -13,7 +13,7 @@ ENV containerd_package_version="2.4.2-4~*"
 # renovate: datasource=deb depName=docker-ce registryUrl=https://download.docker.com/linux/ubuntu?suite=noble&components=stable&binaryArch=amd64
 ENV docker_package_version="5:29.10.0-1~*"
 # renovate: datasource=deb depName=docker-buildx-plugin registryUrl=https://download.docker.com/linux/ubuntu?suite=noble&components=stable&binaryArch=amd64
-ENV docker_buildx_plugin_version="0.39.0-1~*"
+ENV docker_buildx_plugin_version="0.39.1-1~*"
 # renovate: datasource=deb depName=docker-compose-plugin registryUrl=https://download.docker.com/linux/ubuntu?suite=noble&components=stable&binaryArch=amd64
 ENV docker_compose_plugin_version="5.7.2-1~*"
 ENV calico_tigera_operator_version="v1.40.7"
