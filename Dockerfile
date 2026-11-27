@@ -15,7 +15,7 @@ ENV docker_package_version="5:29.10.0-1~*"
 # renovate: datasource=deb depName=docker-buildx-plugin registryUrl=https://download.docker.com/linux/ubuntu?suite=noble&components=stable&binaryArch=amd64
 ENV docker_buildx_plugin_version="0.39.0-1~*"
 # renovate: datasource=deb depName=docker-compose-plugin registryUrl=https://download.docker.com/linux/ubuntu?suite=noble&components=stable&binaryArch=amd64
-ENV docker_compose_plugin_version="5.7.2-1~*"
+ENV docker_compose_plugin_version="5.8.1-1~*"
 ENV calico_tigera_operator_version="v1.40.7"
 ENV calico_chart_version="v3.31.4"
 ENV ANSIBLE_ROLES_PATH=/opt/gluekube/ansible/roles
